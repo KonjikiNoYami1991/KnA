@@ -9,6 +9,8 @@ public sealed class ProcessGroup
     private readonly List<Process> _processes = [];
     private bool _paused;
 
+    public bool IsPaused => _paused;
+
     public void Add(Process p)
     {
         lock (_processes)

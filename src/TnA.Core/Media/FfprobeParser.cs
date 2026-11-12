@@ -15,6 +15,8 @@ public static class FfprobeParser
         var audio = new List<AudioStream>();
         var subs = new List<SubtitleStream>();
         var attachments = new List<AttachmentStream>();
+        var ignored = new List<StreamBase>();
+        int chapters = root.TryGetProperty("chapters", out var ch) && ch.ValueKind == JsonValueKind.Array ? ch.GetArrayLength() : 0;
 
         TimeSpan duration = TimeSpan.Zero;
         long size = 0;
@@ -54,8 +56,14 @@ public static class FfprobeParser
                             frames = (long)Math.Round(dur.TotalSeconds * fps);
                         }
                         string? pixFmt = Str(s, "pix_fmt");
-                        video.Add(new VideoStream
+                        if (codec is "" or "none" || Int(s, "width") == 0)
                         {
+                            ignored.Add(new StreamBase { Index = index, CodecName = codec, Kind = "video" });
+                            break;
+                        }
+                        var vs = new VideoStream
+                        {
+                            Kind = "video",
                             Index = index, CodecName = codec, Profile = profile, Language = lang, Title = title,
                             IsDefault = isDefault, IsForced = isForced, IsAttachedPicture = isAttachedPic,
                             Width = Int(s, "width"), Height = Int(s, "height"),
@@ -63,12 +71,25 @@ public static class FfprobeParser
                             FrameRate = fps, FrameRateRational = frameRateRational, FrameCount = frames,
                             PixelFormat = pixFmt, BitDepth = GuessBitDepth(pixFmt, Str(s, "bits_per_raw_sample")),
                             FieldOrder = Str(s, "field_order"),
-                        });
+                            ColorPrimaries = Str(s, "color_primaries"),
+                            ColorTransfer = Str(s, "color_transfer"),
+                            ColorSpace = Str(s, "color_space"),
+                            ColorRange = Str(s, "color_range"),
+                            Rotation = ParseRotation(s),
+                        };
+                        vs.Hdr = DetectHdr(vs, s.TryGetProperty("side_data_list", out var sd) ? sd : default, null);
+                        video.Add(vs);
                         if (duration == TimeSpan.Zero) duration = streamDuration;
                         break;
                     case "audio":
+                        if (codec is "" or "none" || Int(s, "channels") == 0)
+                        {
+                            ignored.Add(new StreamBase { Index = index, CodecName = codec, Kind = "audio" });
+                            break;
+                        }
                         audio.Add(new AudioStream
                         {
+                            Kind = "audio",
                             Index = index, CodecName = codec, Profile = profile, Language = lang, Title = title,
                             IsDefault = isDefault, IsForced = isForced,
                             Channels = Int(s, "channels"), ChannelLayout = Str(s, "channel_layout"),
@@ -76,8 +97,15 @@ public static class FfprobeParser
                         });
                         break;
                     case "subtitle":
+                        // dvb_teletext and unknown subtitle codecs cannot be converted or copied reliably.
+                        if (codec is "" or "none" or "dvb_teletext" or "eia_608" or "arib_caption")
+                        {
+                            ignored.Add(new StreamBase { Index = index, CodecName = codec, Kind = "subtitle", Language = lang });
+                            break;
+                        }
                         subs.Add(new SubtitleStream
                         {
+                            Kind = "subtitle",
                             Index = index, CodecName = codec, Profile = profile, Language = lang, Title = title,
                             IsDefault = isDefault, IsForced = isForced,
                         });
@@ -85,9 +113,14 @@ public static class FfprobeParser
                     case "attachment":
                         attachments.Add(new AttachmentStream
                         {
+                            Kind = "attachment",
                             Index = index, CodecName = codec, Language = lang, Title = title,
                             FileName = Tag(s, "filename"), MimeType = Tag(s, "mimetype"),
                         });
+                        break;
+                    default:
+                        // "data" (SCTE-35, timed ID3, KLV, bin_data…) and anything unknown.
+                        ignored.Add(new StreamBase { Index = index, CodecName = codec, Kind = type ?? "unknown" });
                         break;
                 }
             }
@@ -97,7 +130,86 @@ public static class FfprobeParser
         {
             Path = path, ContainerFormat = container, Duration = duration, SizeBytes = size,
             Video = video, Audio = audio, Subtitles = subs, Attachments = attachments,
+            Ignored = ignored, ChapterCount = chapters,
         };
+    }
+
+    /// <summary>Merges first-frame side data (mastering display, CLL, HDR10+) into the primary video's HDR info.</summary>
+    public static void ApplyFrameSideData(MediaInfo media, string framesJson)
+    {
+        if (media.PrimaryVideo is not { } v) return;
+        using var doc = JsonDocument.Parse(framesJson);
+        if (!doc.RootElement.TryGetProperty("frames", out var frames) || frames.GetArrayLength() == 0) return;
+        var f = frames[0];
+        if (f.TryGetProperty("side_data_list", out var sd)) v.Hdr = DetectHdr(v, sd, v.Hdr);
+    }
+
+    internal static HdrInfo DetectHdr(VideoStream v, JsonElement sideData, HdrInfo? previous)
+    {
+        var hdr = previous ?? HdrInfo.Sdr;
+        if (sideData.ValueKind == JsonValueKind.Array)
+        {
+            foreach (var item in sideData.EnumerateArray())
+            {
+                var type = Str(item, "side_data_type") ?? "";
+                if (type.Contains("DOVI", StringComparison.OrdinalIgnoreCase) || type.Contains("Dolby Vision", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (Str(item, "dv_profile") is { } prof)
+                        hdr = hdr with
+                        {
+                            DolbyVisionProfile = int.Parse(prof, CultureInfo.InvariantCulture),
+                            DolbyVisionCompatibility = Int(item, "dv_bl_signal_compatibility_id"),
+                            DolbyVisionHasEnhancementLayer = Int(item, "el_present_flag") == 1,
+                        };
+                }
+                else if (type.Contains("Mastering display", StringComparison.OrdinalIgnoreCase) && Str(item, "red_x") is not null)
+                {
+                    hdr = hdr with
+                    {
+                        Mastering = new MasteringDisplay(
+                            ParseRational(Str(item, "red_x")), ParseRational(Str(item, "red_y")),
+                            ParseRational(Str(item, "green_x")), ParseRational(Str(item, "green_y")),
+                            ParseRational(Str(item, "blue_x")), ParseRational(Str(item, "blue_y")),
+                            ParseRational(Str(item, "white_point_x")), ParseRational(Str(item, "white_point_y")),
+                            ParseRational(Str(item, "min_luminance")), ParseRational(Str(item, "max_luminance"))),
+                    };
+                }
+                else if (type.Contains("Content light level", StringComparison.OrdinalIgnoreCase))
+                {
+                    hdr = hdr with { MaxCll = Int(item, "max_content"), MaxFall = Int(item, "max_average") };
+                }
+                else if (type.Contains("HDR10+", StringComparison.OrdinalIgnoreCase) || type.Contains("2094-40", StringComparison.OrdinalIgnoreCase))
+                {
+                    hdr = hdr with { HasHdr10Plus = true };
+                }
+            }
+        }
+
+        var format = HdrFormat.Sdr;
+        if (v.ColorTransfer == "smpte2084") format = HdrFormat.Hdr10;
+        else if (v.ColorTransfer == "arib-std-b67") format = HdrFormat.Hlg;
+        if (hdr.HasHdr10Plus) format = HdrFormat.Hdr10Plus;
+        if (hdr.DolbyVisionProfile is not null) format = HdrFormat.DolbyVision;
+        return hdr with { Format = format };
+    }
+
+    /// <summary>
+    /// ffprobe reports the display matrix as a counter-clockwise "rotation" (e.g. -90 for a phone held upright);
+    /// older files use a clockwise "rotate" tag. Returned value: clockwise 0/90/180/270.
+    /// </summary>
+    internal static int ParseRotation(JsonElement s)
+    {
+        double? ccw = null;
+        if (s.TryGetProperty("side_data_list", out var sd) && sd.ValueKind == JsonValueKind.Array)
+            foreach (var item in sd.EnumerateArray())
+                if ((Str(item, "side_data_type") ?? "").Contains("Display Matrix", StringComparison.OrdinalIgnoreCase)
+                    && double.TryParse(Str(item, "rotation"), NumberStyles.Float, CultureInfo.InvariantCulture, out var r))
+                    ccw = r;
+        if (ccw is null && Tag(s, "rotate") is { } tag && double.TryParse(tag, NumberStyles.Float, CultureInfo.InvariantCulture, out var cw))
+            ccw = -cw;
+        if (ccw is null) return 0;
+        int clockwise = (int)Math.Round(-ccw.Value / 90.0) * 90;
+        return ((clockwise % 360) + 360) % 360;
     }
 
     private static int GuessBitDepth(string? pixFmt, string? bitsPerRawSample)

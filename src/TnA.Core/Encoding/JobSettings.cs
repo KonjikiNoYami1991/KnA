@@ -1,8 +1,93 @@
 using System.Text.Json.Serialization;
+using TnA.Core.Localization;
 
 namespace TnA.Core.Encoding;
 
-/// <summary>What the user chose for one file.</summary>
+public enum DeinterlaceMode { Auto, Off, Force }
+public enum FilterStrength { Off, Light, Medium, Strong }
+public enum HdrMode
+{
+    /// <summary>Keep HDR when the output can carry it (10-bit HEVC/AV1), otherwise tone-map to SDR.</summary>
+    Auto,
+    /// <summary>Keep HDR10/HLG (+ HDR10+/Dolby Vision when the tools and encoder allow it).</summary>
+    Preserve,
+    /// <summary>Always convert to SDR BT.709.</summary>
+    ToneMapSdr,
+}
+public enum ImageFormat { Png, Jpeg, Tiff, Webp, Bmp }
+public enum ImageMode { Interval, Count, SceneChanges, EveryFrame }
+
+public sealed record CropSettings(int Left = 0, int Top = 0, int Right = 0, int Bottom = 0)
+{
+    [JsonIgnore] public bool IsEmpty => Left <= 0 && Top <= 0 && Right <= 0 && Bottom <= 0;
+}
+
+public sealed record VideoFilterSettings
+{
+    public DeinterlaceMode Deinterlace { get; init; } = DeinterlaceMode.Auto;
+    public CropSettings? Crop { get; init; }
+    public FilterStrength Denoise { get; init; }
+    public FilterStrength Deband { get; init; }
+    public FilterStrength Sharpen { get; init; }
+    /// <summary>
+    /// Final orientation, clockwise 0/90/180/270; null = follow the file's rotation metadata.
+    /// Applied through the display matrix: lossless on remux, baked into the picture when encoding.
+    /// </summary>
+    public int? Orientation { get; init; }
+    /// <summary>Mirror the picture (display flip).</summary>
+    public bool FlipHorizontal { get; init; }
+    public bool FlipVertical { get; init; }
+
+    [JsonIgnore]
+    public bool OverridesOrientation => Orientation is not null || FlipHorizontal || FlipVertical;
+
+    /// <summary>Clockwise rotation that will be applied to a stream with the given metadata rotation.</summary>
+    public int EffectiveRotation(int metadataRotation) => (((Orientation ?? metadataRotation) % 360) + 360) % 360;
+    /// <summary>Output frame rate, null = keep.</summary>
+    public double? Fps { get; init; }
+    /// <summary>Raw FFmpeg filters appended at the end of the chain (advanced).</summary>
+    public string? Custom { get; init; }
+
+    [JsonIgnore]
+    public bool ChangesFrameCount => Fps is > 0;
+}
+
+public sealed record AudioFilterSettings
+{
+    public double GainDb { get; init; }
+    /// <summary>EBU R128 loudness normalization (loudnorm, single pass).</summary>
+    public bool Normalize { get; init; }
+    public bool DownmixStereo { get; init; }
+    public int? SampleRate { get; init; }
+    public string? Custom { get; init; }
+
+    [JsonIgnore]
+    public bool IsActive => Math.Abs(GainDb) > 0.01 || Normalize || DownmixStereo || SampleRate is > 0 || !string.IsNullOrWhiteSpace(Custom);
+}
+
+public sealed record ImageSettings
+{
+    public ImageFormat Format { get; init; } = ImageFormat.Png;
+    public ImageMode Mode { get; init; } = ImageMode.Interval;
+    public double IntervalSeconds { get; init; } = 10;
+    public int Count { get; init; } = 24;
+    /// <summary>JPEG/WebP quality 1..100.</summary>
+    public int Quality { get; init; } = 92;
+    /// <summary>16 bits per channel (PNG/TIFF only).</summary>
+    public bool SixteenBit { get; init; }
+}
+
+public sealed record DemuxSettings
+{
+    /// <summary>Elementary streams (.h264, .aac, .ass…) when true; Matroska wrappers (.mkv/.mka/.mks) otherwise.</summary>
+    public bool Raw { get; init; } = true;
+    public bool Attachments { get; init; } = true;
+    public bool Chapters { get; init; } = true;
+    /// <summary>Absolute stream indexes to extract; null = all.</summary>
+    public List<int>? Streams { get; init; }
+}
+
+/// <summary>Everything that can be stored in a preset (not tied to a specific file).</summary>
 public sealed record JobSettings
 {
     public ProfileKind Profile { get; init; } = ProfileKind.UniversalMkv;
@@ -15,6 +100,15 @@ public sealed record JobSettings
     public bool TenBit { get; init; } = true;
     /// <summary>Prefer a "same name.ass/.srt" file next to the video for hardsub.</summary>
     public bool UseSidecarSubtitles { get; init; } = true;
+    /// <summary>Output container ("mkv", "mp4"…), null = profile default.</summary>
+    public string? Container { get; init; }
+    public HdrMode Hdr { get; init; } = HdrMode.Auto;
+    public VideoFilterSettings VideoFilters { get; init; } = new();
+    public AudioFilterSettings AudioFilters { get; init; } = new();
+    public ImageSettings Images { get; init; } = new();
+    public DemuxSettings Demux { get; init; } = new();
+    /// <summary>Name of the preset these settings came from (informative).</summary>
+    public string? PresetName { get; init; }
 
     [JsonIgnore]
     public ProfileDefinition ProfileDefinition => Profiles.Get(Profile);
@@ -37,19 +131,66 @@ public sealed record JobSettings
     public SubtitleMode EffectiveSubtitles => ProfileDefinition.UsesSubtitleMode ? Subtitles : SubtitleMode.None;
 
     [JsonIgnore]
+    public string EffectiveContainer => Containers.Resolve(this);
+
+    [JsonIgnore]
     public string Label
     {
         get
         {
             var p = ProfileDefinition;
+            if (p.Kind == ProfileKind.Images) return $"{p.Name} {Images.Format.ToString().ToUpperInvariant()}";
             if (!p.EncodesVideo) return p.Name;
             var parts = new List<string> { p.Name };
             if (p.AllowsCodecChoice) parts.Add(EffectiveCodec.Short());
             if (EffectiveBackend != EncoderBackend.Software) parts.Add(EffectiveBackend.Short());
             if (EffectiveTenBit) parts.Add("10bit");
             parts.Add(Resolutions.Display(Resolution));
-            parts.Add(Quality.Display().Replace(" (test only)", ""));
+            parts.Add(Quality == QualityLevel.Draft ? L.T("Draft") : Quality.Display());
             return string.Join(" ", parts);
         }
     }
 }
+
+/// <summary>One output track (or a standalone file such as a font) and how to treat it.</summary>
+public sealed record TrackPlan
+{
+    /// <summary>File the stream comes from (the source or an external file).</summary>
+    public required string File { get; init; }
+    /// <summary>Absolute stream index in <see cref="File"/>; -1 for a standalone attachment (font file).</summary>
+    public int Stream { get; init; }
+    /// <summary>"video", "audio", "subtitle" or "attachment".</summary>
+    public required string Kind { get; init; }
+    public bool Include { get; init; } = true;
+    /// <summary>Subtitle to burn into the picture (at most one).</summary>
+    public bool Burn { get; init; }
+    /// <summary>Positive = later, negative = earlier (milliseconds).</summary>
+    public double DelayMs { get; init; }
+    public string? Language { get; init; }
+    public string? Title { get; init; }
+    public bool Default { get; init; }
+    public bool Forced { get; init; }
+    /// <summary>Informative (codec name) for the UIs.</summary>
+    public string? Codec { get; init; }
+
+    [JsonIgnore] public double DelaySeconds => DelayMs / 1000.0;
+}
+
+/// <summary>Per-file edits: trim, external files, explicit track plan.</summary>
+public sealed record JobEdit
+{
+    /// <summary>Applied to the final timeline, after filters, imports and delays.</summary>
+    public double? TrimStart { get; init; }
+    public double? TrimEnd { get; init; }
+    /// <summary>External audio/subtitle/font/container files available to the track plan.</summary>
+    public List<string> ExternalFiles { get; init; } = [];
+    /// <summary>Explicit output tracks in order; null = automatic (based on the subtitle mode).</summary>
+    public List<TrackPlan>? Tracks { get; init; }
+    public bool KeepChapters { get; init; } = true;
+    /// <summary>Destination folder for demux / image export, null = next to the source.</summary>
+    public string? OutputFolder { get; init; }
+
+    [JsonIgnore] public bool IsTrimmed => TrimStart is > 0 || TrimEnd is > 0;
+}
+
+public sealed record ValidationIssue(bool IsError, string Message);

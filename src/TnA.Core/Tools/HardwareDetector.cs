@@ -12,6 +12,10 @@ public sealed record EncoderCapability(VideoCodec Codec, EncoderBackend Backend,
 public sealed record FfmpegCapabilities(string Version, IReadOnlyList<EncoderCapability> Encoders,
     bool HasLibass, DateTimeOffset DetectedAt)
 {
+    public bool HasZscale { get; init; } = true;
+    public bool HasLibplacebo { get; init; }
+    public bool HasLibwebp { get; init; } = true;
+
     public EncoderCapability? Find(VideoCodec c, EncoderBackend b) =>
         Encoders.FirstOrDefault(e => e.Codec == c && e.Backend == b);
 
@@ -38,6 +42,16 @@ public static class HardwareDetector
             .Where(p => p.Length >= 2 && p[0].Length == 6)
             .Select(p => p[1]).ToHashSet(StringComparer.Ordinal);
         bool libass = filtersOut.Contains(" subtitles ", StringComparison.Ordinal);
+        bool zscale = filtersOut.Contains(" zscale ", StringComparison.Ordinal);
+        bool placebo = false;
+        if (filtersOut.Contains(" libplacebo ", StringComparison.Ordinal))
+        {
+            // Compiled in is not enough: it needs a working Vulkan device.
+            log?.Report("Testing libplacebo (Vulkan)…");
+            var r = await ProcessRunner.RunAsync(ffmpeg, ["-hide_banner", "-v", "error", "-f", "lavfi", "-i", "testsrc2=size=320x240:duration=0.2",
+                "-vf", "libplacebo=format=yuv420p", "-frames:v", "2", "-f", "null", "-"], timeout: TimeSpan.FromSeconds(30), ct: ct);
+            placebo = r.ExitCode == 0;
+        }
 
         var results = new List<EncoderCapability>();
         foreach (var codec in Enum.GetValues<VideoCodec>())
@@ -65,7 +79,12 @@ public static class HardwareDetector
                 results.Add(new(codec, backend, name, true, ok8, ok10, ok8 || ok10 ? null : err8 ?? err10));
             }
 
-        return new FfmpegCapabilities(version, results, libass, DateTimeOffset.Now);
+        return new FfmpegCapabilities(version, results, libass, DateTimeOffset.Now)
+        {
+            HasZscale = zscale,
+            HasLibplacebo = placebo,
+            HasLibwebp = compiled.Contains("libwebp"),
+        };
     }
 
     private static async Task<(bool, string?)> TestAsync(string ffmpeg, VideoCodec codec, EncoderBackend backend,

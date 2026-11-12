@@ -1,3 +1,5 @@
+using TnA.Core.Localization;
+
 namespace TnA.Core.Encoding;
 
 public enum VideoCodec { H264, HEVC, AV1, Xvid }
@@ -41,6 +43,8 @@ public enum ProfileKind
     RemuxMp4,
     RemuxMkv,
     Keyframes,
+    Images,
+    Demux,
 }
 
 public enum PostQueueAction { Nothing, CloseApp, Sleep, Shutdown }
@@ -49,10 +53,10 @@ public static class EnumText
 {
     public static string Display(this VideoCodec c) => c switch
     {
-        VideoCodec.H264 => "H.264 / AVC",
-        VideoCodec.HEVC => "H.265 / HEVC",
-        VideoCodec.AV1 => "AV1",
-        VideoCodec.Xvid => "MPEG-4 ASP (XviD)",
+        VideoCodec.H264 => L.T("H.264 / AVC"),
+        VideoCodec.HEVC => L.T("H.265 / HEVC"),
+        VideoCodec.AV1 => L.T("AV1"),
+        VideoCodec.Xvid => L.T("MPEG-4 ASP (XviD)"),
         _ => c.ToString(),
     };
 
@@ -67,12 +71,12 @@ public static class EnumText
 
     public static string Display(this EncoderBackend b) => b switch
     {
-        EncoderBackend.Software => "CPU (software)",
-        EncoderBackend.Nvenc => "NVIDIA NVENC",
-        EncoderBackend.Qsv => "Intel Quick Sync",
-        EncoderBackend.Amf => "AMD AMF",
-        EncoderBackend.VideoToolbox => "Apple VideoToolbox",
-        EncoderBackend.Vaapi => "VA-API (Linux)",
+        EncoderBackend.Software => L.T("CPU (software)"),
+        EncoderBackend.Nvenc => L.T("NVIDIA NVENC"),
+        EncoderBackend.Qsv => L.T("Intel Quick Sync"),
+        EncoderBackend.Amf => L.T("AMD AMF"),
+        EncoderBackend.VideoToolbox => L.T("Apple VideoToolbox"),
+        EncoderBackend.Vaapi => L.T("VA-API (Linux)"),
         _ => b.ToString(),
     };
 
@@ -89,31 +93,65 @@ public static class EnumText
 
     public static string Display(this QualityLevel q) => q switch
     {
-        QualityLevel.VeryHigh => "Very high",
-        QualityLevel.High => "High",
-        QualityLevel.AboveNormal => "Above normal",
-        QualityLevel.Normal => "Normal",
-        QualityLevel.BelowNormal => "Below normal",
-        QualityLevel.Low => "Low",
-        QualityLevel.VeryLow => "Very low",
-        QualityLevel.Draft => "Draft (test only)",
+        QualityLevel.VeryHigh => L.T("Very high"),
+        QualityLevel.High => L.T("High"),
+        QualityLevel.AboveNormal => L.T("Above normal"),
+        QualityLevel.Normal => L.T("Normal"),
+        QualityLevel.BelowNormal => L.T("Below normal"),
+        QualityLevel.Low => L.T("Low"),
+        QualityLevel.VeryLow => L.T("Very low"),
+        QualityLevel.Draft => L.T("Draft (test only)"),
         _ => q.ToString(),
     };
 
     public static string Display(this SubtitleMode m) => m switch
     {
-        SubtitleMode.Hardsub => "Hardsub (burn in)",
-        SubtitleMode.Softsub => "Softsub (keep tracks)",
-        SubtitleMode.None => "No subtitles",
+        SubtitleMode.Hardsub => L.T("Hardsub (burn in)"),
+        SubtitleMode.Softsub => L.T("Softsub (keep tracks)"),
+        SubtitleMode.None => L.T("No subtitles"),
+        _ => m.ToString(),
+    };
+
+    public static string Display(this HdrMode m) => m switch
+    {
+        HdrMode.Auto => L.T("Automatic (keep HDR when possible)"),
+        HdrMode.Preserve => L.T("Keep HDR"),
+        HdrMode.ToneMapSdr => L.T("Convert to SDR (tone mapping)"),
+        _ => m.ToString(),
+    };
+
+    public static string Display(this FilterStrength f) => f switch
+    {
+        FilterStrength.Off => L.T("Off"),
+        FilterStrength.Light => L.T("Light"),
+        FilterStrength.Medium => L.T("Medium"),
+        FilterStrength.Strong => L.T("Strong"),
+        _ => f.ToString(),
+    };
+
+    public static string Display(this DeinterlaceMode d) => d switch
+    {
+        DeinterlaceMode.Auto => L.T("Automatic"),
+        DeinterlaceMode.Off => L.T("Off"),
+        DeinterlaceMode.Force => L.T("Always"),
+        _ => d.ToString(),
+    };
+
+    public static string Display(this ImageMode m) => m switch
+    {
+        ImageMode.Interval => L.T("One every N seconds"),
+        ImageMode.Count => L.T("N images spread over the video"),
+        ImageMode.SceneChanges => L.T("At scene changes"),
+        ImageMode.EveryFrame => L.T("Every frame"),
         _ => m.ToString(),
     };
 
     public static string Display(this PostQueueAction a) => a switch
     {
-        PostQueueAction.Nothing => "Do nothing",
-        PostQueueAction.CloseApp => "Close TnA",
-        PostQueueAction.Sleep => "Sleep",
-        PostQueueAction.Shutdown => "Shut down",
+        PostQueueAction.Nothing => L.T("Do nothing"),
+        PostQueueAction.CloseApp => L.T("Close TnA"),
+        PostQueueAction.Sleep => L.T("Sleep"),
+        PostQueueAction.Shutdown => L.T("Shut down"),
         _ => a.ToString(),
     };
 }

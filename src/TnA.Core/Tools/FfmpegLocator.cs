@@ -1,11 +1,17 @@
 namespace TnA.Core.Tools;
 
-public sealed record FfmpegTools(string Ffmpeg, string Ffprobe, string? Scxvid);
+public sealed record FfmpegTools(string Ffmpeg, string Ffprobe, string? Scxvid, string? DoviTool = null, string? Hdr10PlusTool = null);
 
-/// <summary>Finds ffmpeg/ffprobe: configured path → app folder → TnA data folder → PATH → Homebrew.</summary>
+/// <summary>
+/// Finds the external programs. Order: configured path → TnA-managed copies in the data folder
+/// (installed by the component manager) → next to the app → PATH → Homebrew / jellyfin-ffmpeg.
+/// </summary>
 public static class FfmpegLocator
 {
     public static string ExeName(string name) => OperatingSystem.IsWindows() ? name + ".exe" : name;
+
+    public static string ManagedDir(string dataDirectory, string component) =>
+        component == "ffmpeg" ? Path.Combine(dataDirectory, "ffmpeg") : Path.Combine(dataDirectory, "tools", component);
 
     public static FfmpegTools? Locate(string? configuredFfmpeg, string dataDirectory)
     {
@@ -13,13 +19,11 @@ public static class FfmpegLocator
         if (!string.IsNullOrWhiteSpace(configuredFfmpeg))
             candidates.Add(Directory.Exists(configuredFfmpeg) ? Path.Combine(configuredFfmpeg, ExeName("ffmpeg")) : configuredFfmpeg);
         if (Environment.GetEnvironmentVariable("TNA_FFMPEG") is { Length: > 0 } env) candidates.Add(env);
+        candidates.Add(Path.Combine(ManagedDir(dataDirectory, "ffmpeg"), ExeName("ffmpeg")));
         candidates.Add(Path.Combine(AppContext.BaseDirectory, "ffmpeg", ExeName("ffmpeg")));
         candidates.Add(Path.Combine(AppContext.BaseDirectory, ExeName("ffmpeg")));
-        candidates.Add(Path.Combine(dataDirectory, "ffmpeg", ExeName("ffmpeg")));
         candidates.AddRange(SearchPath("ffmpeg"));
-        if (OperatingSystem.IsMacOS())
-            candidates.AddRange(["/opt/homebrew/bin/ffmpeg", "/usr/local/bin/ffmpeg"]);
-        // jellyfin-ffmpeg (great VA-API/QSV support on Linux)
+        if (OperatingSystem.IsMacOS()) candidates.AddRange(["/opt/homebrew/bin/ffmpeg", "/usr/local/bin/ffmpeg"]);
         if (OperatingSystem.IsLinux()) candidates.Add("/usr/lib/jellyfin-ffmpeg/ffmpeg");
 
         foreach (var ff in candidates.Where(File.Exists))
@@ -27,18 +31,27 @@ public static class FfmpegLocator
             var dir = Path.GetDirectoryName(ff)!;
             var probe = Path.Combine(dir, ExeName("ffprobe"));
             if (!File.Exists(probe)) probe = SearchPath("ffprobe").FirstOrDefault() ?? "";
-            if (File.Exists(probe)) return new FfmpegTools(ff, probe, LocateScxvid(dir, dataDirectory));
+            if (File.Exists(probe))
+                return new FfmpegTools(ff, probe,
+                    LocateTool(["scxvid", "SCXvid"], dataDirectory, dir),
+                    LocateTool(["dovi_tool"], dataDirectory, dir),
+                    LocateTool(["hdr10plus_tool"], dataDirectory, dir));
         }
         return null;
     }
 
-    private static string? LocateScxvid(string ffmpegDir, string dataDirectory)
+    public static string? LocateTool(string[] names, string dataDirectory, string? extraDir = null)
     {
-        string[] names = [ExeName("scxvid"), ExeName("SCXvid")];
-        foreach (var dir in new[] { ffmpegDir, AppContext.BaseDirectory, Path.Combine(dataDirectory, "ffmpeg") })
+        var dirs = new List<string>();
+        foreach (var n in names) dirs.Add(ManagedDir(dataDirectory, n.ToLowerInvariant()));
+        if (extraDir is not null) dirs.Add(extraDir);
+        dirs.Add(AppContext.BaseDirectory);
+        dirs.Add(Path.Combine(dataDirectory, "ffmpeg"));
+        if (OperatingSystem.IsMacOS()) dirs.AddRange(["/opt/homebrew/bin", "/usr/local/bin"]);
+        foreach (var dir in dirs)
             foreach (var n in names)
-                if (File.Exists(Path.Combine(dir, n))) return Path.Combine(dir, n);
-        return names.SelectMany(SearchPathExact).FirstOrDefault();
+                if (File.Exists(Path.Combine(dir, ExeName(n)))) return Path.Combine(dir, ExeName(n));
+        return names.SelectMany(SearchPath).FirstOrDefault();
     }
 
     private static IEnumerable<string> SearchPath(string tool) => SearchPathExact(ExeName(tool));

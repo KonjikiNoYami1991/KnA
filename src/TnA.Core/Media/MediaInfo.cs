@@ -13,6 +13,18 @@ public sealed class MediaInfo
     public IReadOnlyList<AudioStream> Audio { get; init; } = [];
     public IReadOnlyList<SubtitleStream> Subtitles { get; init; } = [];
     public IReadOnlyList<AttachmentStream> Attachments { get; init; } = [];
+    /// <summary>Data/unknown streams (SCTE-35, teletext, bin_data, timed ID3…): never mapped to outputs.</summary>
+    public IReadOnlyList<StreamBase> Ignored { get; init; } = [];
+    public int ChapterCount { get; init; }
+
+    /// <summary>MPEG transport streams and friends need extra care (unknown metadata, broken timestamps).</summary>
+    public bool IsTransportStream =>
+        ContainerFormat.Contains("mpegts", StringComparison.OrdinalIgnoreCase)
+        || System.IO.Path.GetExtension(Path).ToLowerInvariant() is ".ts" or ".m2ts" or ".mts" or ".tp" or ".trp" or ".vob" or ".mpg" or ".mpeg";
+
+    /// <summary>Every stream in container order.</summary>
+    public IEnumerable<StreamBase> AllStreams =>
+        Video.Cast<StreamBase>().Concat(Audio).Concat(Subtitles).Concat(Attachments).OrderBy(s => s.Index);
 
     /// <summary>First real video stream (cover art / attached pictures are skipped).</summary>
     public VideoStream? PrimaryVideo => Video.FirstOrDefault(v => !v.IsAttachedPicture) ?? Video.FirstOrDefault();
@@ -28,6 +40,8 @@ public sealed class MediaInfo
                 parts.Add(v.CodecName.ToUpperInvariant() + (v.BitDepth > 8 ? $" {v.BitDepth}-bit" : ""));
                 if (v.FrameRate > 0) parts.Add(v.FrameRate.ToString("0.###", CultureInfo.InvariantCulture) + " fps");
                 if (v.IsInterlaced) parts.Add("interlaced");
+                if (v.Rotation != 0) parts.Add($"↻{v.Rotation}°");
+                if (v.Hdr.IsHdr) parts.Add(v.Hdr.Description);
             }
             if (Duration > TimeSpan.Zero) parts.Add(Duration.ToString(Duration.TotalHours >= 1 ? @"h\:mm\:ss" : @"m\:ss"));
             if (Audio.Count > 0) parts.Add($"{Audio.Count} audio");
@@ -38,8 +52,9 @@ public sealed class MediaInfo
     }
 }
 
-public abstract class StreamBase
+public class StreamBase
 {
+    public string Kind { get; init; } = "";
     /// <summary>Absolute stream index inside the container (usable as <c>-map 0:{Index}</c>).</summary>
     public int Index { get; init; }
     public string CodecName { get; init; } = "";
@@ -64,6 +79,14 @@ public sealed class VideoStream : StreamBase
     public int BitDepth { get; init; } = 8;
     public string? FieldOrder { get; init; }
     public bool IsAttachedPicture { get; init; }
+
+    public string? ColorPrimaries { get; init; }
+    public string? ColorTransfer { get; init; }
+    public string? ColorSpace { get; init; }
+    public string? ColorRange { get; init; }
+    public HdrInfo Hdr { get; set; } = HdrInfo.Sdr;
+    /// <summary>Clockwise rotation requested by the container (display matrix / "rotate" tag): 0, 90, 180, 270.</summary>
+    public int Rotation { get; init; }
 
     public bool IsInterlaced => FieldOrder is "tt" or "bb" or "tb" or "bt";
     public double DisplayWidth => Width * (SampleAspectRatio > 0 ? SampleAspectRatio : 1.0);
@@ -104,4 +127,53 @@ public sealed class AttachmentStream : StreamBase
         || (MimeType?.Contains("truetype", StringComparison.OrdinalIgnoreCase) ?? false)
         || (MimeType?.Contains("opentype", StringComparison.OrdinalIgnoreCase) ?? false)
         || System.IO.Path.GetExtension(FileName ?? "").ToLowerInvariant() is ".ttf" or ".otf" or ".ttc" or ".otc";
+}
+
+public enum HdrFormat { Sdr, Hdr10, Hdr10Plus, Hlg, DolbyVision }
+
+/// <summary>Static mastering display metadata (SMPTE ST 2086), chromaticities 0..1, luminance in cd/m².</summary>
+public sealed record MasteringDisplay(
+    double RedX, double RedY, double GreenX, double GreenY, double BlueX, double BlueY,
+    double WhiteX, double WhiteY, double MinLuminance, double MaxLuminance)
+{
+    /// <summary>x265 "master-display" syntax (chromaticity in 0.00002 units, luminance in 0.0001 cd/m²).</summary>
+    public string ToX265() =>
+        $"G({C(GreenX)},{C(GreenY)})B({C(BlueX)},{C(BlueY)})R({C(RedX)},{C(RedY)})WP({C(WhiteX)},{C(WhiteY)})" +
+        $"L({(long)Math.Round(MaxLuminance * 10000)},{(long)Math.Round(MinLuminance * 10000)})";
+
+    private static long C(double v) => (long)Math.Round(v * 50000);
+}
+
+public sealed record HdrInfo
+{
+    public static readonly HdrInfo Sdr = new();
+
+    public HdrFormat Format { get; init; } = HdrFormat.Sdr;
+    /// <summary>Also true for HDR10 base layers carried along Dolby Vision / HDR10+.</summary>
+    public bool HasHdr10Plus { get; init; }
+    public int? DolbyVisionProfile { get; init; }
+    /// <summary>Base-layer compatibility id: 1 = HDR10, 2 = SDR, 4 = HLG, 0 = none (profile 5).</summary>
+    public int? DolbyVisionCompatibility { get; init; }
+    public bool DolbyVisionHasEnhancementLayer { get; init; }
+    public MasteringDisplay? Mastering { get; init; }
+    public int? MaxCll { get; init; }
+    public int? MaxFall { get; init; }
+
+    public bool IsHdr => Format != HdrFormat.Sdr;
+    public bool IsDolbyVision => DolbyVisionProfile is not null;
+    /// <summary>Dolby Vision profile 5 has no HDR10/SDR fallback: without DV processing colors are wrong.</summary>
+    public bool DolbyVisionWithoutFallback => IsDolbyVision && (DolbyVisionCompatibility ?? 0) == 0;
+    public bool IsHlg => Format == HdrFormat.Hlg || DolbyVisionCompatibility == 4;
+
+    public string Description => Format switch
+    {
+        HdrFormat.DolbyVision => $"Dolby Vision P{DolbyVisionProfile}" + (DolbyVisionCompatibility switch
+        {
+            1 => " (HDR10 base)", 2 => " (SDR base)", 4 => " (HLG base)", _ => "",
+        }) + (HasHdr10Plus ? " + HDR10+" : ""),
+        HdrFormat.Hdr10Plus => "HDR10+",
+        HdrFormat.Hdr10 => "HDR10",
+        HdrFormat.Hlg => "HLG",
+        _ => "SDR",
+    };
 }

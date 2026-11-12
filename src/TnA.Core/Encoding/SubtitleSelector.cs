@@ -11,8 +11,6 @@ public sealed record SubtitleChoice(SubtitleStream? Stream, string? ExternalFile
         : $"track #{Stream!.Index} ({Stream.CodecName}{(Stream.Language is { } l ? ", " + l : "")}{(Stream.Title is { } t ? ", " + t : "")})";
 }
 
-/// <summary>Subtitles ready to be burned: a file in the job working directory, or a bitmap stream.</summary>
-public sealed record PreparedSubtitles(string? RelativeSubtitleFile, string? RelativeFontsDir, int? BitmapStreamIndex);
 
 public static class SubtitleSelector
 {

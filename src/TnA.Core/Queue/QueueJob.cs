@@ -18,6 +18,13 @@ public sealed class QueueJob
     public string Folder => Path.GetDirectoryName(SourcePath) ?? "";
 
     public JobSettings Settings { get; set; } = new();
+    /// <summary>Per-file edits (trim, external files, track plan).</summary>
+    public JobEdit Edit { get; set; } = new();
+    /// <summary>Probe results of the external files used by <see cref="Edit"/>.</summary>
+    public Dictionary<string, MediaInfo> ExternalMedia { get; } = new(StringComparer.Ordinal);
+    /// <summary>Warnings/errors of the last validation.</summary>
+    public IReadOnlyList<ValidationIssue> Issues { get; internal set; } = [];
+    public string? HdrSummary { get; internal set; }
     public JobStatus Status { get; internal set; } = JobStatus.Ready;
     public string? Message { get; internal set; }
     public string? Stage { get; internal set; }

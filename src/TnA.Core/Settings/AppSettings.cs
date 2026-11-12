@@ -19,6 +19,10 @@ public sealed class AppSettings
     /// <summary>Extra FFmpeg arguments, space separated (advanced).</summary>
     public string ExtraArguments { get; set; } = "";
     public FfmpegCapabilities? Capabilities { get; set; }
+    public bool CheckUpdatesOnStart { get; set; } = true;
+    public DateTimeOffset? LastUpdateCheck { get; set; }
+    /// <summary>Preset names offered in the Windows "Send to" menu.</summary>
+    public List<string> SendToPresets { get; set; } = [];
     public double WindowWidth { get; set; } = 1280;
     public double WindowHeight { get; set; } = 800;
 }
@@ -65,9 +69,46 @@ public sealed class SettingsStore
             if (File.Exists(SettingsPath))
                 return JsonSerializer.Deserialize<AppSettings>(File.ReadAllText(SettingsPath), Json) ?? new AppSettings();
         }
-        catch (JsonException) { /* corrupted file → defaults */ }
+        catch (Exception ex) when (ex is JsonException or NotSupportedException or IOException)
+        {
+            // Keep the broken file for inspection instead of silently losing it.
+            try { File.Copy(SettingsPath, SettingsPath + $".broken-{DateTime.Now:yyyyMMddHHmmss}", overwrite: true); } catch (IOException) { }
+        }
         return new AppSettings();
     }
+
+    /// <summary>Keeps the newest <paramref name="keep"/> job logs.</summary>
+    public void RotateLogs(int keep = 300)
+    {
+        try
+        {
+            foreach (var old in new DirectoryInfo(LogsDirectory).GetFiles("*.log").OrderByDescending(f => f.LastWriteTimeUtc).Skip(keep))
+                try { old.Delete(); } catch (IOException) { }
+        }
+        catch (IOException) { }
+    }
+
+    /// <summary>Removes temporary folders left by a crash or a killed process.</summary>
+    public void CleanTemp()
+    {
+        try
+        {
+            foreach (var d in Directory.GetDirectories(TempDirectory))
+                try { Directory.Delete(d, true); } catch (IOException) { } catch (UnauthorizedAccessException) { }
+        }
+        catch (IOException) { }
+    }
+
+    /// <summary>Writes an unhandled exception to logs/crash-*.log.</summary>
+    public string WriteCrashLog(Exception ex, string where)
+    {
+        var path = Path.Combine(LogsDirectory, $"crash-{DateTime.Now:yyyyMMdd-HHmmss}.log");
+        try { File.WriteAllText(path, $"TnA {Queue.AppInfo.Version} ({where})\n{RuntimeInformationText()}\n\n{ex}"); } catch (IOException) { }
+        return path;
+    }
+
+    private static string RuntimeInformationText() =>
+        $"{System.Runtime.InteropServices.RuntimeInformation.OSDescription} · {System.Runtime.InteropServices.RuntimeInformation.ProcessArchitecture} · .NET {Environment.Version}";
 
     public void Save(AppSettings settings)
     {
