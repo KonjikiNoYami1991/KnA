@@ -1,0 +1,33 @@
+# TnA web edition — open http://<host>:8585
+services:
+  tna:
+    build: .
+    image: tna-autohardsubber:latest
+    container_name: tna
+    restart: unless-stopped
+    ports:
+      - "8585:8585"
+    environment:
+      TZ: Europe/Rome
+      # Optional HTTP Basic password for the web UI (any user name).
+      # TNA_PASSWORD: "change-me"
+      # Several media roots: separate with ';'
+      TNA_MEDIA_ROOTS: /media
+      # Allow editing FFmpeg path / extra arguments from the browser.
+      # TNA_ALLOW_ADVANCED: "true"
+    volumes:
+      - ./config:/config
+      - /mnt/anime:/media          # <-- your videos (NAS share, local disk…)
+    # ---- Intel / AMD GPU (VA-API, Quick Sync): pass the render node
+    devices:
+      - /dev/dri:/dev/dri
+    group_add:
+      - "${RENDER_GID:-993}"       # gid of the "render" group on the host: getent group render
+    # ---- NVIDIA GPU (NVENC): needs nvidia-container-toolkit on the host, then uncomment
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu, video, compute, utility]

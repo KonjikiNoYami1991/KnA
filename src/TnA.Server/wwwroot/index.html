@@ -1,0 +1,190 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>TnA Autohardsubber</title>
+  <meta name="color-scheme" content="dark light">
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="app.css">
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-play" viewBox="0 0 24 24"><path d="M8 5.5v13a1 1 0 0 0 1.5.86l10.4-6.5a1 1 0 0 0 0-1.72L9.5 4.64A1 1 0 0 0 8 5.5Z"/></symbol>
+  <symbol id="i-pause" viewBox="0 0 24 24"><rect x="6" y="5" width="4" height="14" rx="1.2"/><rect x="14" y="5" width="4" height="14" rx="1.2"/></symbol>
+  <symbol id="i-stop" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2"/></symbol>
+  <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" fill="none"/></symbol>
+  <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3 7.5A2.5 2.5 0 0 1 5.5 5H9l2 2h7.5A2.5 2.5 0 0 1 21 9.5v7a2.5 2.5 0 0 1-2.5 2.5h-13A2.5 2.5 0 0 1 3 16.5v-9Z"/></symbol>
+  <symbol id="i-film" viewBox="0 0 24 24"><path d="M5 4h14a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2Zm0 3v2h2V7H5Zm12 0v2h2V7h-2ZM5 11v2h2v-2H5Zm12 0v2h2v-2h-2ZM5 15v2h2v-2H5Zm12 0v2h2v-2h-2Z"/></symbol>
+  <symbol id="i-gear" viewBox="0 0 24 24"><path d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Zm8.1-2.3.1-1.2-.1-1.2 2-1.6-2-3.4-2.4 1a8 8 0 0 0-2-1.2L15.3 3h-4l-.4 2.6a8 8 0 0 0-2 1.2l-2.4-1-2 3.4 2 1.6-.1 1.2.1 1.2-2 1.6 2 3.4 2.4-1a8 8 0 0 0 2 1.2l.4 2.6h4l.4-2.6a8 8 0 0 0 2-1.2l2.4 1 2-3.4-2.1-1.6Z"/></symbol>
+  <symbol id="i-trash" viewBox="0 0 24 24"><path d="M9 3h6l1 2h4v2H4V5h4l1-2Zm-3 6h12l-1 11a2 2 0 0 1-2 2H9a2 2 0 0 1-2-2L6 9Z"/></symbol>
+  <symbol id="i-moon" viewBox="0 0 24 24"><path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5Z"/></symbol>
+  <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4.5"/><path d="M12 1.5v3M12 19.5v3M1.5 12h3M19.5 12h3M4.6 4.6l2.1 2.1M17.3 17.3l2.1 2.1M4.6 19.4l2.1-2.1M17.3 6.7l2.1-2.1" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
+  <symbol id="i-chip" viewBox="0 0 24 24"><path d="M9 2v2H7a3 3 0 0 0-3 3v2H2v2h2v2H2v2h2v2a3 3 0 0 0 3 3h2v2h2v-2h2v2h2v-2h2a3 3 0 0 0 3-3v-2h2v-2h-2v-2h2V9h-2V7a3 3 0 0 0-3-3h-2V2h-2v2h-2V2H9Zm0 7h6v6H9V9Z"/></symbol>
+  <symbol id="i-log" viewBox="0 0 24 24"><path d="M6 3h9l5 5v11a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2Zm2 9v2h8v-2H8Zm0 4v2h6v-2H8Zm0-8v2h4V8H8Z"/></symbol>
+  <symbol id="i-term" viewBox="0 0 24 24"><path d="M4 4h16a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2Zm2.3 4.3L5 9.6 7.4 12 5 14.4l1.3 1.3 3.7-3.7-3.7-3.7ZM11 15v2h7v-2h-7Z"/></symbol>
+  <symbol id="i-redo" viewBox="0 0 24 24"><path d="M12 5a7 7 0 1 0 6.9 8.2h-2.1A5 5 0 1 1 12 7c1.4 0 2.6.6 3.5 1.5L13 11h7V4l-2.6 2.6A7 7 0 0 0 12 5Z"/></symbol>
+  <symbol id="i-up" viewBox="0 0 24 24"><path d="m12 7-6 6 1.4 1.4L12 9.8l4.6 4.6L18 13z"/></symbol>
+  <symbol id="i-down" viewBox="0 0 24 24"><path d="m12 17 6-6-1.4-1.4-4.6 4.6-4.6-4.6L6 11z"/></symbol>
+  <symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12.5 4.5 4.5L19 7.5" stroke="currentColor" stroke-width="2.4" fill="none" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+</svg>
+
+<header class="topbar">
+  <div class="brand">
+    <div class="logo">TnA</div>
+    <div class="brand-text">
+      <strong>Tanoshimi no Autohardsubber</strong>
+      <span id="platform" class="muted">…</span>
+    </div>
+  </div>
+  <div class="status-pill" id="queue-pill"><span class="dot"></span><span id="queue-text">Idle</span></div>
+  <div class="top-actions">
+    <button class="btn" id="btn-add" title="Add files or folders"><svg><use href="#i-plus"/></svg><span>Add</span></button>
+    <button class="btn primary" id="btn-start"><svg><use href="#i-play"/></svg><span>Start</span></button>
+    <button class="btn" id="btn-pause" disabled><svg><use href="#i-pause"/></svg><span>Pause</span></button>
+    <button class="btn icon" id="btn-theme" title="Theme"><svg><use href="#i-moon"/></svg></button>
+    <button class="btn icon" id="btn-settings" title="Settings"><svg><use href="#i-gear"/></svg></button>
+  </div>
+</header>
+
+<main class="layout">
+  <section class="queue-col">
+    <div class="queue-head">
+      <h2>Queue <span class="count" id="queue-count">0</span></h2>
+      <div class="queue-tools">
+        <label class="check"><input type="checkbox" id="select-all"><span>All</span></label>
+        <button class="btn ghost sm" id="btn-reset-sel" title="Process selected again"><svg><use href="#i-redo"/></svg><span>Retry</span></button>
+        <button class="btn ghost sm" id="btn-remove-sel"><svg><use href="#i-trash"/></svg><span>Remove</span></button>
+        <button class="btn ghost sm" id="btn-clear-done"><svg><use href="#i-check"/></svg><span>Clear finished</span></button>
+      </div>
+    </div>
+    <div id="jobs" class="jobs"></div>
+    <div id="empty" class="empty">
+      <div class="empty-art"><svg><use href="#i-film"/></svg></div>
+      <h3>Nothing in the queue yet</h3>
+      <p>Pick episodes or whole folders from the server. Subtitles and fonts inside MKV files are found automatically.</p>
+      <button class="btn primary" id="btn-add-empty"><svg><use href="#i-plus"/></svg><span>Add files</span></button>
+    </div>
+  </section>
+
+  <aside class="side-col">
+    <section class="card" id="settings-card">
+      <div class="card-head">
+        <h2>Encode settings</h2>
+        <span class="muted small" id="settings-target">for new files</span>
+      </div>
+      <label class="field">
+        <span>Profile</span>
+        <select id="f-profile"></select>
+        <small id="profile-desc" class="muted"></small>
+      </label>
+      <div class="field" id="row-codec">
+        <span>Video codec</span>
+        <div class="segmented" id="f-codec"></div>
+      </div>
+      <label class="field" id="row-backend">
+        <span>Encoder</span>
+        <select id="f-backend"></select>
+        <small id="backend-note" class="muted"></small>
+      </label>
+      <label class="toggle" id="row-tenbit">
+        <input type="checkbox" id="f-tenbit">
+        <span class="switch"></span>
+        <span>10-bit output <small class="muted">(HEVC / AV1)</small></span>
+      </label>
+      <div class="grid2">
+        <label class="field" id="row-res"><span>Resolution</span><select id="f-res"></select></label>
+        <label class="field" id="row-quality"><span>Quality</span><select id="f-quality"></select></label>
+      </div>
+      <label class="field" id="row-subs"><span>Subtitles</span><select id="f-subs"></select></label>
+      <label class="toggle" id="row-sidecar">
+        <input type="checkbox" id="f-sidecar">
+        <span class="switch"></span>
+        <span>Prefer external .ass/.srt next to the video</span>
+      </label>
+      <div class="card-actions">
+        <button class="btn sm" id="btn-save-defaults">Save as default</button>
+        <button class="btn sm accent" id="btn-apply-sel" disabled>Apply to selected</button>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="card-head">
+        <h2><svg class="h-icon"><use href="#i-chip"/></svg>Hardware</h2>
+        <button class="btn ghost sm" id="btn-detect">Detect again</button>
+      </div>
+      <div id="hw-table" class="hw-table"></div>
+      <p class="muted small" id="hw-info"></p>
+    </section>
+  </aside>
+</main>
+
+<!-- File browser -->
+<dialog id="dlg-browse" class="dialog wide">
+  <form method="dialog" class="dialog-inner">
+    <header class="dialog-head">
+      <h2>Add from server</h2>
+      <button class="btn icon ghost" value="cancel" title="Close"><svg><use href="#i-x"/></svg></button>
+    </header>
+    <nav class="crumbs" id="crumbs"></nav>
+    <div class="browse-list" id="browse-list"></div>
+    <footer class="dialog-foot">
+      <span class="muted small" id="browse-sel">Nothing selected</span>
+      <div class="grow"></div>
+      <button class="btn" type="button" id="btn-add-current">Add this folder</button>
+      <button class="btn primary" type="button" id="btn-add-selected" disabled>Add selected</button>
+    </footer>
+  </form>
+</dialog>
+
+<!-- Text viewer (log / command) -->
+<dialog id="dlg-text" class="dialog wide">
+  <form method="dialog" class="dialog-inner">
+    <header class="dialog-head">
+      <h2 id="text-title">Log</h2>
+      <div class="grow"></div>
+      <button class="btn sm" type="button" id="btn-copy">Copy</button>
+      <button class="btn icon ghost" value="cancel" title="Close"><svg><use href="#i-x"/></svg></button>
+    </header>
+    <pre id="text-body" class="mono"></pre>
+  </form>
+</dialog>
+
+<!-- Settings -->
+<dialog id="dlg-settings" class="dialog">
+  <form method="dialog" class="dialog-inner">
+    <header class="dialog-head">
+      <h2>Settings</h2>
+      <button class="btn icon ghost" value="cancel" title="Close"><svg><use href="#i-x"/></svg></button>
+    </header>
+    <div class="dialog-body">
+      <label class="field"><span>Output folder</span>
+        <input id="s-output" placeholder="Same folder as the source file">
+        <small class="muted">Must be inside a media root. Empty = next to each source file. Existing files are never overwritten.</small>
+      </label>
+      <label class="field"><span>When the queue is finished</span><select id="s-post"></select>
+        <small class="muted" id="s-post-note"></small></label>
+      <label class="field"><span>VA-API device</span><input id="s-vaapi" placeholder="/dev/dri/renderD128"></label>
+      <div class="field"><span>Extensions imported from folders</span><div class="chips" id="s-ext"></div></div>
+      <fieldset class="advanced" id="s-advanced">
+        <legend>Advanced</legend>
+        <label class="field"><span>FFmpeg path</span><input id="s-ffmpeg" placeholder="auto-detect"></label>
+        <label class="field"><span>Extra FFmpeg arguments</span><input id="s-extra" class="mono" placeholder="-x265-params …"></label>
+        <small class="muted" id="s-adv-note"></small>
+      </fieldset>
+      <div class="tools-box" id="tools-box"></div>
+    </div>
+    <footer class="dialog-foot">
+      <button class="btn" type="button" id="btn-download" hidden>Download FFmpeg</button>
+      <div class="grow"></div>
+      <button class="btn" value="cancel">Cancel</button>
+      <button class="btn primary" type="button" id="btn-save-settings">Save</button>
+    </footer>
+  </form>
+</dialog>
+
+<div id="toasts" class="toasts" aria-live="polite"></div>
+<script src="app.js" type="module"></script>
+</body>
+</html>

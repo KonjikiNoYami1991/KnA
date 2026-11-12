@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+
 namespace TnA.Core.Encoding;
 
 /// <summary>What the user chose for one file.</summary>
@@ -14,21 +16,27 @@ public sealed record JobSettings
     /// <summary>Prefer a "same name.ass/.srt" file next to the video for hardsub.</summary>
     public bool UseSidecarSubtitles { get; init; } = true;
 
+    [JsonIgnore]
     public ProfileDefinition ProfileDefinition => Profiles.Get(Profile);
 
     /// <summary>Codec actually used (profiles with a fixed codec override the selection).</summary>
+    [JsonIgnore]
     public VideoCodec EffectiveCodec =>
         ProfileDefinition.Codecs.Contains(Codec) ? Codec : ProfileDefinition.Codecs.FirstOrDefault(VideoCodec.H264);
 
+    [JsonIgnore]
     public EncoderBackend EffectiveBackend =>
         ProfileDefinition.AllowsHardware && VideoEncoders.EncoderName(EffectiveCodec, Backend) is not null
             ? Backend : EncoderBackend.Software;
 
+    [JsonIgnore]
     public bool EffectiveTenBit => TenBit && VideoEncoders.Supports10Bit(EffectiveCodec, EffectiveBackend)
                                    && Profile is ProfileKind.UniversalMkv or ProfileKind.Streaming;
 
+    [JsonIgnore]
     public SubtitleMode EffectiveSubtitles => ProfileDefinition.UsesSubtitleMode ? Subtitles : SubtitleMode.None;
 
+    [JsonIgnore]
     public string Label
     {
         get
