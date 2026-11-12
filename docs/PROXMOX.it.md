@@ -1,0 +1,110 @@
+# TnA su Proxmox VE (LXC o VM, senza desktop)
+
+[English](PROXMOX.md) · **Italiano**
+
+L'edizione web di TnA non ha bisogno di un desktop: l'encoder gira sul server e lo usi da qualsiasi
+browser (PC, Mac, telefono) all'indirizzo `http://<ip-del-container>:8585`.
+
+Ci sono due modi per installarla:
+
+| | Docker (dentro un LXC o una VM) | Servizio nativo (LXC o VM) |
+|---|---|---|
+| Installazione | `docker compose up -d` | `sudo ./deploy/install-linux.sh` |
+| Aggiornamenti | ricostruisci l'immagine | `git pull` + rilancia lo script |
+| GPU | `/dev/dri` (o `--gpus all`) nel file compose | viene usato direttamente il `/dev/dri` del container |
+
+## 1. Crea il container
+
+Un **LXC Ubuntu 24.04 non privilegiato** è la scelta più semplice: .NET 10 arriva dai repository di Ubuntu.
+
+- CPU: tutti i core che puoi concedere (x265 e SVT-AV1 li usano tutti).
+- RAM: 2–4 GB.
+- Disco: 8 GB più lo spazio per i file temporanei.
+- Per usare Docker dentro l'LXC, attiva *Options → Features → Nesting*.
+
+## 2. Passa la GPU al container (codifica hardware)
+
+Sul Minisforum UM890 Pro, l'iGPU Radeon 780M (RDNA 3) codifica H.264, HEVC e AV1
+tramite **VA-API**. Su Linux AMF non viene usato.
+
+1. Sull'**host Proxmox**, controlla che il render node esista: `ls -l /dev/dri` deve elencare `renderD128`.
+2. Trova l'id del gruppo `render` **dentro il container**:
+   ```bash
+   pct exec <CTID> -- getent group render
+   ```
+3. Aggiungi il dispositivo, dalla GUI (*Resources → Add → Device Passthrough*) oppure da riga di comando:
+   ```bash
+   pct set <CTID> -dev0 /dev/dri/renderD128,gid=<gid-render-dentro-il-CT>
+   ```
+4. Riavvia il container: le voci dei dispositivi vengono applicate all'avvio.
+
+> Non combinare una voce `devN:` con un `lxc.mount.entry` manuale per lo stesso dispositivo:
+> Proxmox fallisce con "mknod … File exists".
+
+Verifica che funzioni dentro il container:
+
+```bash
+apt install -y vainfo
+vainfo --display drm --device /dev/dri/renderD128 | grep -i enc
+```
+
+Cerca `VAEntrypointEncSlice` su `VAProfileAV1Profile0`, `VAProfileHEVCMain10` e `VAProfileH264High`.
+
+Le **GPU NVIDIA** in un LXC richiedono la stessa versione del driver sull'host e nel container,
+più i dispositivi `nvidia*` passati al container. Una VM con passthrough PCIe è più semplice.
+
+## 3a. Installazione nativa (senza Docker)
+
+```bash
+apt install -y git
+git clone https://github.com/KonjikiNoYami1991/TnA.git && cd TnA
+TNA_MEDIA_ROOTS="/mnt/anime;/mnt/nas" ./deploy/install-linux.sh
+```
+
+Lo script installa FFmpeg, i driver VA-API/QSV e .NET 10, compila TnA in `/opt/tna`
+e crea l'unità systemd `tna.service`, che gira come utente `tna` (membro dei gruppi `render` e `video`).
+
+## 3b. Docker
+
+```bash
+git clone https://github.com/KonjikiNoYami1991/TnA.git && cd TnA
+# modifica docker-compose.yml: la cartella dei video, RENDER_GID, TNA_PASSWORD facoltativa
+RENDER_GID=$(getent group render | cut -d: -f3) docker compose up -d --build
+```
+
+## 4. Cartelle dei video (NAS)
+
+Monta le condivisioni del NAS nel container, per esempio quelle dell'UGREEN DXP4800 Pro o del Synology DS420+.
+Puoi fare un bind mount dall'host (`pct set <CTID> -mp0 /mnt/pve/nas-anime,mp=/mnt/anime`)
+oppure usare NFS/SMB dentro un container privilegiato o una VM. Poi elencale in `TNA_MEDIA_ROOTS`, separate da `;`.
+Il browser vede solo i file dentro queste radici.
+
+L'utente `tna` (o il container) deve avere accesso in **scrittura**: di default i file finali vengono scritti accanto alle sorgenti.
+
+## 5. Primo avvio
+
+Al primo avvio TnA codifica una breve clip di prova con ogni encoder presente in FFmpeg.
+La scheda *Hardware* mostra poi cosa funziona davvero su questa macchina.
+Usa **Rileva di nuovo** dopo aver cambiato GPU o driver.
+
+## Variabili d'ambiente
+
+| Variabile | Predefinito | Significato |
+|---|---|---|
+| `TNA_URLS` | `http://0.0.0.0:8585` | Indirizzo di ascolto |
+| `TNA_MEDIA_ROOTS` | `/media` (Docker) | Cartelle che si possono sfogliare, separate da `;` |
+| `TNA_DATA_DIR` | `/config` (Docker), `/var/lib/tna` | Impostazioni, log, file temporanei |
+| `TNA_PASSWORD` | – | Attiva l'autenticazione HTTP Basic (qualsiasi nome utente) |
+| `TNA_ALLOW_ADVANCED` | `false` | Permette di modificare dal browser il percorso di FFmpeg e gli argomenti extra |
+| `TNA_ALLOW_POWER_ACTIONS` | `false` | Permette "spegni / sospendi a fine coda" |
+| `TNA_FFMPEG` | auto | Percorso di un ffmpeg specifico (es. jellyfin-ffmpeg) |
+| `TNA_LOCK_COMPONENTS` | `false` | Vieta di installare/aggiornare FFmpeg e gli strumenti HDR dal browser |
+| `TNA_LANG` | auto | Forza la lingua (`it` o `en`); altrimenti decide il browser, oppure *Impostazioni → Generale* |
+| `TNA_VSPIPE` | auto | Percorso di `vspipe` (VapourSynth) |
+
+## VapourSynth e AviSynth sul server
+
+- **VapourSynth**: installalo nel container/VM (per esempio `pip install vapoursynth` seguito da `vapoursynth config`, più i plugin sorgente usati dai tuoi script,
+  come L-SMASH Works o BestSource) e assicurati che `vspipe` sia nel PATH dell'utente `tna`, oppure imposta `TNA_VSPIPE`.
+- **AviSynth+** su Linux richiede un FFmpeg compilato con `--enable-avisynth` e la libreria AviSynth+ installata.
+  Il pacchetto FFmpeg di Ubuntu e l'immagine Docker non lo includono; TnA lo segnala chiaramente quando un file `.avs` non è leggibile.

@@ -1,5 +1,7 @@
 # TnA on Proxmox VE (LXC or VM, no desktop)
 
+**English** · [Italiano](PROXMOX.it.md)
+
 TnA's web edition runs headless: the encoder runs on the server, and you use it from any
 browser (PC, Mac, phone) at `http://<container-ip>:8585`.
 
@@ -96,3 +98,13 @@ Use **Detect again** after changing GPU or driver.
 | `TNA_ALLOW_ADVANCED` | `false` | Allows editing the FFmpeg path and extra arguments from the browser |
 | `TNA_ALLOW_POWER_ACTIONS` | `false` | Allows "shut down / sleep when finished" |
 | `TNA_FFMPEG` | auto | Path to a specific ffmpeg binary (e.g. jellyfin-ffmpeg) |
+| `TNA_LOCK_COMPONENTS` | `false` | Forbids installing/updating FFmpeg and the HDR tools from the browser |
+| `TNA_LANG` | auto | Forces the language (`it` or `en`); otherwise the browser decides, or *Settings → General* |
+| `TNA_VSPIPE` | auto | Path to `vspipe` (VapourSynth) |
+
+## VapourSynth and AviSynth on the server
+
+- **VapourSynth**: install it in the container/VM (for example `pip install vapoursynth` followed by `vapoursynth config`, plus the source plugins your scripts use,
+  such as L-SMASH Works or BestSource), make sure `vspipe` is on the PATH of the `tna` user or set `TNA_VSPIPE`.
+- **AviSynth+** on Linux needs an FFmpeg built with `--enable-avisynth` and the AviSynth+ library installed.
+  The Ubuntu FFmpeg package and the Docker image do not include it; TnA says so clearly when an `.avs` file cannot be read.

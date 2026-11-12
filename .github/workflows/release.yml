@@ -1,0 +1,67 @@
+name: Release
+
+# Runs only when a version tag is pushed (git tag v2.0.0 && git push origin v2.0.0).
+# Builds self-contained packages named as the in-app updater expects (TnA-{desktop|server}-{rid}.zip)
+# and attaches them to a *draft* release, which is published by hand after a check.
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: windows-latest, rid: win-x64 }
+          - { os: windows-latest, rid: win-arm64 }
+          - { os: macos-latest, rid: osx-arm64 }
+          - { os: macos-latest, rid: osx-x64 }
+          - { os: ubuntu-24.04, rid: linux-x64 }
+          - { os: ubuntu-24.04-arm, rid: linux-arm64 }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 10.0.x
+      - name: Version from tag
+        shell: bash
+        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
+      - name: Publish
+        shell: bash
+        run: |
+          dotnet publish src/TnA.App -c Release -r ${{ matrix.rid }} --self-contained -p:Version=$VERSION -o out/desktop
+          dotnet publish src/TnA.Server -c Release -r ${{ matrix.rid }} --self-contained -p:Version=$VERSION -o out/server
+      - name: Zip (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          Compress-Archive -Path out/desktop/* -DestinationPath TnA-desktop-${{ matrix.rid }}.zip
+          Compress-Archive -Path out/server/* -DestinationPath TnA-server-${{ matrix.rid }}.zip
+      - name: Zip (keeps the executable bit)
+        if: runner.os != 'Windows'
+        run: |
+          (cd out/desktop && zip -qry "$GITHUB_WORKSPACE/TnA-desktop-${{ matrix.rid }}.zip" .)
+          (cd out/server && zip -qry "$GITHUB_WORKSPACE/TnA-server-${{ matrix.rid }}.zip" .)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tna-${{ matrix.rid }}
+          path: TnA-*.zip
+
+  release:
+    needs: build
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/*.zip --repo "$GITHUB_REPOSITORY" --draft --generate-notes --title "TnA $GITHUB_REF_NAME"
