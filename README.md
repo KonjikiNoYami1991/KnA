@@ -1,6 +1,6 @@
 # TnA - Tanoshimi no Autohardsubber 2.0
 
-An almost automatic hardsubber and encoder from [Tanoshimi no Sekai Fansub](https://tnsfansub.com/), rewritten from scratch for **.NET 10**.
+An almost automatic hardsubber and encoder by KonjikiNoYami, rewritten from scratch for **.NET 10**.
 
 Drop in some MKV episodes and pick a profile. TnA finds the right subtitle track, extracts the embedded fonts,
 burns the subtitles in with libass, and encodes the video on the **CPU or the GPU** (NVENC, Quick Sync, AMF,

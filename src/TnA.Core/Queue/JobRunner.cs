@@ -18,9 +18,6 @@ public sealed record RunnerContext(
 /// <summary>Runs a single job end to end: probe → validate → prepare → encode → verify → log → clean up.</summary>
 public static class JobRunner
 {
-    /// <summary>FFmpeg is considered stuck after this long without progress (pauses excluded).</summary>
-    public static TimeSpan StallTimeout { get; set; } = TimeSpan.FromMinutes(10);
-
     public static async Task RunAsync(QueueJob job, RunnerContext ctx, CancellationToken ct)
     {
         string workDir = Path.Combine(ctx.Store.TempDirectory, job.Id.ToString("N"));
@@ -36,8 +33,9 @@ public static class JobRunner
 
             job.Stage = L.T("Analysing");
             ctx.Changed(job);
-            var prober = new MediaProber(ctx.Tools.Ffprobe);
+            var prober = MediaProber.For(ctx.Tools);
             job.Media = await prober.ProbeAsync(job.SourcePath, ct);
+            EnsureFrameserverScript(job, ctx.Store);
             await ProbeExternalsAsync(job, prober, ct);
             job.AppendLog($"TnA {AppInfo.Version} · {DateTime.Now:yyyy-MM-dd HH:mm:ss}");
             job.AppendLog($"Source: {job.SourcePath}");
@@ -96,6 +94,8 @@ public static class JobRunner
                 sideFiles = await ExtractHdrMetadataAsync(job, check.Hdr, workDir, ctx, ct);
             }
 
+            var scriptAudio = await RenderScriptAudioAsync(check.Tracks, workDir, ctx, job, ct);
+            baseCtx = baseCtx with { ScriptAudio = scriptAudio };
             var compiled = CommandBuilder.Compile(baseCtx with { Burn = subs, HdrFiles = sideFiles });
             if (compiled.HasErrors) throw new InvalidOperationException(compiled.Issues.First(i => i.IsError).Message);
             job.OutputPath = compiled.Plan.OutputPath;
@@ -113,7 +113,9 @@ public static class JobRunner
             // ------------------------------------------------------------ run
             job.Stage = p.IsRemux ? L.T("Remuxing") : p.IsImages ? L.T("Exporting images") : L.T("Encoding");
             ctx.Changed(job);
-            int exit = await RunFfmpegWithProgressAsync(job, compiled.Plan.Arguments, workDir, compiled.OutputDuration, ctx, ct);
+            int exit = s.Chunks.Enabled && p.EncodesVideo
+                ? await ChunkedEncoder.RunAsync(job, ctx, baseCtx with { Burn = subs, HdrFiles = sideFiles }, compiled, workDir, ct)
+                : await RunFfmpegWithProgressAsync(job, compiled.Plan.Arguments, workDir, compiled.OutputDuration, ctx, ct, compiled.Pipe);
 
             if (exit != 0)
             {
@@ -161,15 +163,19 @@ public static class JobRunner
     {
         var media = new Dictionary<string, MediaInfo>(job.ExternalMedia) { [job.SourcePath] = job.Media! };
         var caps = settings.Capabilities;
+        var edit = job.Edit.Tracks is null && FrameserverMedia(job) is { } fs
+            ? job.Edit with { Tracks = TrackPlanner.Default(job.Media!, job.Settings, frameserver: fs) }
+            : job.Edit;
         return new CompileContext
         {
             Source = job.Media!,
             Media = media,
             Settings = job.Settings,
-            Edit = job.Edit,
+            Edit = edit,
             Options = new BuildOptions
             {
                 OutputDirectory = settings.OutputDirectory,
+                NameTemplate = settings.OutputNameTemplate,
                 VaapiDevice = settings.VaapiDevice,
                 ExtraArguments = SplitArgs(settings.ExtraArguments),
                 AppVersion = AppInfo.Version,
@@ -178,8 +184,29 @@ public static class JobRunner
         };
     }
 
+    /// <summary>Writes the job's VapourSynth/AviSynth script (Frameserver settings) and remembers its path.</summary>
+    internal static void EnsureFrameserverScript(QueueJob job, SettingsStore store)
+    {
+        var fs = job.Settings.Frameserver;
+        if (fs.Kind == FrameserverKind.None || string.IsNullOrWhiteSpace(fs.Script) || Frameserver.KindOf(job.SourcePath) != FrameserverKind.None
+            || !job.Settings.ProfileDefinition.UsesVideoFilters)
+        {
+            job.FrameserverScript = null;
+            return;
+        }
+        job.FrameserverScript = Frameserver.WriteScript(Path.Combine(store.DataDirectory, "scripts"), job.Id, fs, job.SourcePath);
+    }
+
+    internal static MediaInfo? FrameserverMedia(QueueJob job) =>
+        job.FrameserverScript is { } p ? job.ExternalMedia.GetValueOrDefault(p) : null;
+
     internal static async Task ProbeExternalsAsync(QueueJob job, MediaProber prober, CancellationToken ct)
     {
+        if (job.FrameserverScript is { } script)
+        {
+            job.ExternalMedia.Remove(script); // the script text may have changed
+            job.ExternalMedia[script] = await prober.ProbeAsync(script, ct, requireVideo: true);
+        }
         foreach (var file in job.Edit.ExternalFiles.Concat(job.Edit.Tracks?.Select(t => t.File) ?? []).Distinct())
         {
             if (file == job.SourcePath || TrackPlanner.IsFontFile(file) || job.ExternalMedia.ContainsKey(file)) continue;
@@ -239,7 +266,7 @@ public static class JobRunner
     }
 
     private static async Task<int> RunFfmpegWithProgressAsync(QueueJob job, IReadOnlyList<string> args, string workDir,
-        TimeSpan duration, RunnerContext ctx, CancellationToken ct)
+        TimeSpan duration, RunnerContext ctx, CancellationToken ct, PipeSource? pipe = null)
     {
         var parser = new ProgressParser(duration);
         var lastNotify = DateTime.MinValue;
@@ -251,9 +278,9 @@ public static class JobRunner
             {
                 try { await Task.Delay(TimeSpan.FromSeconds(15), watchdog.Token); } catch (OperationCanceledException) { return; }
                 if (ctx.Processes.IsPaused) lastProgress = DateTime.UtcNow;
-                else if (DateTime.UtcNow - lastProgress > StallTimeout)
+                else if (DateTime.UtcNow - lastProgress > TimeSpan.FromMinutes(Math.Max(1, ctx.Settings.StallTimeoutMinutes)))
                 {
-                    job.AppendLog($"ERROR: no progress for {StallTimeout.TotalMinutes:0} minutes, FFmpeg looks stuck.");
+                    job.AppendLog($"ERROR: no progress for {ctx.Settings.StallTimeoutMinutes} minutes, FFmpeg looks stuck.");
                     ctx.Processes.KillAll();
                     return;
                 }
@@ -261,7 +288,7 @@ public static class JobRunner
         });
         try
         {
-            return await RunStreamingAsync(ctx.Tools.Ffmpeg, args, workDir, ctx.Processes,
+            return await RunStreamingAsync(ctx.Tools.Ffmpeg, args, workDir, ctx.Processes, ctx.Settings.Priority, pipe, ctx.Tools.VsPipe,
                 onStdout: line =>
                 {
                     if (parser.Feed(line) is not { } p) return;
@@ -401,28 +428,97 @@ public static class JobRunner
         }
     }
 
+    internal static Task<int> RunStreamingAsync(string exe, IEnumerable<string> args, string? workDir,
+        ProcessGroup group, Action<string>? onStdout, Action<string>? onStderr, CancellationToken ct) =>
+        RunStreamingAsync(exe, args, workDir, group, ProcessPriority.Normal, null, null, onStdout, onStderr, ct);
+
+    internal static Task<int> RunStreamingAsync(string exe, IEnumerable<string> args, string? workDir,
+        ProcessGroup group, ProcessPriority priority, Action<string>? onStdout, Action<string>? onStderr, CancellationToken ct) =>
+        RunStreamingAsync(exe, args, workDir, group, priority, null, null, onStdout, onStderr, ct);
+
+    /// <summary>Runs FFmpeg; with <paramref name="pipe"/>, vspipe feeds FFmpeg's stdin (both paused/stopped together).</summary>
     internal static async Task<int> RunStreamingAsync(string exe, IEnumerable<string> args, string? workDir,
-        ProcessGroup group, Action<string>? onStdout, Action<string>? onStderr, CancellationToken ct)
+        ProcessGroup group, ProcessPriority priority, PipeSource? pipe, string? vspipe,
+        Action<string>? onStdout, Action<string>? onStderr, CancellationToken ct)
     {
-        using var p = new Process { StartInfo = ProcessRunner.CreateStartInfo(exe, args, workDir), EnableRaisingEvents = true };
+        var psi = ProcessRunner.CreateStartInfo(exe, args, workDir);
+        // Never inherit our stdin: without a pipe FFmpeg gets an immediate EOF instead of waiting forever.
+        psi.RedirectStandardInput = true;
+        using var p = new Process { StartInfo = psi, EnableRaisingEvents = true };
         p.OutputDataReceived += (_, e) => { if (e.Data is not null) onStdout?.Invoke(e.Data); };
         p.ErrorDataReceived += (_, e) => { if (e.Data is not null) onStderr?.Invoke(e.Data); };
+        Process? vs = null;
+        if (pipe is not null)
+        {
+            if (vspipe is null) throw new InvalidOperationException(L.T("vspipe was not found: install VapourSynth (or set TNA_VSPIPE)."));
+            vs = new Process { StartInfo = ProcessRunner.CreateStartInfo(vspipe, Frameserver.VsPipeVideoArgs(pipe.Script, pipe.StartFrame, pipe.EndFrame), workDir) };
+            vs.ErrorDataReceived += (_, e) => { if (e.Data is not null && !e.Data.StartsWith("Output ", StringComparison.Ordinal)) onStderr?.Invoke("[vspipe] " + e.Data); };
+            vs.Start();
+            SetPriority(vs, priority);
+            group.Add(vs);
+            vs.BeginErrorReadLine();
+        }
         p.Start();
+        SetPriority(p, priority);
         group.Add(p);
+        if (vs is null) p.StandardInput.Close();
         try
         {
             p.BeginOutputReadLine();
             p.BeginErrorReadLine();
-            using var reg = ct.Register(() => ProcessControl.KillTree(p));
+            using var reg = ct.Register(() => { ProcessControl.KillTree(p); if (vs is not null) ProcessControl.KillTree(vs); });
+            Task copy = Task.CompletedTask;
+            if (vs is not null)
+                copy = Task.Run(async () =>
+                {
+                    try { await vs.StandardOutput.BaseStream.CopyToAsync(p.StandardInput.BaseStream, 1 << 20); }
+                    catch (IOException) { /* ffmpeg stopped reading (e.g. -frames reached) */ }
+                    finally { try { p.StandardInput.Close(); } catch (IOException) { } }
+                });
             await p.WaitForExitAsync(CancellationToken.None);
             p.WaitForExit(); // flush async readers
+            if (vs is not null)
+            {
+                if (!vs.HasExited) ProcessControl.KillTree(vs); // ffmpeg finished early (range end / frames limit)
+                await copy;
+            }
             ct.ThrowIfCancellationRequested();
             return p.ExitCode;
         }
         finally
         {
             group.Remove(p);
+            if (vs is not null) { group.Remove(vs); vs.Dispose(); }
         }
+    }
+
+    /// <summary>Renders the audio outputs of VapourSynth scripts used by the plan to W64 files.</summary>
+    internal static async Task<Dictionary<string, string>> RenderScriptAudioAsync(IReadOnlyList<TrackPlan> tracks, string workDir,
+        RunnerContext ctx, QueueJob job, CancellationToken ct)
+    {
+        var map = new Dictionary<string, string>();
+        foreach (var t in tracks.Where(t => t.Include && t.Kind == "audio" && Frameserver.IsVapourSynth(t.File)))
+        {
+            if (ctx.Tools.VsPipe is null) throw new InvalidOperationException(L.T("vspipe was not found: install VapourSynth (or set TNA_VSPIPE)."));
+            Directory.CreateDirectory(workDir);
+            var file = Path.Combine(workDir, $"script-audio-{t.Stream}.w64");
+            job.Stage = L.T("Rendering script audio");
+            ctx.Changed(job);
+            var r = await ProcessRunner.RunAsync(ctx.Tools.VsPipe, ["-o", t.Stream.ToString(System.Globalization.CultureInfo.InvariantCulture), "-c", "w64", t.File, file],
+                workingDirectory: workDir, timeout: TimeSpan.FromHours(6), ct: ct);
+            if (r.ExitCode != 0) throw new InvalidOperationException(L.T("The VapourSynth script failed: {0}", r.StdErr.Trim()));
+            map[$"{t.File}|{t.Stream}"] = file;
+            job.AppendLog($"Script audio (output {t.Stream}) rendered.");
+        }
+        return map;
+    }
+
+    /// <summary>Lower priority keeps the computer responsive while encoding.</summary>
+    internal static void SetPriority(Process p, ProcessPriority priority)
+    {
+        if (priority == ProcessPriority.Normal) return;
+        try { p.PriorityClass = priority == ProcessPriority.Idle ? ProcessPriorityClass.Idle : ProcessPriorityClass.BelowNormal; }
+        catch (Exception ex) when (ex is InvalidOperationException or System.ComponentModel.Win32Exception or PlatformNotSupportedException) { }
     }
 
     private static void Complete(QueueJob job, JobStatus status, string? message, RunnerContext ctx)
@@ -482,7 +578,7 @@ public static class JobRunner
             var name = $"{DateTime.Now:yyyyMMdd-HHmmss} {Path.GetFileNameWithoutExtension(job.SourcePath)}.log";
             name = string.Concat(name.Select(c => Path.GetInvalidFileNameChars().Contains(c) ? '_' : c));
             File.WriteAllText(Path.Combine(store.LogsDirectory, name), job.Log);
-            store.RotateLogs();
+            store.RotateLogs(store.KeepLogs);
         }
         catch (IOException) { }
     }

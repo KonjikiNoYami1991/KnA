@@ -380,3 +380,170 @@ public class FeatureTests(FeatureFixture fx) : IClassFixture<FeatureFixture>
         Assert.EndsWith("musl.tar.gz", r.Assets[0].Name);
     }
 }
+
+public class ChunkTests(FeatureFixture fx) : IClassFixture<FeatureFixture>
+{
+    [Fact]
+    public void Split_points_follow_keyframes_or_fixed_steps()
+    {
+        var kf = new List<double> { 0, 4, 9, 13, 21, 30, 38, 45, 52, 59 };
+        Assert.Equal([0, 13, 30, 45, 60], ChunkedEncoder.SplitPoints(kf, 0, 60, 10));
+        Assert.Equal([5, 15, 25, 35], ChunkedEncoder.SplitPoints([], 5, 35, 10));
+    }
+
+    [Fact]
+    public async Task Chunked_encode_is_frame_exact_burns_subtitles_and_resumes_after_stop()
+    {
+        if (fx.Tools is null) return;
+        var data = Path.Combine(fx.Dir, "data-chunks");
+        var settings = new JobSettings
+        {
+            Profile = ProfileKind.Streaming, Codec = VideoCodec.H264, Quality = QualityLevel.Draft, Resolution = 0,
+            Chunks = new ChunkSettings { Enabled = true, Workers = 2, TargetSeconds = 4 },
+        };
+        var edit = new JobEdit
+        {
+            ExternalFiles = [fx.ExtSubs],
+            Tracks = [new() { File = fx.Black, Stream = 0, Kind = "video" }, new() { File = fx.Black, Stream = 1, Kind = "audio" },
+                      new() { File = fx.ExtSubs, Stream = 0, Kind = "subtitle", Include = false, Burn = true, DelayMs = 3000 }],
+            TrimStart = 12, TrimEnd = 18,
+        };
+
+        // 1st run: stop as soon as the first segment is done.
+        using (var q = new QueueService(new SettingsStore(data), restoreQueue: false))
+        {
+            var job = Assert.Single(q.AddPaths([fx.Black], settings));
+            await q.SetEditAsync(job.Id, edit);
+            q.Start();
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            var manifest = () => Directory.Exists(ChunkedEncoder.ChunksRoot(q.Store)) ? Directory.GetFiles(ChunkedEncoder.ChunksRoot(q.Store), "segment_*.mkv", SearchOption.AllDirectories).Where(f => !f.Contains(".part")).ToArray() : [];
+            while (manifest().Length == 0 && sw.Elapsed < TimeSpan.FromSeconds(60)) await Task.Delay(50);
+            await q.StopAsync();
+            Assert.Equal(JobStatus.Stopped, job.Status);
+            Assert.NotEmpty(manifest());
+        }
+
+        // 2nd run (new process, same data folder): resumes and finishes.
+        using (var q = new QueueService(new SettingsStore(data), restoreQueue: false))
+        {
+            var job = Assert.Single(q.AddPaths([fx.Black], settings));
+            await q.SetEditAsync(job.Id, edit);
+            var done = new TaskCompletionSource();
+            q.QueueChanged += () => { if (!q.IsRunning) done.TrySetResult(); };
+            q.Start();
+            await done.Task.WaitAsync(TimeSpan.FromMinutes(3));
+            Assert.True(job.Status is JobStatus.Done or JobStatus.Warning, job.Message + "\n" + job.Log);
+            Assert.Contains("resuming", job.Log);
+
+            // 6 s at 25 fps = 150 frames, no duplicates or gaps at the joins.
+            var frames = await ProcessRunner.RunAsync(fx.Tools.Ffprobe, ["-v", "error", "-count_frames", "-select_streams", "v:0",
+                "-show_entries", "stream=nb_read_frames", "-of", "csv=p=0", job.OutputPath!]);
+            var n = int.Parse(frames.StdOut.Trim().TrimEnd(','));
+            Assert.InRange(n, 149, 151);
+            var starts = await ProcessRunner.RunAsync(fx.Tools.Ffprobe, ["-v", "error", "-show_entries", "stream=start_time", "-of", "csv=p=0", job.OutputPath!]);
+            Assert.All(starts.StdOut.Split('\n', StringSplitOptions.RemoveEmptyEntries), st => Assert.InRange(double.Parse(st.Trim().TrimEnd(','), CultureInfo.InvariantCulture), 0, 0.1));
+            var m = await new MediaProber(fx.Tools.Ffprobe).ProbeAsync(job.OutputPath!);
+            Assert.Single(m.Audio);
+            // Subtitle (10–12 s + 3 s delay = 13–15 s; trim from 12 s) visible at output 2 s (= 14 s), gone at 4.5 s (= 16.5 s).
+            Assert.True(await Luma(job.OutputPath!, 2.0) > 40);
+            Assert.True(await Luma(job.OutputPath!, 4.5) < 25);
+            Assert.False(Directory.EnumerateFiles(ChunkedEncoder.ChunksRoot(q.Store), "*.mkv", SearchOption.AllDirectories).Any(), "segments cleaned up");
+        }
+    }
+
+    private async Task<double> Luma(string file, double t)
+    {
+        var r = await ProcessRunner.RunAsync(fx.Tools!.Ffmpeg, ["-hide_banner", "-ss", t.ToString(CultureInfo.InvariantCulture), "-i", file,
+            "-frames:v", "1", "-vf", "crop=iw:ih/3:0:2*ih/3,signalstats,metadata=print:key=lavfi.signalstats.YAVG:file=-", "-f", "null", "-"]);
+        return double.Parse(r.StdOut.Split('\n').First(l => l.Contains("YAVG")).Split('=')[1], CultureInfo.InvariantCulture);
+    }
+}
+
+/// <summary>VapourSynth through vspipe (skipped when VapourSynth is not installed).</summary>
+public class FrameserverTests(FeatureFixture fx) : IClassFixture<FeatureFixture>
+{
+    private static string? VsPipe()
+    {
+        var p = Environment.GetEnvironmentVariable("TNA_VSPIPE") ?? FfmpegLocator.LocateVsPipe();
+        if (p is not null) Environment.SetEnvironmentVariable("TNA_VSPIPE", p);
+        return p;
+    }
+
+    private string Script(string name, bool audio, string body = "core.std.BlankClip(width=640, height=360, format=vs.YUV420P8, length=250, fpsnum=25, fpsden=1, color=[200,128,128])")
+    {
+        var path = Path.Combine(fx.Dir, name);
+        File.WriteAllText(path, $"""
+            import vapoursynth as vs
+            core = vs.core
+            clip = {body}
+            clip.set_output(0)
+            {(audio ? "core.std.BlankAudio(length=441000).set_output(1)" : "")}
+            """.Replace("            ", ""));
+        return path;
+    }
+
+    private static async Task Finish(QueueService q, QueueJob job)
+    {
+        var done = new TaskCompletionSource();
+        q.QueueChanged += () => { if (!q.IsRunning) done.TrySetResult(); };
+        q.Start();
+        await done.Task.WaitAsync(TimeSpan.FromMinutes(3));
+        Assert.True(job.Status is JobStatus.Done or JobStatus.Warning, job.Message + "\n" + job.Log);
+    }
+
+    [Fact]
+    public async Task VapourSynth_script_with_audio_encodes_whole_chunked_and_previews()
+    {
+        if (fx.Tools is null || VsPipe() is null) return;
+        var vpy = Script("show.vpy", audio: true);
+        using var q = new QueueService(new SettingsStore(Path.Combine(fx.Dir, "data-vs")), restoreQueue: false);
+        Assert.NotNull(q.Tools!.VsPipe);
+        var whole = Assert.Single(q.AddPaths([vpy], new JobSettings { Profile = ProfileKind.UniversalMkv, Codec = VideoCodec.H264, Quality = QualityLevel.Draft, Resolution = 0, Subtitles = SubtitleMode.None }));
+        var a = await q.AnalyzeAsync(whole);
+        Assert.Contains(a.Tracks, t => t.Kind == "audio" && t.Include && t.File == vpy && t.Stream == 1);   // script audio offered and used
+        var chunked = Assert.Single(q.AddPaths([vpy], whole.Settings with { Chunks = new ChunkSettings { Enabled = true, Workers = 2, TargetSeconds = 3 } }));
+        await q.SetEditAsync(chunked.Id, new JobEdit { TrimStart = 2, TrimEnd = 8 });
+        await Finish(q, whole);
+        Assert.True(chunked.Status is JobStatus.Done or JobStatus.Warning, chunked.Message + "\n" + chunked.Log);
+
+        var m = await new MediaProber(fx.Tools.Ffprobe).ProbeAsync(whole.OutputPath!);
+        Assert.InRange(m.Duration.TotalSeconds, 9.8, 10.2);
+        Assert.Single(m.Audio);
+        var frames = await ProcessRunner.RunAsync(fx.Tools.Ffprobe, ["-v", "error", "-count_frames", "-select_streams", "v:0", "-show_entries", "stream=nb_read_frames", "-of", "csv=p=0", chunked.OutputPath!]);
+        Assert.InRange(int.Parse(frames.StdOut.Trim().TrimEnd(',')), 149, 151);   // 6 s at 25 fps from the pipe, cut in 2 segments
+
+        var frame = await q.Preview.FrameAsync(whole.Id, 5, final: true, 320);
+        Assert.True(new FileInfo(frame).Length > 100);
+        Assert.True(new FileInfo(await q.Preview.FrameAsync(whole.Id, 9.9, final: false, 320)).Length > 100);   // near the end
+        Assert.True(new FileInfo(await q.Preview.ThumbnailAsync(whole.Id, 3)).Length > 100);
+        Assert.True(new FileInfo(await q.Preview.WaveformAsync(whole.Id, vpy, 1, 400, 60)).Length > 50);
+        Assert.True(new FileInfo(await q.Preview.ClipAsync(whole.Id, 2, 2)).Length > 1000);
+        await q.Preview.DetectCropAsync(whole.Id);   // must not throw on a script
+    }
+
+    [Fact]
+    public async Task Frameserver_settings_replace_the_picture_and_keep_file_audio()
+    {
+        if (fx.Tools is null || VsPipe() is null) return;
+        using var q = new QueueService(new SettingsStore(Path.Combine(fx.Dir, "data-vs2")), restoreQueue: false);
+        var s = new JobSettings
+        {
+            Profile = ProfileKind.Streaming, Codec = VideoCodec.H264, Quality = QualityLevel.Draft, Resolution = 0, Subtitles = SubtitleMode.None,
+            Frameserver = new FrameserverSettings
+            {
+                Kind = FrameserverKind.VapourSynth,
+                // A real script would load {source} with lsmas/bs/ffms2: here a plugin-free clip proves the wiring.
+                Script = "import vapoursynth as vs\ncore = vs.core\n# source: {source}\nclip = core.std.BlankClip(width=320, height=240, format=vs.YUV420P8, length=500, fpsnum=25, fpsden=1)\nclip.set_output(0)\n",
+            },
+        };
+        var job = Assert.Single(q.AddPaths([fx.Black], s));
+        var a = await q.AnalyzeAsync(job);
+        Assert.Contains(a.Tracks, t => t.Kind == "video" && t.Include && t.File.EndsWith(".vpy"));
+        Assert.Contains(a.Tracks, t => t.Kind == "audio" && t.Include && t.File == fx.Black);
+        Assert.Contains(fx.Black, File.ReadAllText(job.FrameserverScript!));   // {source} substituted
+        await Finish(q, job);
+        var m = await new MediaProber(fx.Tools.Ffprobe).ProbeAsync(job.OutputPath!);
+        Assert.Equal(320, m.PrimaryVideo!.Width);   // picture from the script
+        Assert.Equal("aac", Assert.Single(m.Audio).CodecName);   // audio from the file
+    }
+}

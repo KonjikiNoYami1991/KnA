@@ -1,6 +1,6 @@
 namespace TnA.Core.Tools;
 
-public sealed record FfmpegTools(string Ffmpeg, string Ffprobe, string? Scxvid, string? DoviTool = null, string? Hdr10PlusTool = null);
+public sealed record FfmpegTools(string Ffmpeg, string Ffprobe, string? Scxvid, string? DoviTool = null, string? Hdr10PlusTool = null, string? VsPipe = null);
 
 /// <summary>
 /// Finds the external programs. Order: configured path → TnA-managed copies in the data folder
@@ -35,8 +35,25 @@ public static class FfmpegLocator
                 return new FfmpegTools(ff, probe,
                     LocateTool(["scxvid", "SCXvid"], dataDirectory, dir),
                     LocateTool(["dovi_tool"], dataDirectory, dir),
-                    LocateTool(["hdr10plus_tool"], dataDirectory, dir));
+                    LocateTool(["hdr10plus_tool"], dataDirectory, dir),
+                    LocateVsPipe());
         }
+        return null;
+    }
+
+    /// <summary>vspipe: PATH, $TNA_VSPIPE, the VapourSynth installer folders on Windows.</summary>
+    public static string? LocateVsPipe()
+    {
+        if (Environment.GetEnvironmentVariable("TNA_VSPIPE") is { Length: > 0 } env && File.Exists(env)) return env;
+        var found = SearchPath("vspipe").FirstOrDefault() ?? SearchPath("VSPipe").FirstOrDefault();
+        if (found is not null) return found;
+        if (OperatingSystem.IsWindows())
+            foreach (var root in new[] { Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData) + "\\Programs" })
+                foreach (var rel in new[] { "VapourSynth\\core\\vspipe.exe", "VapourSynth\\vspipe.exe" })
+                    if (File.Exists(Path.Combine(root, rel))) return Path.Combine(root, rel);
+        if (OperatingSystem.IsMacOS())
+            foreach (var p in new[] { "/opt/homebrew/bin/vspipe", "/usr/local/bin/vspipe" })
+                if (File.Exists(p)) return p;
         return null;
     }
 

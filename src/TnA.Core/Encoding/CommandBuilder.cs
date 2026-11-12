@@ -19,6 +19,7 @@ public sealed record BuildOptions
 {
     /// <summary>Destination folder; null = next to the source file.</summary>
     public string? OutputDirectory { get; init; }
+    public string NameTemplate { get; init; } = OutputNaming.DefaultTemplate;
     public string? VaapiDevice { get; init; }
     /// <summary>Extra arguments appended before the output (power users).</summary>
     public IReadOnlyList<string> ExtraArguments { get; init; } = [];
@@ -46,9 +47,20 @@ public sealed record CompileContext
     public string? ForcedOutputPath { get; init; }
     /// <summary>Preview mode: render one frame (or a short clip) at this time instead of the whole job.</summary>
     public PreviewRequest? Preview { get; init; }
+    /// <summary>Chunked encoding: encode only the video between these final-timeline times (one segment).</summary>
+    public ChunkRequest? Chunk { get; init; }
+    /// <summary>Chunked encoding, last step: take the video from the concatenated segments instead of encoding it.</summary>
+    public ConcatVideo? Concat { get; init; }
+    /// <summary>Chunked encoding, assembly step A: everything except the video (audio, subtitles, attachments,
+    /// chapters), trimmed on the final timeline, written to an intermediate Matroska file.</summary>
+    public bool RestOnly { get; init; }
+    /// <summary>Script audio (VapourSynth output N) rendered to files: key "script|stream".</summary>
+    public IReadOnlyDictionary<string, string> ScriptAudio { get; init; } = new Dictionary<string, string>();
 }
 
 public enum PreviewKind { Frame, Clip }
+public sealed record ChunkRequest(double Start, double End);
+public sealed record ConcatVideo(string ListFile, double Offset);
 public sealed record PreviewRequest(PreviewKind Kind, double Time, double ClipSeconds = 6, int MaxWidth = 1280);
 
 public sealed record CompiledJob(
@@ -59,6 +71,9 @@ public sealed record CompiledJob(
     string Container,
     TimeSpan OutputDuration)
 {
+    /// <summary>vspipe to start and connect to FFmpeg's stdin (VapourSynth video), or null.</summary>
+    public PipeSource? Pipe { get; init; }
+
     public bool HasErrors => Issues.Any(i => i.IsError);
 }
 
@@ -93,6 +108,9 @@ public static class CommandBuilder
         var issues = new List<ValidationIssue>();
         var tracks = ctx.Edit.Tracks ?? TrackPlanner.Default(ctx.Source, s);
         var preview = ctx.Preview;
+        var chunk = ctx.Chunk;
+        var concat = ctx.Concat;
+        bool chunkedJob = s.Chunks.Enabled && p.EncodesVideo && preview is null;
 
         // ------------------------------------------------------------ container
         string container = s.EffectiveContainer;
@@ -109,26 +127,43 @@ public static class CommandBuilder
         if (videoTrack is null || TrackPlanner.Lookup(videoTrack, media) is not VideoStream video)
             return Fail(Containers.Error("No video track selected."), tracks, container);
 
-        bool copyVideo = preview is null && (p.Kind == ProfileKind.RemuxMkv
+        bool copyVideo = preview is null && chunk is null && (concat is not null || p.Kind == ProfileKind.RemuxMkv
                          || (p.Kind == ProfileKind.RemuxMp4 && Containers.AcceptsVideo("mp4", video.CodecName)));
         var encodeCodec = p.Kind == ProfileKind.RemuxMp4 ? VideoCodec.H264 : s.EffectiveCodec;
-        if (copyVideo && !Containers.AcceptsVideo(container, video.CodecName))
+        if (copyVideo && concat is null && !Containers.AcceptsVideo(container, video.CodecName))
             issues.Add(Containers.Error("The {0} video cannot be stored in {1}.", video.CodecName, container.ToUpperInvariant()));
-        if (!copyVideo && p.EncodesVideo && preview is null && !Containers.AcceptsVideo(container, Containers.OutputVideoCodec(encodeCodec)))
+        if ((!copyVideo || concat is not null) && p.EncodesVideo && preview is null && chunk is null && !Containers.AcceptsVideo(container, Containers.OutputVideoCodec(encodeCodec)))
             issues.Add(Containers.Error("{0} video cannot be stored in {1}. Choose another container or codec.",
                 encodeCodec.Short(), container.ToUpperInvariant()));
 
         bool trimmed = ctx.Edit.IsTrimmed;
         var hdrSettings = preview?.Kind == PreviewKind.Clip ? s with { Hdr = HdrMode.ToneMapSdr } : s;
+        // Chunks are encoded separately: dynamic HDR metadata (per-frame RPU/JSON) cannot follow them.
         var hdr = HdrPlanner.Plan(video, preview?.Kind == PreviewKind.Frame ? s with { Hdr = HdrMode.ToneMapSdr } : hdrSettings,
-            copyVideo, trimmed, ctx.Hdr);
+            copyVideo && concat is null, trimmed || chunkedJob, ctx.Hdr);
+        if (chunkedJob && video.Hdr.IsHdr && (video.Hdr.IsDolbyVision || video.Hdr.HasHdr10Plus) && hdr.Action == HdrAction.Preserve)
+            issues.Add(Containers.Warning("Chunked encoding keeps static HDR only (Dolby Vision / HDR10+ dynamic metadata need a single pass)."));
         issues.AddRange(hdr.Issues);
 
         var inputs = new InputTable(ctx.Source.Path);
-        int vin = inputs.Get(videoTrack.File, videoTrack.DelaySeconds);
+        foreach (var (path, m) in media)
+            if (Frameserver.IsVapourSynth(path) && m.PrimaryVideo is { } pv)
+            {
+                inputs.PipeFps[path] = pv.FrameRate > 0 ? pv.FrameRate : 25;
+                inputs.PipeFrames[path] = pv.FrameCount;
+            }
+        if (Frameserver.IsVapourSynth(videoTrack.File))
+        {
+            if (p.IsRemux || p.IsDemux) issues.Add(Containers.Error("Scripts can only be encoded (not remuxed or demuxed)."));
+            double vfps = inputs.PipeFps.GetValueOrDefault(videoTrack.File, 25);
+            if (chunk is not null) inputs.PipeEnd = d => (long)Math.Ceiling((chunk.End - d) * vfps) + 2;
+            else if (preview is not null) inputs.PipeEnd = d => (long)Math.Ceiling((preview.Time - d + preview.ClipSeconds + 1) * vfps);
+        }
+        // The audio/subtitle assembly step never reads the video (and must not open a VapourSynth pipe).
+        int vin = ctx.RestOnly ? -1 : inputs.Get(videoTrack.File, videoTrack.DelaySeconds);
         // Orientation: FFmpeg rotates the frames itself (autorotate) from the display matrix we set here;
         // with stream copy only the matrix changes (lossless fix of wrong rotation flags).
-        inputs.AddOptions(vin, FilterBuilder.OrientationInputArgs(video, s.VideoFilters));
+        if (vin >= 0) inputs.AddOptions(vin, FilterBuilder.OrientationInputArgs(video, s.VideoFilters));
         var oriented = FilterBuilder.Oriented(video, s.VideoFilters);
         var backend = preview is null ? (p.Kind == ProfileKind.RemuxMp4 ? s.EffectiveBackend : s.EffectiveBackend) : EncoderBackend.Software;
         bool tenBit = preview is null && s.EffectiveTenBit && hdr.Action != HdrAction.ToneMap;
@@ -137,13 +172,23 @@ public static class CommandBuilder
         var burnTrack = tracks.FirstOrDefault(t => t.Burn && t.Kind == "subtitle");
         if (burnTrack is not null && !p.UsesVideoFilters && p.Kind != ProfileKind.RemuxMp4)
             burnTrack = null;
+        if (concat is not null) burnTrack = null; // already burned into the segments
         if (burnTrack is not null && copyVideo)
         {
             issues.Add(Containers.Warning("Subtitles cannot be burned while the video is copied: ignored."));
             burnTrack = null;
         }
 
-        if (copyVideo)
+        bool restOnly = ctx.RestOnly;
+        if (restOnly) { /* no video in the intermediate file */ }
+        else if (concat is not null)
+        {
+            int cin = inputs.Get(concat.ListFile, concat.Offset);
+            inputs.AddOptions(cin, ["-f", "concat", "-safe", "0"]);
+            body.AddRange(["-map", $"{cin}:0", "-c:v", "copy"]);
+            if (encodeCodec == VideoCodec.HEVC && container is "mp4" or "mov") body.AddRange(["-tag:v", "hvc1"]);
+        }
+        else if (copyVideo)
         {
             body.AddRange(["-map", $"{vin}:{video.Index}", "-c:v", "copy"]);
             if (video.CodecName == "hevc" && container is "mp4" or "mov") body.AddRange(["-tag:v", "hvc1"]);
@@ -171,9 +216,11 @@ public static class CommandBuilder
             if (preview is not null && preview.MaxWidth > 0)
                 post.Add($"scale='min({preview.MaxWidth},iw)':-2");
             if (p.IsImages && preview is null && ImageSelectFilter(s.Images, ctx, trimmed) is { } sel) post.Add(sel);
-            if (preview is null && p.EncodesVideo && VideoEncoders.FilterTail(backend, encodeCodec, tenBit) is { } tail) post.Add(tail);
+            // A segment keeps exactly its frames (pts in the final timeline thanks to -copyts), then restarts at 0.
+            if (chunk is not null) post.Add($"trim=start={Sec(chunk.Start)}:end={Sec(chunk.End)},setpts=PTS-STARTPTS");
             if (preview?.Kind == PreviewKind.Clip || (preview is null && !p.IsImages && hdr.Action == HdrAction.ToneMap && !tenBit))
                 post.Add("format=yuv420p");
+            if (preview is null && p.EncodesVideo && VideoEncoders.FilterTail(backend, encodeCodec, tenBit) is { } tail) post.Add(tail);
 
             string graph;
             if (burnTrack is not null && burn?.BitmapStreamIndex is { } bIdx)
@@ -210,7 +257,7 @@ public static class CommandBuilder
                 body.AddRange(venc);
             }
         }
-        if (preview?.Kind != PreviewKind.Frame && !p.IsImages) body.AddRange(hdr.ColorArgs);
+        if (preview?.Kind != PreviewKind.Frame && !p.IsImages && concat is null && !restOnly) body.AddRange(hdr.ColorArgs);
 
         // ------------------------------------------------------------ audio / subtitles / attachments
         int outIndex = 1;
@@ -220,11 +267,11 @@ public static class CommandBuilder
             var a = tracks.FirstOrDefault(t => t.Include && t.Kind == "audio");
             if (a is not null && TrackPlanner.Lookup(a, media) is AudioStream ast)
             {
-                body.AddRange(["-map", $"{inputs.Get(a.File, a.DelaySeconds)}:{ast.Index}", "-c:a:0", "aac", "-ac:a:0", "2", "-b:a:0", "160k"]);
+                body.AddRange(["-map", AudioInput(a, ast, inputs, ctx), "-c:a:0", "aac", "-ac:a:0", "2", "-b:a:0", "160k"]);
                 if (FilterBuilder.Audio(s.AudioFilters, "aac", 2) is { } af) body.AddRange(["-filter:a:0", af]);
             }
         }
-        else if (preview is null && !p.IsImages)
+        else if (preview is null && chunk is null && !p.IsImages)
         {
             foreach (var t in tracks.Where(t => t.Include && t.Kind == "audio"))
             {
@@ -233,7 +280,7 @@ public static class CommandBuilder
                     issues.Add(Containers.Warning("Audio track {0} of {1} not found: skipped.", t.Stream, Path.GetFileName(t.File)));
                     continue;
                 }
-                body.AddRange(["-map", $"{inputs.Get(t.File, t.DelaySeconds)}:{ast.Index}"]);
+                body.AddRange(["-map", AudioInput(t, ast, inputs, ctx)]);
                 body.AddRange(AudioPlanner.BuildArgs(ast, audioOut, s.Profile, s.Quality, container, s.AudioFilters));
                 body.AddRange(StreamMetadata(outIndex, t));
                 audioOut++;
@@ -243,7 +290,7 @@ public static class CommandBuilder
             foreach (var t in tracks.Where(t => t.Include && t.Kind == "subtitle"))
             {
                 var sst = TrackPlanner.Lookup(t, media) as SubtitleStream;
-                var codec = Containers.SubtitleCodec(container, sst, t.Codec);
+                var codec = Containers.SubtitleCodec(restOnly ? "mkv" : container, sst, t.Codec);
                 if (codec is null)
                 {
                     issues.Add(Containers.Warning("Subtitle track \"{0}\" ({1}) cannot be stored in {2}: skipped.",
@@ -256,7 +303,7 @@ public static class CommandBuilder
                 outIndex++;
             }
 
-            if (Containers.AcceptsAttachments(container))
+            if (Containers.AcceptsAttachments(restOnly ? "mkv" : container))
             {
                 int attOut = 0;
                 foreach (var t in tracks.Where(t => t.Include && t.Kind == "attachment" && t.Stream >= 0))
@@ -273,16 +320,33 @@ public static class CommandBuilder
                 }
             }
 
-            body.AddRange(["-map_chapters", ctx.Edit.KeepChapters ? "0" : "-1"]);
+            bool scriptSource = Frameserver.IsVapourSynth(ctx.Source.Path);
+            body.AddRange(["-map_chapters", ctx.Edit.KeepChapters && !scriptSource ? "0" : "-1"]);
             // Transport streams carry service/provider tags that some muxers reject: keep only our own.
-            body.AddRange(["-map_metadata", ctx.Source.IsTransportStream ? "-1" : "0"]);
+            body.AddRange(["-map_metadata", ctx.Source.IsTransportStream || scriptSource ? "-1" : "0"]);
             body.AddRange(["-metadata", $"comment=Encoded with TnA - Tanoshimi no Autohardsubber {ctx.Options.AppVersion}"]);
         }
 
         // ------------------------------------------------------------ head, trim (last), output
-        var a2 = new List<string> { "-hide_banner", "-nostdin", preview is null ? "-n" : "-y", "-ignore_unknown" };
-        if (preview is null && VideoEncoders.GlobalArgs(backend, ctx.Options.VaapiDevice) is { Count: > 0 } g && p.EncodesVideo && !copyVideo)
+        var a2 = new List<string> { "-hide_banner", "-nostdin", preview is null && chunk is null ? "-n" : "-y", "-ignore_unknown" };
+        if (preview is null && !restOnly && VideoEncoders.GlobalArgs(backend, ctx.Options.VaapiDevice) is { Count: > 0 } g && p.EncodesVideo && !copyVideo)
             a2.AddRange(g);
+
+        if (chunk is not null)
+        {
+            // Same fast-seek + original timestamps technique as previews: the filters and burned subtitles
+            // see exactly the timeline of a single-pass encode, and trim= keeps the segment's frames.
+            const double preroll = 5;
+            a2.AddRange(inputs.ToArgs(delay => Math.Max(0, chunk.Start - delay - preroll)));
+            a2.Add("-copyts");
+            a2.AddRange(body);
+            a2.AddRange(["-an", "-sn", "-dn", "-max_muxing_queue_size", "4096"]);
+            a2.AddRange(ctx.Options.ExtraArguments);
+            a2.AddRange(ProgressArgs);
+            a2.AddRange(["-f", "matroska", ctx.ForcedOutputPath ?? "chunk.mkv"]);
+            return new CompiledJob(new EncodePlan(a2, ctx.ForcedOutputPath ?? "chunk.mkv"), issues, hdr, tracks, "mkv",
+                TimeSpan.FromSeconds(chunk.End - chunk.Start)) { Pipe = inputs.Pipe };
+        }
 
         if (preview is not null)
         {
@@ -306,14 +370,21 @@ public static class CommandBuilder
                 ? (ctx.ForcedOutputPath is { } png ? ["-f", "image2", "-update", "1", png] : ["-f", "image2pipe", "-"])
                 : ["-f", "mp4", ctx.ForcedOutputPath ?? "preview.mp4"]);
             return new CompiledJob(new EncodePlan(a2, ctx.ForcedOutputPath ?? "-"), issues, hdr, tracks, container,
-                TimeSpan.FromSeconds(preview.Kind == PreviewKind.Clip ? preview.ClipSeconds : 0));
+                TimeSpan.FromSeconds(preview.Kind == PreviewKind.Clip ? preview.ClipSeconds : 0)) { Pipe = inputs.Pipe };
         }
 
         if (TrimArgs(ctx.Edit, ctx.Source.Duration, issues) is { } trim)
         {
             a2.AddRange(trim.Args);
             duration = trim.Duration;
-            if (copyVideo) issues.Add(Containers.Warning("Copied video can only be cut cleanly on keyframes: the first frames may look broken."));
+            if (copyVideo && concat is null) issues.Add(Containers.Warning("Copied video can only be cut cleanly on keyframes: the first frames may look broken."));
+        }
+
+        if (restOnly)
+        {
+            a2.AddRange(ProgressArgs);
+            a2.AddRange(["-f", "matroska", ctx.ForcedOutputPath ?? "rest.mkv"]);
+            return new CompiledJob(new EncodePlan(a2, ctx.ForcedOutputPath ?? "rest.mkv"), issues, hdr, tracks, "mkv", duration);
         }
 
         switch (container)
@@ -338,10 +409,10 @@ public static class CommandBuilder
         }
         else
         {
-            output = ctx.ForcedOutputPath ?? OutputNaming.Build(ctx.Source.Path, s.Label, container, ctx.Options.OutputDirectory);
+            output = ctx.ForcedOutputPath ?? OutputNaming.Build(ctx.Source.Path, s, container, ctx.Options.OutputDirectory, ctx.Options.NameTemplate);
             a2.Add(output);
         }
-        return new CompiledJob(new EncodePlan(a2, output), issues, hdr, tracks, container, duration);
+        return new CompiledJob(new EncodePlan(a2, output), issues, hdr, tracks, container, duration) { Pipe = inputs.Pipe };
     }
 
     /// <summary>Output-side trim (after every filter and import). Returns null when not trimmed.</summary>
@@ -360,6 +431,17 @@ public static class CommandBuilder
         if (start > 0) args.AddRange(["-ss", Sec(start)]);
         if (edit.TrimEnd is > 0) args.AddRange(["-t", Sec(end - start)]);
         return (args, TimeSpan.FromSeconds(end - start));
+    }
+
+    /// <summary>"input:stream" for an audio track; script audio is read from its pre-rendered file.</summary>
+    private static string AudioInput(TrackPlan t, AudioStream ast, InputTable inputs, CompileContext ctx)
+    {
+        if (Frameserver.IsVapourSynth(t.File))
+        {
+            var file = ctx.ScriptAudio.GetValueOrDefault($"{t.File}|{t.Stream}") ?? Path.ChangeExtension(t.File, $".audio{t.Stream}.w64");
+            return $"{inputs.Get(file, t.DelaySeconds)}:0";
+        }
+        return $"{inputs.Get(t.File, t.DelaySeconds)}:{ast.Index}";
     }
 
     private static void ApplyHdrToEncoder(List<string> venc, HdrPlan hdr, HdrSideFiles? files)
@@ -438,6 +520,29 @@ public static class CommandBuilder
 
 public static class OutputNaming
 {
+    public const string DefaultTemplate = "{name} [{label}]";
+
+    /// <summary>Applies the user's name template ({name}, {label}, {profile}, {codec}, {res}, {quality}, {date}).</summary>
+    public static string Build(string source, JobSettings s, string extension, string? outputDirectory, string? template)
+    {
+        var t = string.IsNullOrWhiteSpace(template) ? DefaultTemplate : template;
+        if (!t.Contains("{name}", StringComparison.Ordinal)) t = "{name} " + t; // never lose the episode name
+        var name = t.Replace("{name}", Path.GetFileNameWithoutExtension(source))
+            .Replace("{label}", Safe(s.Label))
+            .Replace("{profile}", Safe(s.ProfileDefinition.Name))
+            .Replace("{codec}", s.ProfileDefinition.EncodesVideo ? s.EffectiveCodec.Short() : "copy")
+            .Replace("{res}", Resolutions.Display(s.Resolution))
+            .Replace("{quality}", Safe(s.Quality.Display()))
+            .Replace("{date}", DateTime.Now.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture));
+        name = Safe(name);
+        var dir = string.IsNullOrWhiteSpace(outputDirectory) ? Path.GetDirectoryName(source)! : outputDirectory;
+        var candidate = Path.Combine(dir, $"{name}.{extension}");
+        if (candidate.Equals(source, StringComparison.OrdinalIgnoreCase)) candidate = Path.Combine(dir, $"{name} (TnA).{extension}");
+        for (int i = 2; File.Exists(candidate); i++)
+            candidate = Path.Combine(dir, $"{name} ({i.ToString(CultureInfo.InvariantCulture)}).{extension}");
+        return candidate;
+    }
+
     /// <summary>"Name [Label].ext" next to the source (or in a chosen folder), never overwriting an existing file.</summary>
     public static string Build(string source, string label, string extension, string? outputDirectory)
     {

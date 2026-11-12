@@ -60,6 +60,7 @@ public sealed class QueueService : IDisposable
         Store = store;
         Settings = store.Load();
         store.CleanTemp();
+        ChunkedEncoder.CleanOld(store);
         RefreshTools();
         Presets = new PresetStore(store.DataDirectory);
         Preview = new PreviewService(this);
@@ -68,7 +69,7 @@ public sealed class QueueService : IDisposable
         JobChanged += _ => ScheduleSave();
         QueueChanged += ScheduleSave;
         JobRemoved += _ => ScheduleSave();
-        if (restoreQueue) RestoreQueue();
+        if (restoreQueue && Settings.RestoreQueue) RestoreQueue();
     }
 
     public IReadOnlyList<QueueJob> Jobs { get { lock (_lock) return [.. _jobs]; } }
@@ -156,7 +157,7 @@ public sealed class QueueService : IDisposable
         await _probeGate.WaitAsync();
         try
         {
-            job.Media = await new MediaProber(tools.Ffprobe).ProbeAsync(job.SourcePath);
+            job.Media = await MediaProber.For(tools).ProbeAsync(job.SourcePath);
             job.ProbeError = null;
         }
         catch (Exception ex)
@@ -202,11 +203,12 @@ public sealed class QueueService : IDisposable
     }
 
     /// <summary>Replaces the per-file edits (trim, external files, track plan). External files are probed.</summary>
-    public async Task<JobAnalysis> SetEditAsync(Guid id, JobEdit edit, CancellationToken ct = default)
+    public async Task<JobAnalysis> SetEditAsync(Guid id, JobEdit edit, CancellationToken ct = default, JobSettings? settings = null)
     {
         var j = Find(id) ?? throw new KeyNotFoundException();
         if (j == CurrentJob) throw new InvalidOperationException(L.T("The file is being processed."));
         j.Edit = edit;
+        if (settings is not null) j.Settings = settings;
         if (j.Status != JobStatus.Ready) j.ResetForRun();
         var analysis = await AnalyzeAsync(j, ct);
         JobChanged?.Invoke(j);
@@ -217,15 +219,16 @@ public sealed class QueueService : IDisposable
     public async Task<JobAnalysis> AnalyzeAsync(QueueJob j, CancellationToken ct = default)
     {
         var tools = Tools ?? throw new InvalidOperationException(L.T("FFmpeg was not found. Configure it in Settings."));
-        var prober = new MediaProber(tools.Ffprobe);
+        var prober = MediaProber.For(tools);
         j.Media ??= await prober.ProbeAsync(j.SourcePath, ct);
+        JobRunner.EnsureFrameserverScript(j, Store);
         foreach (var gone in j.ExternalMedia.Keys.Except(j.Edit.ExternalFiles).Where(k => j.Edit.Tracks?.All(t => t.File != k) ?? true).ToList())
             j.ExternalMedia.Remove(gone);
         await JobRunner.ProbeExternalsAsync(j, prober, ct);
 
         var edit = j.Edit;
         bool isDefault = edit.Tracks is null;
-        var tracks = edit.Tracks ?? TrackPlanner.Default(j.Media, j.Settings);
+        var tracks = edit.Tracks ?? TrackPlanner.Default(j.Media, j.Settings, frameserver: JobRunner.FrameserverMedia(j));
         // Offer the streams of external files that are not in the plan yet.
         var extra = edit.ExternalFiles.Where(f => tracks.All(t => t.File != f))
             .SelectMany(f => TrackPlanner.ForExternal(f, j.ExternalMedia.GetValueOrDefault(f), include: false));

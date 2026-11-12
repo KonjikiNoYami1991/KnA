@@ -2,8 +2,10 @@ using TnA.Core.Processing;
 
 namespace TnA.Core.Media;
 
-public sealed class MediaProber(string ffprobePath)
+public sealed class MediaProber(string ffprobePath, string? vspipePath = null)
 {
+    public static MediaProber For(Tools.FfmpegTools tools) => new(tools.Ffprobe, tools.VsPipe);
+
     private static readonly TimeSpan Timeout = TimeSpan.FromMinutes(2);
 
     /// <summary>Extra demuxer options for transport streams (late streams, broken timestamps, unknown PIDs).</summary>
@@ -15,12 +17,21 @@ public sealed class MediaProber(string ffprobePath)
 
     public async Task<MediaInfo> ProbeAsync(string path, CancellationToken ct = default, bool requireVideo = true)
     {
+        if (Frameserver.IsVapourSynth(path))
+        {
+            if (vspipePath is null) throw new InvalidOperationException(Localization.L.T("vspipe was not found: install VapourSynth (or set TNA_VSPIPE)."));
+            return await Frameserver.ProbeVapourSynthAsync(vspipePath, path, ct);
+        }
         var args = new List<string> { "-v", "error" };
         if (IsTransportLike(path)) args.AddRange(["-analyzeduration", "100M", "-probesize", "100M"]);
         args.AddRange(["-print_format", "json", "-show_format", "-show_streams", "-show_chapters", path]);
         var result = await ProcessRunner.RunAsync(ffprobePath, args, timeout: Timeout, ct: ct);
         if (result.ExitCode != 0)
+        {
+            if (Frameserver.KindOf(path) == FrameserverKind.AviSynth)
+                throw new InvalidOperationException(Localization.L.T("This FFmpeg cannot read AviSynth scripts (it needs AviSynth+ installed and an FFmpeg built with --enable-avisynth): {0}", result.StdErr.Trim()));
             throw new InvalidOperationException($"ffprobe failed ({result.ExitCode}): {result.StdErr.Trim()}");
+        }
         var info = FfprobeParser.Parse(path, result.StdOut);
         if (requireVideo && info.PrimaryVideo is null)
             throw new InvalidOperationException(Localization.L.T("No video stream found."));

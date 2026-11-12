@@ -38,7 +38,8 @@ public sealed class PreviewService(QueueService queue)
         {
             var media = await EnsureMedia(job, ct);
             var settings = final ? job.Settings : job.Settings with { VideoFilters = new(), Resolution = 0, Profile = ProfileKind.UniversalMkv };
-            var edit = final ? job.Edit : job.Edit with { Tracks = (job.Edit.Tracks ?? TrackPlanner.Default(media, job.Settings)).Select(t => t with { Burn = false }).ToList() };
+            var planned = JobRunner.BuildContext(job, queue.Settings, queue.Tools).Edit;
+            var edit = final ? planned : planned with { Tracks = (planned.Tracks ?? TrackPlanner.Default(media, job.Settings)).Select(t => t with { Burn = false }).ToList() };
             PreparedSubtitles? subs = final ? await PrepareBurnAsync(job, dir, ct) : null;
             var ctx = JobRunner.BuildContext(job, queue.Settings, queue.Tools) with
             {
@@ -58,6 +59,16 @@ public sealed class PreviewService(QueueService queue)
         var job = queue.Find(id) ?? throw new KeyNotFoundException();
         return Cached(job, $"thumb-{Ms(seconds)}-{width}.jpg", async (dir, path) =>
         {
+            await EnsureMedia(job, ct);
+            if (Frameserver.IsVapourSynth(job.SourcePath))
+            {
+                // Script sources: one frame through vspipe.
+                var v = job.Media!.PrimaryVideo!;
+                long f = Math.Clamp((long)(Math.Max(0, seconds) * v.FrameRate), 0, Math.Max(0, v.FrameCount - 1));
+                await RunPipe(["-hide_banner", "-nostdin", "-y", "-v", "error", "-f", "yuv4mpegpipe", "-i", "pipe:0", "-frames:v", "1",
+                    "-vf", $"scale={width}:-2", "-q:v", "5", "-update", "1", path], new PipeSource(job.SourcePath, f, f), dir, ct);
+                return;
+            }
             var args = new List<string> { "-hide_banner", "-nostdin", "-y", "-v", "error", "-skip_frame", "nokey" };
             args.AddRange(MediaProber.RobustInputArgs(job.SourcePath));
             args.AddRange(["-ss", CommandBuilder.Sec(Math.Max(0, seconds)), "-i", job.SourcePath, "-map", "0:v:0", "-frames:v", "1",
@@ -73,6 +84,15 @@ public sealed class PreviewService(QueueService queue)
         var key = $"wave-{Hash(file)}-{stream}-{width}x{height}.png";
         return Cached(job, key, async (dir, path) =>
         {
+            if (Frameserver.IsVapourSynth(file))
+            {
+                // Script audio (output N): render it once, then draw the waveform of the rendered file.
+                var ctx = new RunnerContext(queue.Tools!, queue.Settings, queue.Store, new ProcessGroup(), _ => { });
+                var rendered = await JobRunner.RenderScriptAudioAsync([new TrackPlan { File = file, Stream = stream, Kind = "audio" }],
+                    Path.Combine(dir, "script-audio"), ctx, job, ct);
+                file = rendered.Values.First();
+                stream = 0;
+            }
             var args = new List<string> { "-hide_banner", "-nostdin", "-y", "-v", "error" };
             args.AddRange(MediaProber.RobustInputArgs(file));
             args.AddRange(["-i", file, "-filter_complex",
@@ -91,9 +111,11 @@ public sealed class PreviewService(QueueService queue)
         {
             await EnsureMedia(job, ct);
             var subs = await PrepareBurnAsync(job, dir, ct);
-            var ctx = JobRunner.BuildContext(job, queue.Settings, queue.Tools) with
+            var baseCtx = JobRunner.BuildContext(job, queue.Settings, queue.Tools);
+            var ctx = baseCtx with
             {
-                Edit = job.Edit with { TrimStart = null, TrimEnd = null },
+                Edit = baseCtx.Edit with { TrimStart = null, TrimEnd = null },
+                ScriptAudio = await ScriptAudioAsync(job, dir, ct),
                 Burn = subs,
                 Settings = job.Settings.ProfileDefinition.UsesVideoFilters ? job.Settings : job.Settings with { Profile = ProfileKind.UniversalMkv },
                 Preview = new PreviewRequest(PreviewKind.Clip, Math.Max(0, seconds), Math.Clamp(length, 1, 30), 1280),
@@ -103,13 +125,79 @@ public sealed class PreviewService(QueueService queue)
         }, ct);
     }
 
+    /// <summary>Finds black borders by sampling a few points of the video (cropdetect), in displayed orientation.</summary>
+    public async Task<CropSettings?> DetectCropAsync(Guid id, CancellationToken ct = default)
+    {
+        var job = queue.Find(id) ?? throw new KeyNotFoundException();
+        var media = await EnsureMedia(job, ct);
+        var v = FilterBuilder.Oriented(media.PrimaryVideo!, job.Settings.VideoFilters);
+        double dur = Math.Max(1, media.Duration.TotalSeconds);
+        int minX = int.MaxValue, minY = int.MaxValue, maxX = 0, maxY = 0;
+        // Union of the boxes: never crop away content that appears in any sample.
+        void Union((int W, int H, int X, int Y) b)
+        {
+            minX = Math.Min(minX, b.X); minY = Math.Min(minY, b.Y);
+            maxX = Math.Max(maxX, b.X + b.W); maxY = Math.Max(maxY, b.Y + b.H);
+        }
+        foreach (var f in new[] { 0.15, 0.35, 0.5, 0.65, 0.85 })
+        {
+            string? cropLine;
+            if (Frameserver.IsVapourSynth(job.SourcePath))
+            {
+                long start = (long)(dur * f * media.PrimaryVideo!.FrameRate);
+                var err = new StringBuilder();
+                await JobRunner.RunStreamingAsync(queue.Tools!.Ffmpeg, ["-hide_banner", "-nostdin", "-v", "info", "-f", "yuv4mpegpipe", "-i", "pipe:0",
+                        "-frames:v", "12", "-vf", "cropdetect=limit=24:round=2:reset=0", "-f", "null", "-"],
+                    null, new ProcessGroup(), ProcessPriority.Normal, new PipeSource(job.SourcePath, start, start + 12), queue.Tools.VsPipe,
+                    null, l => { lock (err) err.AppendLine(l); }, ct);
+                cropLine = err.ToString().Split('\n').LastOrDefault(l => l.Contains("crop=", StringComparison.Ordinal));
+                if (ParseCrop(cropLine) is { } box) Union(box);
+                continue;
+            }
+            var args = new List<string> { "-hide_banner", "-nostdin", "-v", "info" };
+            args.AddRange(MediaProber.RobustInputArgs(job.SourcePath));
+            args.AddRange(FilterBuilder.OrientationInputArgs(media.PrimaryVideo!, job.Settings.VideoFilters));
+            args.AddRange(["-ss", CommandBuilder.Sec(dur * f), "-i", job.SourcePath, "-map", $"0:{media.PrimaryVideo!.Index}",
+                "-frames:v", "12", "-vf", "cropdetect=limit=24:round=2:reset=0", "-f", "null", "-"]);
+            var r = await ProcessRunner.RunAsync(queue.Tools!.Ffmpeg, args, timeout: TimeSpan.FromSeconds(60), ct: ct);
+            if (ParseCrop(r.StdErr.Split('\n').LastOrDefault(l => l.Contains("crop=", StringComparison.Ordinal))) is { } b2) Union(b2);
+        }
+        if (minX == int.MaxValue) return null;
+        var crop = new CropSettings(minX, minY, Math.Max(0, v.Width - maxX), Math.Max(0, v.Height - maxY));
+        return crop.IsEmpty ? null : crop;
+    }
+
+    private static (int W, int H, int X, int Y)? ParseCrop(string? line)
+    {
+        if (line is null) return null;
+        var c = line[(line.LastIndexOf("crop=", StringComparison.Ordinal) + 5)..].Trim().Split(':');
+        if (c.Length < 4 || !int.TryParse(c[0], out var w) || !int.TryParse(c[1], out var h)
+            || !int.TryParse(c[2], out var x) || !int.TryParse(c[3].Split(' ')[0], out var y) || w <= 0 || h <= 0) return null;
+        return (w, h, x, y);
+    }
+
+    private async Task RunPipe(List<string> args, PipeSource pipe, string dir, CancellationToken ct)
+    {
+        var tools = queue.Tools ?? throw new InvalidOperationException(L.T("FFmpeg was not found. Configure it in Settings."));
+        await _gate.WaitAsync(ct);
+        try
+        {
+            var err = new StringBuilder();
+            int exit = await JobRunner.RunStreamingAsync(tools.Ffmpeg, args, dir, new ProcessGroup(), ProcessPriority.Normal, pipe, tools.VsPipe,
+                null, l => { lock (err) err.AppendLine(l); }, ct);
+            if (exit != 0) throw new InvalidOperationException(JobRunner.LastError(err.ToString()) ?? err.ToString().Trim());
+        }
+        finally { _gate.Release(); }
+    }
+
     // ---------------------------------------------------------------- internals
 
     private async Task<MediaInfo> EnsureMedia(QueueJob job, CancellationToken ct)
     {
         var tools = queue.Tools ?? throw new InvalidOperationException(L.T("FFmpeg was not found. Configure it in Settings."));
-        var prober = new MediaProber(tools.Ffprobe);
+        var prober = MediaProber.For(tools);
         job.Media ??= await prober.ProbeAsync(job.SourcePath, ct);
+        JobRunner.EnsureFrameserverScript(job, queue.Store);
         await JobRunner.ProbeExternalsAsync(job, prober, ct);
         return job.Media;
     }
@@ -117,7 +205,7 @@ public sealed class PreviewService(QueueService queue)
     private async Task<PreparedSubtitles?> PrepareBurnAsync(QueueJob job, string dir, CancellationToken ct)
     {
         var media = await EnsureMedia(job, ct);
-        var tracks = job.Edit.Tracks ?? TrackPlanner.Default(media, job.Settings);
+        var tracks = JobRunner.BuildContext(job, queue.Settings, queue.Tools).Edit.Tracks ?? TrackPlanner.Default(media, job.Settings);
         if (!job.Settings.ProfileDefinition.UsesVideoFilters || tracks.FirstOrDefault(t => t.Burn && t.Kind == "subtitle") is not { } burn) return null;
         var subDir = Path.Combine(dir, "subs-" + Hash($"{burn.File}|{burn.Stream}|{burn.DelayMs}|{string.Join(',', job.Edit.ExternalFiles)}"));
         Directory.CreateDirectory(subDir);
@@ -141,7 +229,34 @@ public sealed class PreviewService(QueueService queue)
     private async Task RunCompiled(CompiledJob compiled, string dir, CancellationToken ct, TimeSpan? timeout = null)
     {
         if (compiled.HasErrors) throw new InvalidOperationException(compiled.Issues.First(i => i.IsError).Message);
-        await Run(compiled.Plan.Arguments, dir, ct, timeout);
+        if (compiled.Pipe is null)
+        {
+            await Run(compiled.Plan.Arguments, dir, ct, timeout);
+            return;
+        }
+        // VapourSynth video: vspipe (frame range around the requested time) → ffmpeg stdin.
+        var tools = queue.Tools!;
+        await _gate.WaitAsync(ct);
+        try
+        {
+            using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            cts.CancelAfter(timeout ?? TimeSpan.FromSeconds(120));
+            var err = new StringBuilder();
+            int exit = await JobRunner.RunStreamingAsync(tools.Ffmpeg, compiled.Plan.Arguments, dir, new ProcessGroup(), ProcessPriority.Normal,
+                compiled.Pipe, tools.VsPipe, null, l => { lock (err) err.AppendLine(l); }, cts.Token);
+            if (exit != 0) throw new InvalidOperationException(JobRunner.LastError(err.ToString()) ?? err.ToString().Trim());
+        }
+        finally { _gate.Release(); }
+    }
+
+    /// <summary>Script audio for clip previews, rendered once per job.</summary>
+    private async Task<IReadOnlyDictionary<string, string>> ScriptAudioAsync(QueueJob job, string dir, CancellationToken ct)
+    {
+        var tracks = JobRunner.BuildContext(job, queue.Settings, queue.Tools).Edit.Tracks
+                     ?? TrackPlanner.Default(job.Media!, job.Settings, frameserver: JobRunner.FrameserverMedia(job));
+        if (!tracks.Any(t => t.Include && t.Kind == "audio" && Frameserver.IsVapourSynth(t.File))) return new Dictionary<string, string>();
+        var ctx = new RunnerContext(queue.Tools!, queue.Settings, queue.Store, new ProcessGroup(), _ => { });
+        return await JobRunner.RenderScriptAudioAsync(tracks, Path.Combine(dir, "script-audio"), ctx, job, ct);
     }
 
     private async Task Run(IEnumerable<string> args, string dir, CancellationToken ct, TimeSpan? timeout = null)

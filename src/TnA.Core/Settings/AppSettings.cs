@@ -1,12 +1,30 @@
 using System.Text.Json;
 using System.Text.Json.Serialization;
 using TnA.Core.Encoding;
+using TnA.Core.Localization;
 using TnA.Core.Tools;
 
 namespace TnA.Core.Settings;
 
+public enum ProcessPriority { Normal, BelowNormal, Idle }
+
 public sealed class AppSettings
 {
+    // ---- general
+    /// <summary>"Auto" (system language), "it" or "en".</summary>
+    public string Language { get; set; } = "Auto";
+    public bool RestoreQueue { get; set; } = true;
+    public bool ConfirmOnClose { get; set; } = true;
+    // ---- output
+    /// <summary>Output file name: {name} = source name, {label} = profile/codec/quality summary, {profile}, {codec}, {res}, {date}.</summary>
+    public string OutputNameTemplate { get; set; } = OutputNaming.DefaultTemplate;
+    // ---- processing
+    public ProcessPriority Priority { get; set; } = ProcessPriority.BelowNormal;
+    /// <summary>Folder for temporary files (subtitles, fonts, HDR metadata, previews); null = data folder.</summary>
+    public string? TempDirectory { get; set; }
+    public int StallTimeoutMinutes { get; set; } = 10;
+    public int KeepLogs { get; set; } = 300;
+
     public string? FfmpegPath { get; set; }
     public string? VaapiDevice { get; set; }
     /// <summary>null = write next to the source file.</summary>
@@ -30,7 +48,7 @@ public sealed class AppSettings
 public static class MediaExtensions
 {
     public static readonly string[] Video =
-        [".mkv", ".mp4", ".m2ts", ".ts", ".avi", ".mov", ".webm", ".rmvb", ".ogm", ".flv", ".vob", ".mpg", ".mpeg", ".3gp", ".m4v", ".wmv"];
+        [".mkv", ".mp4", ".m2ts", ".ts", ".avi", ".mov", ".webm", ".rmvb", ".ogm", ".flv", ".vob", ".mpg", ".mpeg", ".3gp", ".m4v", ".wmv", ".vpy", ".avs"];
 
     public static bool IsVideo(string path) => Video.Contains(Path.GetExtension(path).ToLowerInvariant());
 }
@@ -48,7 +66,19 @@ public sealed class SettingsStore
     public string DataDirectory { get; }
     public string SettingsPath => Path.Combine(DataDirectory, "settings.json");
     public string LogsDirectory => Path.Combine(DataDirectory, "logs");
-    public string TempDirectory => Path.Combine(DataDirectory, "temp");
+    private string? _tempOverride;
+    public string TempDirectory => _tempOverride ?? Path.Combine(DataDirectory, "temp");
+
+    /// <summary>Applies the settings that change paths or global behaviour.</summary>
+    public int KeepLogs { get; private set; } = 300;
+
+    public void Apply(AppSettings s)
+    {
+        KeepLogs = Math.Clamp(s.KeepLogs, 10, 100_000);
+        _tempOverride = string.IsNullOrWhiteSpace(s.TempDirectory) ? null : Path.Combine(s.TempDirectory, "TnA-temp");
+        Directory.CreateDirectory(TempDirectory);
+        L.Override = s.Language is "it" or "en" ? s.Language : null;
+    }
 
     public SettingsStore(string? dataDirectory = null)
     {
@@ -67,7 +97,11 @@ public sealed class SettingsStore
         try
         {
             if (File.Exists(SettingsPath))
-                return JsonSerializer.Deserialize<AppSettings>(File.ReadAllText(SettingsPath), Json) ?? new AppSettings();
+            {
+                var loaded = JsonSerializer.Deserialize<AppSettings>(File.ReadAllText(SettingsPath), Json) ?? new AppSettings();
+                Apply(loaded);
+                return loaded;
+            }
         }
         catch (Exception ex) when (ex is JsonException or NotSupportedException or IOException)
         {
@@ -112,6 +146,7 @@ public sealed class SettingsStore
 
     public void Save(AppSettings settings)
     {
+        Apply(settings);
         var tmp = SettingsPath + ".tmp";
         File.WriteAllText(tmp, JsonSerializer.Serialize(settings, Json));
         File.Move(tmp, SettingsPath, overwrite: true);

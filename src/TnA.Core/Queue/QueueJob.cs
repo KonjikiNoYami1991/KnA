@@ -25,6 +25,8 @@ public sealed class QueueJob
     /// <summary>Warnings/errors of the last validation.</summary>
     public IReadOnlyList<ValidationIssue> Issues { get; internal set; } = [];
     public string? HdrSummary { get; internal set; }
+    /// <summary>Script generated from <see cref="JobSettings.Frameserver"/> (VapourSynth/AviSynth), when used.</summary>
+    public string? FrameserverScript { get; internal set; }
     public JobStatus Status { get; internal set; } = JobStatus.Ready;
     public string? Message { get; internal set; }
     public string? Stage { get; internal set; }

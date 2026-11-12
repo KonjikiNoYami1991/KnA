@@ -11,8 +11,14 @@ public static partial class L
 {
     private static readonly string? Forced = Environment.GetEnvironmentVariable("TNA_LANG")?.Trim().ToLowerInvariant();
 
-    public static bool IsItalian(CultureInfo? culture = null) =>
-        Forced is "it" || (Forced is not "en" && (culture ?? CultureInfo.CurrentUICulture).TwoLetterISOLanguageName == "it");
+    /// <summary>Language chosen in the settings ("it"/"en"), null = follow the system.</summary>
+    public static string? Override { get; set; }
+
+    public static bool IsItalian(CultureInfo? culture = null)
+    {
+        var forced = Forced ?? Override;
+        return forced is "it" || (forced is not "en" && (culture ?? CultureInfo.CurrentUICulture).TwoLetterISOLanguageName == "it");
+    }
 
     public static string Language => IsItalian() ? "it" : "en";
 

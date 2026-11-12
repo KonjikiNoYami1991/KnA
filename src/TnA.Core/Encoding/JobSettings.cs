@@ -1,5 +1,6 @@
 using System.Text.Json.Serialization;
 using TnA.Core.Localization;
+using TnA.Core.Media;
 
 namespace TnA.Core.Encoding;
 
@@ -87,6 +88,16 @@ public sealed record DemuxSettings
     public List<int>? Streams { get; init; }
 }
 
+/// <summary>av1an-style segmented encoding: split at keyframes, encode segments in parallel, resume after a stop.</summary>
+public sealed record ChunkSettings
+{
+    public bool Enabled { get; init; }
+    /// <summary>Segments encoded at the same time.</summary>
+    public int Workers { get; init; } = Math.Clamp(Environment.ProcessorCount / 8, 1, 4);
+    /// <summary>Approximate segment length (cut at the nearest following keyframe).</summary>
+    public double TargetSeconds { get; init; } = 60;
+}
+
 /// <summary>Everything that can be stored in a preset (not tied to a specific file).</summary>
 public sealed record JobSettings
 {
@@ -107,6 +118,8 @@ public sealed record JobSettings
     public AudioFilterSettings AudioFilters { get; init; } = new();
     public ImageSettings Images { get; init; } = new();
     public DemuxSettings Demux { get; init; } = new();
+    public ChunkSettings Chunks { get; init; } = new();
+    public FrameserverSettings Frameserver { get; init; } = new();
     /// <summary>Name of the preset these settings came from (informative).</summary>
     public string? PresetName { get; init; }
 
