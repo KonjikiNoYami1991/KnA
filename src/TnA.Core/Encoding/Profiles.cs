@@ -1,0 +1,72 @@
+namespace TnA.Core.Encoding;
+
+public sealed record ProfileDefinition(
+    ProfileKind Kind,
+    string Name,
+    string Description,
+    IReadOnlyList<VideoCodec> Codecs,
+    bool AllowsHardware,
+    bool UsesQuality,
+    bool UsesResolution,
+    bool UsesSubtitleMode,
+    string Container)
+{
+    public bool IsRemux => Kind is ProfileKind.RemuxMkv or ProfileKind.RemuxMp4;
+    public bool IsKeyframes => Kind == ProfileKind.Keyframes;
+    public bool EncodesVideo => !IsRemux && !IsKeyframes;
+    public bool AllowsCodecChoice => Codecs.Count > 1;
+
+    public override string ToString() => Name;
+}
+
+public static class Profiles
+{
+    public static readonly ProfileDefinition BlurayAac = new(ProfileKind.BlurayAac, "Blu-ray AAC",
+        "H.264 High@4.1 8-bit, Blu-ray player friendly, AAC audio (copied when already AAC).",
+        [VideoCodec.H264], true, true, true, true, "mp4");
+
+    public static readonly ProfileDefinition BlurayAc3 = new(ProfileKind.BlurayAc3, "Blu-ray AC-3",
+        "H.264 High@4.1 8-bit, Blu-ray player friendly, AC-3 audio (copied when already AC-3).",
+        [VideoCodec.H264], true, true, true, true, "mp4");
+
+    public static readonly ProfileDefinition Streaming = new(ProfileKind.Streaming, "Streaming / Web",
+        "MP4 with fast start and a fixed 2 s GOP for HTML5 players. Stereo AAC.",
+        [VideoCodec.H264, VideoCodec.HEVC, VideoCodec.AV1], true, true, true, true, "mp4");
+
+    public static readonly ProfileDefinition UniversalMkv = new(ProfileKind.UniversalMkv, "Universal MKV",
+        "Modern MKV: H.264, HEVC or AV1 (10-bit capable). Audio tracks are copied untouched.",
+        [VideoCodec.HEVC, VideoCodec.AV1, VideoCodec.H264], true, true, true, true, "mkv");
+
+    public static readonly ProfileDefinition XvidMp3 = new(ProfileKind.XvidMp3, "XviD + MP3",
+        "AVI for old DivX/XviD players. CPU only.",
+        [VideoCodec.Xvid], false, true, true, true, "avi");
+
+    public static readonly ProfileDefinition Workraw = new(ProfileKind.Workraw, "Workraw",
+        "Light, fast-decoding H.264 + mono Vorbis for typesetting/timing. No subtitles.",
+        [VideoCodec.H264], true, true, true, false, "mkv");
+
+    public static readonly ProfileDefinition RemuxMp4 = new(ProfileKind.RemuxMp4, "Remux → MP4",
+        "Copies compatible streams into MP4; only incompatible ones are re-encoded. Text subs become mov_text.",
+        [VideoCodec.H264], true, true, true, false, "mp4");
+
+    public static readonly ProfileDefinition RemuxMkv = new(ProfileKind.RemuxMkv, "Remux → MKV",
+        "Copies every stream, attachment and chapter into MKV, no re-encoding.",
+        [], false, false, false, false, "mkv");
+
+    public static readonly ProfileDefinition Keyframes = new(ProfileKind.Keyframes, "Keyframes (Aegisub)",
+        "Writes an Aegisub keyframe file (SCXviD if available, otherwise FFmpeg scene detection).",
+        [], false, false, false, false, "txt");
+
+    public static IReadOnlyList<ProfileDefinition> All { get; } =
+        [UniversalMkv, Streaming, BlurayAac, BlurayAc3, Workraw, XvidMp3, RemuxMp4, RemuxMkv, Keyframes];
+
+    public static ProfileDefinition Get(ProfileKind kind) => All.First(p => p.Kind == kind);
+}
+
+public static class Resolutions
+{
+    /// <summary>Target heights. 0 means "keep original".</summary>
+    public static IReadOnlyList<int> All { get; } = [0, 2160, 1440, 1080, 900, 720, 576, 480, 396, 360, 288];
+
+    public static string Display(int height) => height == 0 ? "Original" : $"{height}p";
+}

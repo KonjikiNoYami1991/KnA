@@ -1,8 +1,10 @@
-# Ignore files & folders
-/TnA - Tanoshimi no Autohardsubber/bin/
-/TnA - Tanoshimi no Autohardsubber/obj/
-/CheckUpdates/bin/
-/CheckUpdates/obj/
-/TnA.7z
-/vers.ini
-*.dll
+bin/
+obj/
+.vs/
+.vscode/
+.idea/
+*.user
+*.suo
+TestResults/
+artifacts/
+publish/
