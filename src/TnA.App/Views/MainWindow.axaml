@@ -1,0 +1,254 @@
+<Window xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:vm="using:TnA.App.ViewModels"
+        x:Class="TnA.App.Views.MainWindow"
+        x:DataType="vm:MainViewModel"
+        Title="{Binding WindowTitle}"
+        Icon="/Assets/tna.ico"
+        Width="1320" Height="840" MinWidth="980" MinHeight="620"
+        DragDrop.AllowDrop="True">
+
+  <DockPanel>
+    <!-- ======================= top bar -->
+    <Border DockPanel.Dock="Top" BorderBrush="{DynamicResource CardBorder}" BorderThickness="0,0,0,1" Padding="20,12">
+      <Grid ColumnDefinitions="Auto,Auto,*,Auto">
+        <StackPanel Orientation="Horizontal" Spacing="12">
+          <Border Width="40" Height="40" CornerRadius="12" Background="{StaticResource AccentGradient}">
+            <TextBlock Text="TnA" Foreground="White" FontWeight="ExtraBold" FontSize="14"
+                       HorizontalAlignment="Center" VerticalAlignment="Center" />
+          </Border>
+          <StackPanel VerticalAlignment="Center">
+            <TextBlock Text="Tanoshimi no Autohardsubber" FontWeight="SemiBold" FontSize="15" />
+            <TextBlock Classes="muted" FontSize="12" Text="{Binding Version}" />
+          </StackPanel>
+        </StackPanel>
+        <Border Grid.Column="1" Margin="18,0,0,0" VerticalAlignment="Center" CornerRadius="999" Padding="12,6"
+                Background="{DynamicResource CardBackground}" BorderBrush="{DynamicResource CardBorder}" BorderThickness="1">
+          <StackPanel Orientation="Horizontal" Spacing="8">
+            <Ellipse Width="8" Height="8" Fill="{StaticResource OkBrush}" IsVisible="{Binding IsRunning}" VerticalAlignment="Center" />
+            <TextBlock Text="{Binding QueueStatus}" FontSize="12.5" VerticalAlignment="Center" />
+          </StackPanel>
+        </Border>
+        <StackPanel Grid.Column="3" Orientation="Horizontal" Spacing="8">
+          <Button Command="{Binding AddFilesCommand}" ToolTip.Tip="Add video files">
+            <StackPanel Orientation="Horizontal" Spacing="7"><PathIcon Data="{StaticResource IconPlus}" /><TextBlock Text="Files" /></StackPanel>
+          </Button>
+          <Button Command="{Binding AddFolderCommand}" ToolTip.Tip="Add every video in a folder (recursive)">
+            <StackPanel Orientation="Horizontal" Spacing="7"><PathIcon Data="{StaticResource IconFolder}" /><TextBlock Text="Folder" /></StackPanel>
+          </Button>
+          <Button Command="{Binding StartStopCommand}" Classes="primary" Classes.danger="{Binding IsRunning}" MinWidth="96">
+            <StackPanel Orientation="Horizontal" Spacing="7">
+              <PathIcon Data="{StaticResource IconPlay}" IsVisible="{Binding !IsRunning}" />
+              <PathIcon Data="{StaticResource IconStop}" IsVisible="{Binding IsRunning}" />
+              <TextBlock Text="{Binding StartLabel}" />
+            </StackPanel>
+          </Button>
+          <Button Command="{Binding PauseResumeCommand}" IsEnabled="{Binding IsRunning}" MinWidth="96">
+            <StackPanel Orientation="Horizontal" Spacing="7"><PathIcon Data="{StaticResource IconPause}" /><TextBlock Text="{Binding PauseLabel}" /></StackPanel>
+          </Button>
+          <Button Command="{Binding ToggleThemeCommand}" ToolTip.Tip="Light / dark"><PathIcon Data="{StaticResource IconMoon}" /></Button>
+          <Button Command="{Binding OpenSettingsCommand}" ToolTip.Tip="Settings"><PathIcon Data="{StaticResource IconGear}" /></Button>
+        </StackPanel>
+      </Grid>
+    </Border>
+
+    <Grid ColumnDefinitions="*,370" Margin="20,16,20,16">
+      <!-- ======================= queue -->
+      <DockPanel Grid.Column="0" Margin="0,0,20,0">
+        <Grid DockPanel.Dock="Top" ColumnDefinitions="Auto,*,Auto" Margin="0,0,0,12">
+          <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+            <TextBlock Classes="h2" Text="Queue" />
+            <Border Classes="chip" Margin="0"><TextBlock Text="{Binding Jobs.Count}" /></Border>
+          </StackPanel>
+          <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="4">
+            <Button Classes="ghost" Command="{Binding SelectAllCommand}" Content="Select all" />
+            <Button Classes="ghost" Command="{Binding RetrySelectedCommand}">
+              <StackPanel Orientation="Horizontal" Spacing="6"><PathIcon Data="{StaticResource IconRedo}" /><TextBlock Text="Retry" /></StackPanel>
+            </Button>
+            <Button Classes="ghost" Command="{Binding RemoveSelectedCommand}">
+              <StackPanel Orientation="Horizontal" Spacing="6"><PathIcon Data="{StaticResource IconTrash}" /><TextBlock Text="Remove" /></StackPanel>
+            </Button>
+            <Button Classes="ghost" Command="{Binding ClearFinishedCommand}" Content="Clear finished" />
+          </StackPanel>
+        </Grid>
+
+        <Panel>
+          <ScrollViewer>
+            <ItemsControl ItemsSource="{Binding Jobs}">
+              <ItemsControl.ItemsPanel>
+                <ItemsPanelTemplate><StackPanel Spacing="10" /></ItemsPanelTemplate>
+              </ItemsControl.ItemsPanel>
+              <ItemsControl.ItemTemplate>
+                <DataTemplate x:DataType="vm:JobViewModel">
+                  <Border Classes="card job" Classes.running="{Binding IsRunning}" Classes.selected="{Binding IsSelected}" Padding="14,12">
+                    <Grid ColumnDefinitions="Auto,*,Auto" RowDefinitions="Auto,Auto,Auto,Auto,Auto">
+                      <CheckBox IsChecked="{Binding IsSelected}" VerticalAlignment="Top" Margin="0,-4,6,0" />
+                      <StackPanel Grid.Column="1">
+                        <TextBlock Text="{Binding FileName}" FontWeight="SemiBold" FontSize="14" TextTrimming="CharacterEllipsis" />
+                        <TextBlock Text="{Binding Folder}" Classes="muted" FontSize="12" TextTrimming="LeadingCharacterEllipsis" />
+                      </StackPanel>
+                      <StackPanel Grid.Column="2" HorizontalAlignment="Right" Spacing="6">
+                        <Border HorizontalAlignment="Right" CornerRadius="6" Padding="8,3" Background="{DynamicResource CardBackground2}">
+                          <TextBlock Text="{Binding Status}" FontSize="11" FontWeight="Bold"
+                                     Foreground="{StaticResource InfoBrush}" />
+                        </Border>
+                        <StackPanel Orientation="Horizontal" Spacing="0">
+                          <Button Classes="ghost" Command="{Binding MoveUpCommand}" IsEnabled="{Binding CanEdit}" ToolTip.Tip="Move up"><PathIcon Data="{StaticResource IconUp}" /></Button>
+                          <Button Classes="ghost" Command="{Binding MoveDownCommand}" IsEnabled="{Binding CanEdit}" ToolTip.Tip="Move down"><PathIcon Data="{StaticResource IconDown}" /></Button>
+                          <Button Classes="ghost" Command="{Binding ShowCommandCommand}" ToolTip.Tip="FFmpeg command"><PathIcon Data="{StaticResource IconTerm}" /></Button>
+                          <Button Classes="ghost" Command="{Binding ShowLogCommand}" ToolTip.Tip="Log"><PathIcon Data="{StaticResource IconLog}" /></Button>
+                          <Button Classes="ghost" Command="{Binding RetryCommand}" IsEnabled="{Binding CanEdit}" ToolTip.Tip="Process again"><PathIcon Data="{StaticResource IconRedo}" /></Button>
+                          <Button Classes="ghost" Command="{Binding RemoveCommand}" IsEnabled="{Binding CanEdit}" ToolTip.Tip="Remove"><PathIcon Data="{StaticResource IconTrash}" /></Button>
+                        </StackPanel>
+                      </StackPanel>
+
+                      <ItemsControl Grid.Row="1" Grid.Column="1" Grid.ColumnSpan="2" ItemsSource="{Binding Chips}" Margin="0,8,0,0">
+                        <ItemsControl.ItemsPanel>
+                          <ItemsPanelTemplate><WrapPanel /></ItemsPanelTemplate>
+                        </ItemsControl.ItemsPanel>
+                        <ItemsControl.ItemTemplate>
+                          <DataTemplate x:DataType="vm:Chip">
+                            <Border Classes="chip" Classes.hw="{Binding IsHw}" Classes.bit="{Binding IsBit}">
+                              <TextBlock Text="{Binding Text}" />
+                            </Border>
+                          </DataTemplate>
+                        </ItemsControl.ItemTemplate>
+                      </ItemsControl>
+
+                      <TextBlock Grid.Row="2" Grid.Column="1" Grid.ColumnSpan="2" Text="{Binding Media}" Classes="muted" FontSize="12" />
+
+                      <StackPanel Grid.Row="3" Grid.Column="1" Grid.ColumnSpan="2" Margin="0,8,0,0" Spacing="6">
+                        <ProgressBar Value="{Binding Percent}" Maximum="100" IsVisible="{Binding ShowProgress}"
+                                     Classes.done="{Binding IsDone}" Classes.error="{Binding IsError}" Classes.paused="{Binding IsPaused}" />
+                        <TextBlock Text="{Binding Stats}" Classes="muted" FontSize="12"
+                                   IsVisible="{Binding Stats, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
+                      </StackPanel>
+                      <TextBlock Grid.Row="4" Grid.Column="1" Grid.ColumnSpan="2" Text="{Binding Message}" Foreground="{StaticResource ErrBrush}"
+                                 TextWrapping="Wrap" FontSize="12.5" Margin="0,4,0,0"
+                                 IsVisible="{Binding Message, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />
+                    </Grid>
+                  </Border>
+                </DataTemplate>
+              </ItemsControl.ItemTemplate>
+            </ItemsControl>
+          </ScrollViewer>
+
+          <!-- empty state -->
+          <Border IsVisible="{Binding IsEmpty}" BorderBrush="{DynamicResource CardBorder}" BorderThickness="2" CornerRadius="18"
+                  Padding="40" VerticalAlignment="Top" Margin="0,0,0,0">
+            <StackPanel HorizontalAlignment="Center" Spacing="8" MaxWidth="440">
+              <Border Width="72" Height="72" CornerRadius="20" Background="{StaticResource AccentGradient}" HorizontalAlignment="Center">
+                <PathIcon Data="{StaticResource IconFilm}" Width="34" Height="34" Foreground="White" />
+              </Border>
+              <TextBlock Text="Drop episodes or folders here" FontSize="17" FontWeight="SemiBold" HorizontalAlignment="Center" />
+              <TextBlock Classes="muted" TextWrapping="Wrap" TextAlignment="Center"
+                         Text="Subtitles and fonts inside MKV files are found automatically. Pick a profile on the right, then press Start." />
+              <Button Classes="primary" HorizontalAlignment="Center" Margin="0,8,0,0" Command="{Binding AddFilesCommand}">
+                <StackPanel Orientation="Horizontal" Spacing="7"><PathIcon Data="{StaticResource IconPlus}" /><TextBlock Text="Add files" /></StackPanel>
+              </Button>
+            </StackPanel>
+          </Border>
+        </Panel>
+      </DockPanel>
+
+      <!-- ======================= side panel -->
+      <ScrollViewer Grid.Column="1">
+        <StackPanel Spacing="16">
+          <Border Classes="card">
+            <StackPanel Spacing="10">
+              <Grid ColumnDefinitions="*,Auto">
+                <TextBlock Classes="h2" Text="Encode settings" />
+                <TextBlock Grid.Column="1" Classes="muted" FontSize="12" Text="{Binding SettingsTarget}" VerticalAlignment="Center" />
+              </Grid>
+
+              <StackPanel>
+                <TextBlock Classes="label" Text="PROFILE" />
+                <ComboBox HorizontalAlignment="Stretch" ItemsSource="{Binding ProfileOptions}" SelectedItem="{Binding SelectedProfile}" />
+                <TextBlock Classes="muted" FontSize="12" TextWrapping="Wrap" Margin="0,5,0,0" Text="{Binding SelectedProfile.Description}" />
+              </StackPanel>
+
+              <StackPanel IsVisible="{Binding ShowCodec}">
+                <TextBlock Classes="label" Text="VIDEO CODEC" />
+                <ComboBox HorizontalAlignment="Stretch" ItemsSource="{Binding CodecOptions}" SelectedItem="{Binding SelectedCodec}" />
+              </StackPanel>
+
+              <StackPanel IsVisible="{Binding ShowEncoder}">
+                <TextBlock Classes="label" Text="ENCODER" />
+                <ComboBox HorizontalAlignment="Stretch" ItemsSource="{Binding BackendOptions}" SelectedItem="{Binding SelectedBackend}">
+                  <ComboBox.ItemContainerTheme>
+                    <ControlTheme TargetType="ComboBoxItem" x:DataType="vm:BackendOption" BasedOn="{StaticResource {x:Type ComboBoxItem}}">
+                      <Setter Property="IsEnabled" Value="{Binding IsEnabled}" />
+                    </ControlTheme>
+                  </ComboBox.ItemContainerTheme>
+                </ComboBox>
+                <TextBlock Classes="muted" FontSize="12" Margin="0,5,0,0" Text="{Binding BackendNote}" />
+              </StackPanel>
+
+              <ToggleSwitch IsVisible="{Binding ShowTenBit}" IsChecked="{Binding TenBit}" IsEnabled="{Binding TenBitPossible}"
+                            OnContent="10-bit output (HEVC / AV1)" OffContent="10-bit output (HEVC / AV1)" />
+
+              <Grid ColumnDefinitions="*,10,*">
+                <StackPanel IsVisible="{Binding ShowResolution}">
+                  <TextBlock Classes="label" Text="RESOLUTION" />
+                  <ComboBox HorizontalAlignment="Stretch" ItemsSource="{Binding ResolutionOptions}" SelectedItem="{Binding SelectedResolution}" />
+                </StackPanel>
+                <StackPanel Grid.Column="2" IsVisible="{Binding ShowQuality}">
+                  <TextBlock Classes="label" Text="QUALITY" />
+                  <ComboBox HorizontalAlignment="Stretch" ItemsSource="{Binding QualityOptions}" SelectedItem="{Binding SelectedQuality}" />
+                </StackPanel>
+              </Grid>
+
+              <StackPanel IsVisible="{Binding ShowSubtitles}">
+                <TextBlock Classes="label" Text="SUBTITLES" />
+                <ComboBox HorizontalAlignment="Stretch" ItemsSource="{Binding SubtitleOptions}" SelectedItem="{Binding SelectedSubtitles}" />
+              </StackPanel>
+              <ToggleSwitch IsVisible="{Binding ShowSidecar}" IsChecked="{Binding UseSidecar}"
+                            OnContent="Prefer external .ass/.srt" OffContent="Prefer external .ass/.srt" />
+
+              <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="8" Margin="0,4,0,0">
+                <Button Content="Save as default" Command="{Binding SaveDefaultsCommand}" />
+                <Button Content="{Binding ApplyLabel}" Command="{Binding ApplyToSelectedCommand}" />
+              </StackPanel>
+            </StackPanel>
+          </Border>
+
+          <Border Classes="card">
+            <StackPanel Spacing="10">
+              <Grid ColumnDefinitions="*,Auto">
+                <TextBlock Classes="h2" Text="Hardware" />
+                <Button Grid.Column="1" Classes="ghost" Content="Detect again" Command="{Binding DetectHardwareCommand}" IsEnabled="{Binding !IsDetecting}" />
+              </Grid>
+              <Grid ColumnDefinitions="70,*,*,*">
+                <TextBlock Grid.Column="1" Text="H.264" Classes="muted" FontSize="12" HorizontalAlignment="Center" />
+                <TextBlock Grid.Column="2" Text="HEVC" Classes="muted" FontSize="12" HorizontalAlignment="Center" />
+                <TextBlock Grid.Column="3" Text="AV1" Classes="muted" FontSize="12" HorizontalAlignment="Center" />
+              </Grid>
+              <ItemsControl ItemsSource="{Binding Hardware}">
+                <ItemsControl.ItemTemplate>
+                  <DataTemplate x:DataType="vm:HardwareRow">
+                    <Grid ColumnDefinitions="70,*,*,*" Margin="0,2">
+                      <TextBlock Text="{Binding Name}" FontWeight="SemiBold" FontSize="12" VerticalAlignment="Center" />
+                      <ContentControl Grid.Column="1" Content="{Binding H264}" />
+                      <ContentControl Grid.Column="2" Content="{Binding Hevc}" />
+                      <ContentControl Grid.Column="3" Content="{Binding Av1}" />
+                    </Grid>
+                  </DataTemplate>
+                </ItemsControl.ItemTemplate>
+                <ItemsControl.DataTemplates>
+                  <DataTemplate x:DataType="vm:HardwareCell">
+                    <Border Margin="2,0" CornerRadius="6" Padding="0,5" Background="{DynamicResource CardBackground2}"
+                            Opacity="{Binding CellOpacity}" ToolTip.Tip="{Binding Tooltip}">
+                      <TextBlock Text="{Binding Text}" FontSize="12" FontWeight="Bold" HorizontalAlignment="Center"
+                                 Foreground="{Binding Ok, Converter={x:Static vm:Converters.OkBrush}}" />
+                    </Border>
+                  </DataTemplate>
+                </ItemsControl.DataTemplates>
+              </ItemsControl>
+              <TextBlock Classes="muted" FontSize="12" TextWrapping="Wrap" Text="{Binding HardwareInfo}" />
+            </StackPanel>
+          </Border>
+        </StackPanel>
+      </ScrollViewer>
+    </Grid>
+  </DockPanel>
+</Window>

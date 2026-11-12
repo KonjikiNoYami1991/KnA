@@ -1,326 +1,126 @@
-# TnA - Tanoshimi no Autohardsubber
+# TnA - Tanoshimi no Autohardsubber 2.0
 
-Simple, yet almost automatic, autohardsubber from [Tanoshimi no Sekai Fansub](https://tnsfansub.com/), written in C# .NET 4.8.
+An almost automatic hardsubber and encoder from [Tanoshimi no Sekai Fansub](https://tnsfansub.com/), rewritten from scratch for **.NET 10**.
 
-```bash
-THIS PROJECT IS DEAD. I'VE NO INTENTION TO GO ON DEVELOPING.
-```
+Drop in some MKV episodes and pick a profile. TnA finds the right subtitle track, extracts the embedded fonts,
+burns the subtitles in with libass, and encodes the video on the **CPU or the GPU** (NVENC, Quick Sync, AMF,
+VideoToolbox, VA-API), including **AV1 and HEVC 10-bit**.
 
-## Building
+| Web edition (Docker / Proxmox / any browser) | Desktop edition (Windows / macOS / Linux) |
+|---|---|
+| ![Web UI](docs/screenshots/web-dark.png) | ![Desktop UI](docs/screenshots/desktop-dark.png) |
 
-This solution requires a C# compiler for Windows.\
-For example, [Visual Studio Community 2019](https://visualstudio.microsoft.com/vs/community/), even without registration.\
-No need to use Professional or Enterprise edition, but you can.
+## Two front-ends, one engine
 
-## Requirements for building
+| | **Web edition** `src/TnA.Server` | **Desktop edition** `src/TnA.App` |
+|---|---|---|
+| Runs on | Docker, Proxmox LXC/VM, NAS, or locally | Windows, macOS (Apple Silicon too), Linux |
+| UI | Responsive web page (phone included), live progress via SSE | Native Avalonia window, drag & drop, Ctrl+V |
+| Files | Browsed on the server (media roots) | Local disks |
 
-- [FFmpeg by Gyan x64](https://www.gyan.dev/ffmpeg/builds/) release full static for Windows (automatically downloaded)
-- [SevenZipSharp](https://www.nuget.org/packages/SevenZipSharp.Net45/) (no need to install 7z)
-- [7z.dll 19.00 x64](https://www.7-zip.org/download.html) directly extracted from [x64 setup](https://www.7-zip.org/a/7z1900-x64.exe)
-- [MediaInfoNet x64](https://www.nuget.org/packages/MediaInfoNet/) (no need to install MediaInfo)
-- [FFmpeg Output Wrapper DLL x64](https://github.com/KonjikiNoYami1991/FFmpegOutputWrapperNET) (for encoding progress)
-- [mkvmerge.exe from MKVtoolnix x64 for Windows](https://mkvtoolnix.download/) (for MKV remux)
-- [SCXviD x64 standalone for Windows](https://github.com/soyokaze/SCXvid-standalone) for keyframes generation.
+Both use **`TnA.Core`**, which handles probing, command building, the queue, pause/resume, hardware detection and logs.
 
 ## Features
-- Only italian language, for now.
-- No administrator rights required.
-- Can be placed in a netfolder and used with multiple PCs (not recommended).
-- Supported file formats:
-  - MKV (this is the only supported format for autohardsubbing)
-  - MP4 
-  - M2TS (only for MKV remux)
-  - TS (only for MKV remux)
-  - AVI
-  - MOV 
-  - RMVB (not tested)
-  - OGM (not tested)
-  - FLV (not tested)
-  - VOB
-  - MPG/MPEG
-  - 3GP (not tested)
-  - M4V (not tested)
-- Automatic extraction of fonts and subtitle track from MKV files (no need to install fonts).
-- Built-in updater.
-- Autodeinterlacing when needed with [YADIF](https://ffmpeg.org/ffmpeg-filters.html#yadif-1), mode=0 for spatial check without bobbing (only if TFF or BFF are detected, otherwise disabled).\
-This is not the best way for deinterlacing, but it's very fast and simple to use.
-- Instead of xyVSfilter (not included in FFmpeg), it uses [LIBASS](https://github.com/libass/libass) for Advanced Substation Alpha subtitles and generally works well.
-- Format selection when adding an entire folder.
-- Clipboard monitoring, similar to [JDownloader](https://jdownloader.org/).\
-By activating this, you can just copy files and folder from File Explorer and they will be automatically added, following the formats choices.
-- Settings save in .ini file.
-- ~~Automatic removing of source file after a correct conversion (this feature has to be tested, because files seem removed, but they're not).~~
-(Removed because not working).
-- Pause/resume conversion.
-- SendTo link in Windows SendTo menù can be created or removed.
-- Possibility to choose one action after conversion of all listed files.
-- Can be restored to initial settings.
-- Audio track copying instead of re-encoding if destination audio is equal to source's.
-- Remuxing files to MKV (with mkvmerge, ignoring all other settings) and to MP4 files.\
-MP4 remux only supports:
-  - H.264/H.265/XviD/DivX/MPEG 1-2-4 video streams
-  - AAC/AC-3/MP3/ALAC audio streams
-  - No subtitles of any kind, except TimedText (very rare and only used for 3GP).
-  - Any other stream not listed above will be re-encoded according to the other parameters.
-- All videos will be resized if selected resolution of destination is lower than source's, considering aspect ratio. It'll never do any upscale.\
-For example, a video source with resolution 1280x720 will never be upscaled to 1600x900, even selecting 900p for resolution.\
-So, don't try to.
-- Because there are videos with odd resolution, such as 1555x813 or one between width and height, because every compatibility profile is designed to reach standard encoding, this application will recalculate the destination resolution.\
-For example, if width is odd, it will be lowered by 1, the same for height.
-- While aspect ratio is greater than or equal to 1,333 (4:3), width will be used for resizing.\
-Instead, height will be used.
-- Keyframes generation in a txt file.
 
+- **Profiles**: Universal MKV (H.264/HEVC/AV1), Streaming/Web MP4, Blu-ray AAC / AC-3, Workraw,
+  XviD+MP3, Remux→MP4, Remux→MKV, and Aegisub keyframes.
+- **Hardware encoders** (each one is checked with a real test encode, not just read from `ffmpeg -encoders`):
 
-## Hardware requirements
-### Minimum
- - OS: Windows 7/8/8.1/10 (x64 only).
- - CPU: Intel Core 2 Quad, 2,00 GHz x 4.
- - RAM: 4 GB DDR2 (better have DDR3).
- - GPU: any.
- - SSD/HDD: HDD, better yet with SSD.
+  | Backend | H.264 | HEVC | AV1 | 10-bit |
+  |---|---|---|---|---|
+  | CPU (x264 / x265 / SVT-AV1) | ✓ | ✓ | ✓ | HEVC, AV1 |
+  | NVIDIA NVENC | ✓ | ✓ | ✓ (RTX 40/50) | HEVC, AV1 |
+  | Intel Quick Sync | ✓ | ✓ | ✓ (Arc / Core Ultra) | HEVC, AV1 |
+  | AMD AMF (Windows) | ✓ | ✓ | ✓ (RDNA 3+) | HEVC, AV1 |
+  | VA-API (Linux, Intel/AMD) | ✓ | ✓ | ✓ (when the GPU has it) | HEVC, AV1 |
+  | Apple VideoToolbox | ✓ | ✓ | — (no AV1 hardware encoder on Apple Silicon) | HEVC |
 
-### Recommended
- - OS: Windows 7/8/8.1/10 (x64 only).
- - CPU: the faster, the better.
- - RAM: 8 GB DDR4.
- - GPU: any.
- - SSD/HDD: HDD, better yet with SSD.
+- **Hardsub**: picks a sidecar `.ass/.srt` first, otherwise the forced, default or first text track.
+  It falls back to **PGS/VobSub bitmap subtitles** (overlay) when there are no text tracks.
+  Fonts are extracted from the MKV attachments, so you don't need to install them.
+- **Softsub**: keeps every subtitle track and font, and copies the audio untouched (MKV).
+- **Smart resize**: never upscales, keeps the display aspect ratio, makes dimensions even, and turns anamorphic sources into square pixels.
+- Deinterlacing with `bwdif`, only on frames that are actually interlaced.
+- Audio is copied when it is already compatible with the profile, and re-encoded only when needed.
+- **Queue**: pause/resume (suspends FFmpeg itself), stop, reorder, retry, per-file settings, an optional
+  action when the queue finishes, and a "show FFmpeg command" button. Every job writes a log.
+- **Never overwrites anything**: outputs are named `Name [Profile Codec 10bit 1080p Quality].ext`, and a counter is added when that name already exists.
 
-Actually, any hardware will be fine (excepted RAM) because it's just a matter of how much time is needed to process video files. Obviously, process will be slow with slow PCs.
-For example, a video 1080p with 23,976 fps, duration of 24 mins, encoded at below-medium quality, reaches 10-12 fps during conversion: PC is slow or not suitable for video encoding, but time needed is still acceptable.
-Keep in mind that deinterlacing slows down encoding speed.
+## Quick start
 
-## Explanation of parameters
-There are many parameters that can be setted before starting encoding, described below.
+### Docker (headless server, e.g. Proxmox + iGPU)
 
-### Compatibility
-#### - Bluray AAC
-This profile suits compatibilty for bluray players witch plays AAC audio stream.
-- VIDEO CODEC: H.264 8bit YUV420p
-  - Parameters
-    - Profile: High
-    - Level: 4.1
-    - Bluray compat: enabled
-    - Maxrate: 50000k
-    - Bufsize: 70000k
-    - Pixel format: yuv420p
-- AUDIO CODEC: AAC-LC, 1 to 6 channels (copied if audio source is the same to avoid quality loss)
-#### - Bluray AC-3
-This profile suits compatibilty for bluray players witch plays AC-3 audio stream (almost all).
-- VIDEO CODEC: H.264 8bit YUV420p
-  - Parameters
-    - Profile: High
-    - Level: 4.1
-    - Bluray compat: enabled
-    - Maxrate: 50000k
-    - Bufsize: 70000k
-    - Pixel format: yuv420p
-- AUDIO CODEC: AC-3 (not fixed, not E-AC-3), 1 to 6 channels (copied if audio source is the same to avoid quality loss)
-#### - Remux MP4
-This profile remux any source file, re-encoding every stream not suitable, to MP4 container.\
-Be sure to select destination quality to avoid wrong re-encoding parameters.
-- VIDEO CODEC: copied if source video stream is suitable with MP4 container, otherwise video H.264 8bit YUV420p
-  - Parameters
-    - Profile: High
-    - Level: 4.1
-    - Bluray compat: disabled
-    - Maxrate: none
-    - Bufsize: none
-    - Pixel format: yuv420p
-- AUDIO CODEC
-  - Lossy case
-    - Copied if audio source is one among allowed formats, otherwise AAC-LC, 1 to 6 channels
-  - Lossless case
-    - Re-encoded to ALAC to avoid quality loss.
-#### - Remux MKV
-  - Copies all streams and metadata from source to destination file, without any stream conversion.
-  - Ignores all other presets.
-#### - Streaming HTML5 H.264
-This profile is suitable for video streaming in HTML5 web pages.
-- VIDEO CODEC: H.264 8bit YUV420p
-  - Parameters
-    - Profile: High
-    - Level: 4.1
-    - Bluray compat: enabled (maybe it should be disabled, because b-pyramid=0 is not compatible with many BD players and it could be useless to be enabled)
-    - Maxrate: 20000k
-    - Bufsize: 20000k
-    - Pixel format: yuv420p
-    - Bluray compat: disabled
-    - x264opts 
-      - Cabac: disabled
-      - Weightp: disabled
-      - Weightb: disabled
-      - Sync lookahead: disabled
-      - Sliced threads: 1
-      - B pyramid: 0
-      - Keyint min: framerate casted to integer and multiplied by 10
-      - GOP: same as Keyint min to make constant GOP
-- AUDIO CODEC: AAC-LC, 1 to 2 channels (copied if audio source is the same to avoid quality loss and has at most 2 channels)
-#### - Streaming HTML5 H.265
-This profile is named "Streaming", but it's a simple profile to convert to H.265 any file you want.
-- VIDEO CODEC: H.265 8bit YUV420p
-  - Parameters
-    - Profile: main
-    - Level: 4.1
-    - Bluray compat: enabled (maybe it should be disabled, because b-pyramid=0 is not compatible with many BD players and it could be useless to be enabled)
-    - Maxrate: 50000k
-    - Bufsize: 70000k
-    - Pixel format: yuv420p
-    - Bluray compat: none
-    - UHD bluray compat: disabled
-    - x265params 
-      - Pmode: enabled
-      - Pme: enabled
-      - Psy-rd: 4
-      - Rdoq-level: 1
-      - Psy-rdoq: 10
-      - Weightb: 1
-      - Me: uneven multi-hexagon
-      - Subme: 4
-      - Rdpenalty: 1
-      - Open-gop: disabled
-      - Rc-lookahead: 40
-      - Bframes: 4
-      - Rd: 4
-      - B-adapt: 2
-- AUDIO CODEC: AAC-LC, 1 to 2 channels (copied if audio source is the same to avoid quality loss and has at most 2 channels)
-#### - XviD MP3
-This profile is suitable for old players with DivX/XviD compatibility and PCs, of course.
-- VIDEO CODEC: H.263 8bit YUV420p
-  - Parameters
-    - Profile: MPEG4 Advanced Simple Profile
-    - Level: 5
-    - Macroblock decision algorithm: RD
-    - Sub pel motion estimation: 7
-    - Bframes: 2
-    - Limit motion vectors range: 1023
-    - Use Odml: autodetermined, based on destination filesize
-    - Pre motion estimation compare: 7
-    - Macroblock compare: 7
-    - Sub pel me compare: 7
-    - Quantizer curve compression factor: 1,0
-    - Minimum quantizer scale: 1,0
-    - Maximum quantizer scale: 7,0
-    - Flags
-      - Four motion vector: enabled
-      - Loop: enabled
-      - Quarter-pixel motion compensation: enabled
-      - High quality AC prediction: enabled
-    - FFlags
-      - Generate missing PTS if DTS is present: enabled
-- AUDIO CODEC: MP3, 1 to 2 channels (copied if audio source is the same to avoid quality loss)
-#### - Workraw
-This profile generates a file with only video and audio streams, excluding all the others, with very poor quality.
-- VIDEO CODEC: H.264 8bit YUV420p
-  - Parameters
-    - Profile: High
-    - Level: 4.1
-    - Bluray compat: disabled
-    - Maxrate: 20000k
-    - Bufsize: 20000k
-    - Pixel format: yuv420p
-    - Bluray compat: disabled
-    - Partitions
-      - i4x4
-      - i8x8
-      - p8x8
-      - b8x8
-    - Subtitles: excluded
-    - Tune: fast decode
-    - x264opts 
-      - B pyramid: 0
-- AUDIO CODEC: Vorbis, 1 channel (copied if audio source is the same to avoid quality loss)
+```bash
+git clone https://github.com/KonjikiNoYami1991/TnA.git && cd TnA
+# edit docker-compose.yml: media folder, optional password
+RENDER_GID=$(getent group render | cut -d: -f3) docker compose up -d --build
+```
 
-### Resolution
-There's not so much to explain.\
-Resolution is set by width, but used according to the cases explained below:
- - Case AR greater than or equal to 1,333 (4:3): width is used.
- - Case AR lower than 1,333 (4:3): heigth is used.
+Then open `http://<host>:8585`. See **[docs/PROXMOX.md](docs/PROXMOX.md)** for LXC GPU passthrough,
+the native installer without Docker (`deploy/install-linux.sh`) and all environment variables.
 
-Possible values are:
- - 1080p
- - 900p
- - 720p
- - 576p
- - 480p (actually it's 486p)
- - 396p
- - 360p
- - 288p
+### Desktop
 
-### Quality
-Quality is the parameter that determines the final quality of destination file.\
-Possible values are:
-- Altissima (Highest)
-  - Mostly useless.
-  - Very slow.
-  - Very high bitrate.
-  - Very large filesize.
-- Alta (High)
-  - Useful to keep high quality.
-  - Not as slow as Highest quality but slower than Above medium quality.
-  - Large filesize.
-- Medio-alta (Above medium)
-  - Good quality.
-  - Medium filesize (sometimes large, but it rarely happens).
-  - Slower than Medium quality but faster than High.
-- Media (Medium)
-  - Good compromise between quality and filesize.
-  - Medium speed.
-  - Normal filesize.
-- Medio-bassa (Below medium)
-  - Resonable quality.
-  - Fast.
-  - Quite small filesize.
-  - Suitable for streaming.
-- Bassa (Low)
-  - Low quality.
-  - Small filesize.
-  - Suitable for streaming.
-  - Faster.
-- Bassissima (Lowest)
-  - Very low quality.
-  - Very small filesize.
-  - Suitable for streaming, but no, do not use this preset for streaming.
-  - Very fast.
-- Bozza (Draft)
-  - THIS PRESET IS FOR TESTING ONLY.
-  - Useful to make conversion tests.
-  - The fastest.
-  - Very bad quality.
-  - Smallest filesize
+```bash
+dotnet run --project src/TnA.App -c Release
+```
 
-Audio bitrate is determined using bitrate for stereo and multiplied by audio channel number, then divided by 2 (excepted for AC-3, not divided by 2).
+On Windows, *Settings → Download FFmpeg* fetches a full static build (BtbN, GPL: libass, x264, x265,
+SVT-AV1, NVENC, QSV, AMF). On macOS, run `brew install ffmpeg`. On Linux, use your package manager.
 
-### Subtitle modes
+### Web edition on your own PC
 
- - Hardsub
-   1) Demuxes all fonts inside MKV, if any.
-   2) Scans for forced subtitle track, if any. Otherwise, default subtitle track, if any. If not found default or forced subtitles, it picks the first track. If there's no subtitles, it just skips demux and jumps to encode process.
- - Softsub
-   - Copies all fonts and subtitle tracks inside MKV file and just re-encode video and audio, according to compatibility and quality presets.
-   - It forces MKV container for destination file.
- - No sottotitoli (No subtitles)
-   - Ignores all subtitle tracks and fonts
+```bash
+dotnet run --project src/TnA.Server -c Release -- --open
+```
 
-Hardsub mode will choose only one subtitle track, never two or more.
+## Building and testing
 
+You need the [.NET 10 SDK](https://dotnet.microsoft.com/download) and, for the integration tests, FFmpeg on your PATH.
 
-## Usage
+```bash
+dotnet build TnA.slnx
+dotnet test TnA.slnx
+```
 
-- Drag&drop files and folders, use buttons or paste files and folders from system clipboard.
-- Choose one among compatibility profiles, resolutions (height), quality profiles, subtitle modes.
-- Click on Play button and wait. Destination files will be in the same folder of source files, never overwritten.
+The tests use FFmpeg to build a sample MKV (anamorphic video, 5.1 audio, ASS and SRT subtitles, an attached font).
+They then run real hardsub, softsub AV1 10-bit, remux, keyframe and pause/stop jobs, plus a headless render of the desktop window.
 
-## Hints
- - You can convert the same file twice or more, just be sure to change compatibility, quality or resolution.
- - Filelist is a Datagridview, similar to Excel or Calc. Clicking on the row header will select all lines in the grid.
- - Selection can be done using Shift or CTRL key, too.
+Self-contained builds:
 
-## Contributing
-Pull requests are welcome. For major changes, please open an issue first to discuss what you would like to change.
+```bash
+dotnet publish src/TnA.App -c Release -r win-x64 --self-contained -p:PublishSingleFile=true
+dotnet publish src/TnA.App -c Release -r osx-arm64 --self-contained
+dotnet publish src/TnA.Server -c Release -r linux-x64 --self-contained
+```
 
-Please make sure to update tests as appropriate.
+## Project layout
+
+```
+src/TnA.Core     engine (no UI): probe, encoders, command builder, queue, hardware detection
+src/TnA.Server   ASP.NET Core API + web UI (wwwroot), Docker entry point
+src/TnA.App      Avalonia desktop app
+tests/           xUnit unit/integration tests + headless UI test
+deploy/          Linux/LXC installer (systemd)
+docs/            Proxmox guide, screenshots
+legacy/          the original WinForms/.NET Framework 4.8 app (v0.9.9), kept for reference
+```
+
+## What changed since 0.9.9
+
+The old code was a single 3,900-line WinForms form. Bugs fixed in the rewrite include:
+
+- `-crf: N` (with a stray colon) produced invalid commands, and quality names were compared inconsistently
+  ("Very High" vs "Very high", "Above medium" vs "Above normal"), so some presets silently got no quality settings.
+- Output files were overwritten (`-y`), despite the README promising otherwise.
+- Pausing keyframe generation paused `cmd.exe` instead of FFmpeg/SCXviD.
+- Fragile progress parsing of FFmpeg's human-readable status line, which failed on N/A values. It now uses `-progress`.
+- Paths with quotes or special characters broke the command line. It now uses an argument list.
+- TS stream-index parsing crashed (`Binary.Substring` on an empty string).
+- The window height was saved under the key "Heigth" and never restored.
+- `Thread.Abort` (unsupported on modern .NET), a global clipboard hook, and a Dropbox-based updater are gone.
+- No more mkvmerge, 7-Zip or MediaInfo native DLLs: FFmpeg/ffprobe do everything.
 
 ## License
-[GPLv3](https://choosealicense.com/licenses/gpl-3.0/)
+
+[GPLv3](LICENSE)
