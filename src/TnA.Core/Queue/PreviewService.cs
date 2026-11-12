@@ -69,11 +69,17 @@ public sealed class PreviewService(QueueService queue)
                     "-vf", $"scale={width}:-2", "-q:v", "5", "-update", "1", path], new PipeSource(job.SourcePath, f, f), dir, ct);
                 return;
             }
-            var args = new List<string> { "-hide_banner", "-nostdin", "-y", "-v", "error", "-skip_frame", "nokey" };
-            args.AddRange(MediaProber.RobustInputArgs(job.SourcePath));
-            args.AddRange(["-ss", CommandBuilder.Sec(Math.Max(0, seconds)), "-i", job.SourcePath, "-map", "0:v:0", "-frames:v", "1",
-                "-vf", $"scale={width}:-2", "-q:v", "5", "-update", "1", path]);
-            await Run(args, dir, ct);
+            // Fast path: decode keyframes only. After the last keyframe of the file it finds nothing: decode normally then.
+            foreach (bool keyOnly in new[] { true, false })
+            {
+                var args = new List<string> { "-hide_banner", "-nostdin", "-y", "-v", "error" };
+                if (keyOnly) args.AddRange(["-skip_frame", "nokey"]);
+                args.AddRange(MediaProber.RobustInputArgs(job.SourcePath));
+                args.AddRange(["-ss", CommandBuilder.Sec(Math.Max(0, seconds)), "-i", job.SourcePath, "-map", "0:v:0", "-frames:v", "1",
+                    "-vf", $"scale={width}:-2", "-q:v", "5", "-update", "1", path]);
+                try { await Run(args, dir, ct); } catch (InvalidOperationException) when (keyOnly) { }
+                if (File.Exists(path) && new FileInfo(path).Length > 0) return;
+            }
         }, ct);
     }
 

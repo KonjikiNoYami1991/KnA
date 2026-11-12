@@ -1,7 +1,8 @@
 using System.Diagnostics;
+using System.Globalization;
 using System.Text;
-using System.Text.Json;
 using TnA.Core.Encoding;
+using TnA.Core.Localization;
 using TnA.Core.Queue;
 using TnA.Core.Settings;
 using TnA.Core.Tools;
@@ -16,6 +17,7 @@ var builder = WebApplication.CreateBuilder(new WebApplicationOptions
 
 if (string.IsNullOrEmpty(Environment.GetEnvironmentVariable("ASPNETCORE_URLS")) && !args.Any(a => a.StartsWith("--urls")))
     builder.WebHost.UseUrls(Environment.GetEnvironmentVariable("TNA_URLS") ?? "http://0.0.0.0:8585");
+builder.WebHost.ConfigureKestrel(k => k.Limits.MaxRequestBodySize = 4 << 20);
 
 builder.Services.ConfigureHttpJsonOptions(o =>
 {
@@ -33,8 +35,12 @@ var hub = app.Services.GetRequiredService<EventHub>();
 var browser = app.Services.GetRequiredService<FileBrowser>();
 var log = app.Logger;
 
-bool advancedAllowed = Environment.GetEnvironmentVariable("TNA_ALLOW_ADVANCED") is "1" or "true" or "yes";
-bool powerActionsAllowed = Environment.GetEnvironmentVariable("TNA_ALLOW_POWER_ACTIONS") is "1" or "true" or "yes";
+AppDomain.CurrentDomain.UnhandledException += (_, e) =>
+    log.LogCritical("Crash log: {Path}", queue.Store.WriteCrashLog((Exception)e.ExceptionObject, "server"));
+
+bool advancedAllowed = Env("TNA_ALLOW_ADVANCED");
+bool powerActionsAllowed = Env("TNA_ALLOW_POWER_ACTIONS");
+bool componentsLocked = Env("TNA_LOCK_COMPONENTS");
 
 // ---------------------------------------------------------------- optional password (HTTP Basic)
 var password = Environment.GetEnvironmentVariable("TNA_PASSWORD");
@@ -63,19 +69,50 @@ if (!string.IsNullOrEmpty(password))
     });
 }
 
+// ---------------------------------------------------------------- language: Italian browsers get Italian
+app.Use(async (ctx, next) =>
+{
+    var lang = ctx.Request.Query["lang"].ToString();
+    if (string.IsNullOrEmpty(lang)) lang = ctx.Request.Headers.AcceptLanguage.ToString();
+    var culture = lang.StartsWith("it", StringComparison.OrdinalIgnoreCase) ? new CultureInfo("it-IT") : new CultureInfo("en-US");
+    CultureInfo.CurrentUICulture = culture;
+    await next();
+});
+
+// ---------------------------------------------------------------- errors → JSON problem details
+app.Use(async (ctx, next) =>
+{
+    try { await next(); }
+    catch (Exception ex) when (ex is InvalidOperationException or KeyNotFoundException or UnauthorizedAccessException or IOException or ArgumentException
+                               && !ctx.Response.HasStarted)
+    {
+        ctx.Response.StatusCode = ex switch { KeyNotFoundException => 404, UnauthorizedAccessException => 403, _ => 400 };
+        await ctx.Response.WriteAsJsonAsync(new { title = ex.Message, detail = ex.Message });
+    }
+});
+
 app.UseDefaultFiles();
 app.UseStaticFiles();
 
-// ---------------------------------------------------------------- state & events
-app.MapGet("/api/state", () => new StateDto(AppInfo.Version, Platform(), queue.Settings, OptionsDto.Create(),
-    Mapping.Tools(queue), Mapping.QueueState(queue), queue.Jobs.Select(JobDto.From).ToList(), powerActionsAllowed));
+// ---------------------------------------------------------------- state, i18n & events
+app.MapGet("/api/state", () => new StateDto(AppInfo.Version, Platform(), L.Language, queue.Settings, OptionsDto.Create(),
+    Mapping.Tools(queue), Mapping.QueueState(queue), queue.Jobs.Select(JobDto.From).ToList(), powerActionsAllowed, queue.Presets.All));
+
+app.MapGet("/api/i18n", () => new { lang = L.Language, table = L.IsItalian() ? L.ItalianTable : new Dictionary<string, string>() });
 
 app.MapGet("/api/events", (HttpContext ctx, CancellationToken ct) => hub.StreamAsync(ctx, ct));
 
-// ---------------------------------------------------------------- files
-app.MapGet("/api/browse", (string? path) =>
+app.MapGet("/api/frameserver/templates", () => TnA.Core.Media.Frameserver.Templates.Select(t => new { t.Name, Kind = t.Kind.ToString(), t.Body }));
+app.MapGet("/api/info", () => new
 {
-    try { return Results.Ok(browser.Browse(path)); }
+    advancedAllowed, powerActionsAllowed, componentsLocked, roots = browser.Roots, vspipe = queue.Tools?.VsPipe,
+    dataDirectory = queue.Store.DataDirectory, version = AppInfo.Version, platform = Platform(),
+});
+
+// ---------------------------------------------------------------- files
+app.MapGet("/api/browse", (string? path, bool? external) =>
+{
+    try { return Results.Ok(browser.Browse(path, external ?? false)); }
     catch (UnauthorizedAccessException ex) { return Results.Problem(ex.Message, statusCode: 403); }
     catch (IOException ex) { return Results.Problem(ex.Message, statusCode: 400); }
 });
@@ -84,7 +121,7 @@ app.MapGet("/api/browse", (string? path) =>
 app.MapPost("/api/jobs", (AddJobsRequest req) =>
 {
     var denied = req.Paths.Where(p => !browser.IsAllowed(p)).ToList();
-    if (denied.Count > 0) return Results.Problem($"Outside the allowed media roots: {denied[0]}", statusCode: 403);
+    if (denied.Count > 0) return Results.Problem(L.T("Outside the allowed media roots: {0}", denied[0]), statusCode: 403);
     var added = queue.AddPaths(req.Paths, req.Settings, req.Extensions);
     return Results.Ok(new { added = added.Count });
 });
@@ -98,8 +135,42 @@ app.MapGet("/api/jobs/{id:guid}/command", async (Guid id) =>
 {
     if (queue.Find(id) is not { } j) return Results.NotFound();
     try { return Results.Text(j.CommandLine ?? await queue.PreviewCommandAsync(j)); }
-    catch (Exception ex) { return Results.Text("Cannot build the command: " + ex.Message); }
+    catch (Exception ex) { return Results.Text(L.T("Cannot build the command: {0}", ex.Message)); }
 });
+
+// Editor: analysis and edits (tracks, external files, trim, settings of this file).
+app.MapGet("/api/jobs/{id:guid}/analysis", async (Guid id, CancellationToken ct) =>
+{
+    var j = queue.Find(id) ?? throw new KeyNotFoundException();
+    return Results.Ok(AnalysisDto.From(await queue.AnalyzeAsync(j, ct), j.SourcePath));
+});
+app.MapPut("/api/jobs/{id:guid}/edit", async (Guid id, EditRequest req, CancellationToken ct) =>
+{
+    var j = queue.Find(id) ?? throw new KeyNotFoundException();
+    var files = req.Edit.ExternalFiles.Concat(req.Edit.Tracks?.Select(t => t.File) ?? []).Distinct().Where(f => f != j.SourcePath);
+    if (files.FirstOrDefault(f => !browser.IsAllowed(f)) is { } bad)
+        return Results.Problem(L.T("Outside the allowed media roots: {0}", bad), statusCode: 403);
+    if (req.Edit.OutputFolder is { Length: > 0 } of && !browser.IsAllowed(of))
+        return Results.Problem(L.T("Outside the allowed media roots: {0}", of), statusCode: 403);
+    var a = await queue.SetEditAsync(id, req.Edit, ct, req.Settings);
+    return Results.Ok(AnalysisDto.From(a, j.SourcePath));
+});
+
+// Previews (cached PNG/JPEG/MP4 files).
+app.MapGet("/api/jobs/{id:guid}/preview/frame", async (Guid id, double t, bool? final, int? w, CancellationToken ct) =>
+    Results.File(await queue.Preview.FrameAsync(id, t, final ?? true, Math.Clamp(w ?? 1280, 160, 3840), ct), "image/png"));
+app.MapGet("/api/jobs/{id:guid}/preview/thumb", async (Guid id, double t, int? w, CancellationToken ct) =>
+    Results.File(await queue.Preview.ThumbnailAsync(id, t, Math.Clamp(w ?? 192, 64, 640), ct), "image/jpeg"));
+app.MapGet("/api/jobs/{id:guid}/preview/waveform", async (Guid id, string file, int stream, int? w, int? h, CancellationToken ct) =>
+{
+    var j = queue.Find(id) ?? throw new KeyNotFoundException();
+    if (file != j.SourcePath && !j.Edit.ExternalFiles.Contains(file)) return Results.Problem("Unknown file", statusCode: 403);
+    return Results.File(await queue.Preview.WaveformAsync(id, file, stream, Math.Clamp(w ?? 1600, 200, 4000), Math.Clamp(h ?? 100, 40, 400), ct), "image/png");
+});
+app.MapGet("/api/jobs/{id:guid}/preview/clip", async (Guid id, double t, double? len, CancellationToken ct) =>
+    Results.File(await queue.Preview.ClipAsync(id, t, len ?? 6, ct), "video/mp4", enableRangeProcessing: true));
+app.MapGet("/api/jobs/{id:guid}/cropdetect", async (Guid id, CancellationToken ct) =>
+    Results.Ok(await queue.Preview.DetectCropAsync(id, ct)));
 
 // ---------------------------------------------------------------- queue control
 app.MapPost("/api/queue/start", () =>
@@ -111,20 +182,48 @@ app.MapPost("/api/queue/stop", async () => { await queue.StopAsync(); return Res
 app.MapPost("/api/queue/pause", () => { queue.Pause(); return Results.Ok(); });
 app.MapPost("/api/queue/resume", () => { queue.Resume(); return Results.Ok(); });
 
-// ---------------------------------------------------------------- settings & tools
+// ---------------------------------------------------------------- presets & wizard
+app.MapGet("/api/presets", () => queue.Presets.All);
+app.MapPost("/api/presets", (Preset p) =>
+{
+    var saved = queue.Presets.Save(p);
+    hub.Broadcast("presets", queue.Presets.All);
+    return Results.Ok(saved);
+});
+app.MapDelete("/api/presets/{name}", (string name) =>
+{
+    var ok = queue.Presets.Delete(name);
+    hub.Broadcast("presets", queue.Presets.All);
+    return ok ? Results.Ok() : Results.NotFound();
+});
+app.MapPost("/api/presets/wizard", (WizardAnswers a) => PresetWizard.Build(a, queue.Settings.Capabilities));
+
+// ---------------------------------------------------------------- settings
 app.MapPut("/api/settings", (SettingsUpdate u) =>
 {
     var s = queue.Settings;
     if (u.OutputDirectory is not null)
     {
         if (u.OutputDirectory.Length > 0 && !browser.IsAllowed(u.OutputDirectory))
-            return Results.Problem("Output folder outside the allowed media roots.", statusCode: 403);
+            return Results.Problem(L.T("Output folder outside the allowed media roots."), statusCode: 403);
         s.OutputDirectory = u.OutputDirectory.Length == 0 ? null : u.OutputDirectory;
     }
     if (u.Defaults is not null) s.Defaults = u.Defaults;
     if (u.PostAction is { } pa) s.PostAction = powerActionsAllowed ? pa : PostQueueAction.Nothing;
     if (u.FolderExtensions is not null) s.FolderExtensions = u.FolderExtensions;
     if (u.Theme is not null) s.Theme = u.Theme;
+    if (u.CheckUpdatesOnStart is { } cu) s.CheckUpdatesOnStart = cu;
+    if (u.Language is { } lg) s.Language = lg is "it" or "en" ? lg : "Auto";
+    if (u.RestoreQueue is { } rq) s.RestoreQueue = rq;
+    if (u.OutputNameTemplate is { } nt) s.OutputNameTemplate = string.IsNullOrWhiteSpace(nt) ? OutputNaming.DefaultTemplate : nt;
+    if (u.Priority is { } pr) s.Priority = pr;
+    if (u.StallTimeoutMinutes is { } st) s.StallTimeoutMinutes = Math.Clamp(st, 1, 600);
+    if (u.KeepLogs is { } kl) s.KeepLogs = Math.Clamp(kl, 10, 100000);
+    if (u.TempDirectory is not null)
+    {
+        if (u.TempDirectory.Length > 0 && !advancedAllowed) return Results.Problem(L.T("Locked: set TNA_ALLOW_ADVANCED=true on the server to edit these from the browser."), statusCode: 403);
+        s.TempDirectory = u.TempDirectory.Length == 0 ? null : u.TempDirectory;
+    }
     if (u.VaapiDevice is not null) s.VaapiDevice = u.VaapiDevice.Length == 0 ? null : u.VaapiDevice;
     if (advancedAllowed)
     {
@@ -136,23 +235,62 @@ app.MapPut("/api/settings", (SettingsUpdate u) =>
     return Results.Ok(new { settings = s, tools = Mapping.Tools(queue), advancedAllowed });
 });
 
+// ---------------------------------------------------------------- hardware, updates, components
 app.MapPost("/api/hardware/detect", async (CancellationToken ct) =>
 {
     var progress = new Progress<string>(line => hub.Broadcast("detect", new { line }));
     var caps = await queue.DetectHardwareAsync(progress, ct);
-    return caps is null ? Results.Problem("FFmpeg not found.", statusCode: 409) : Results.Ok(caps);
+    return caps is null ? Results.Problem(L.T("FFmpeg was not found. Configure it in Settings."), statusCode: 409) : Results.Ok(caps);
 });
 
-app.MapPost("/api/ffmpeg/download", async (CancellationToken ct) =>
+app.MapGet("/api/updates", async (CancellationToken ct) =>
 {
-    if (FfmpegDownloader.DownloadUrl is null) return Results.Problem(FfmpegDownloader.ManualInstructions, statusCode: 400);
-    var progress = new Progress<double>(p => hub.Broadcast("download", new { percent = Math.Round(p, 1) }));
-    await FfmpegDownloader.DownloadAsync(queue.Store.DataDirectory, progress, ct);
-    queue.RefreshTools();
-    return Results.Ok(Mapping.Tools(queue));
+    try
+    {
+        var u = await AppUpdater.CheckAsync("server", ct);
+        queue.Settings.LastUpdateCheck = DateTimeOffset.Now;
+        queue.SaveSettings();
+        return Results.Ok(new
+        {
+            current = AppInfo.Version, latest = u.Latest?.Tag, isNewer = u.IsNewer, message = u.Message,
+            url = u.Latest?.HtmlUrl, notes = u.Latest?.Body,
+            howTo = IsContainer() ? L.T("Update the container: git pull && docker compose up -d --build")
+                                  : L.T("Update the service: git pull && sudo ./deploy/install-linux.sh"),
+        });
+    }
+    catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or InvalidOperationException)
+    {
+        return Results.Problem(L.T("Cannot reach GitHub: {0}", ex.Message), statusCode: 502);
+    }
 });
 
-app.MapGet("/api/info", () => new { advancedAllowed, powerActionsAllowed, roots = browser.Roots, dataDirectory = queue.Store.DataDirectory });
+app.MapGet("/api/components", async (CancellationToken ct) =>
+{
+    try { return Results.Ok(await queue.Components.CheckAsync(queue.Tools, online: true, ct)); }
+    catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException)
+    {
+        return Results.Ok(await queue.Components.CheckAsync(queue.Tools, online: false, ct));
+    }
+});
+
+app.MapPost("/api/components/{id}/install", async (string id, CancellationToken ct) =>
+{
+    if (componentsLocked) return Results.Problem(L.T("Component installation is disabled on this server (TNA_LOCK_COMPONENTS)."), statusCode: 403);
+    if (queue.IsRunning) return Results.Problem(L.T("Stop the queue before updating components."), statusCode: 409);
+    var progress = new Progress<double>(p => hub.Broadcast("component", new { id, percent = Math.Round(p, 1) }));
+    var logger = new Progress<string>(l => hub.Broadcast("component", new { id, line = l }));
+    try
+    {
+        await queue.Components.InstallAsync(id, progress, logger, ct);
+    }
+    catch (Exception ex) when (ex is HttpRequestException or InvalidOperationException or InvalidDataException or PlatformNotSupportedException)
+    {
+        return Results.Problem(ex.Message, statusCode: 502);
+    }
+    queue.RefreshTools();
+    if (id == "ffmpeg") await queue.DetectHardwareAsync(new Progress<string>(l => hub.Broadcast("detect", new { line = l })), ct);
+    return Results.Ok(await queue.Components.CheckAsync(queue.Tools, online: false, ct));
+});
 
 // ---------------------------------------------------------------- lifecycle
 queue.QueueCompleted += action =>
@@ -181,12 +319,19 @@ app.Lifetime.ApplicationStarted.Register(async () =>
         try { Process.Start(new ProcessStartInfo(url) { UseShellExecute = true }); } catch (Exception) { }
     }
 });
-app.Lifetime.ApplicationStopping.Register(() => queue.StopAsync().Wait(TimeSpan.FromSeconds(10)));
+app.Lifetime.ApplicationStopping.Register(() =>
+{
+    queue.StopAsync().Wait(TimeSpan.FromSeconds(10));
+    queue.SaveQueue();
+});
 
 app.Run();
 
+static bool Env(string name) => Environment.GetEnvironmentVariable(name) is "1" or "true" or "yes" or "True";
+
+static bool IsContainer() => File.Exists("/.dockerenv") || Environment.GetEnvironmentVariable("DOTNET_RUNNING_IN_CONTAINER") == "true";
+
 static string Platform() =>
-    (OperatingSystem.IsWindows() ? "Windows" : OperatingSystem.IsMacOS() ? "macOS" : "Linux")
-    + (File.Exists("/.dockerenv") || Environment.GetEnvironmentVariable("DOTNET_RUNNING_IN_CONTAINER") == "true" ? " (container)" : "");
+    (OperatingSystem.IsWindows() ? "Windows" : OperatingSystem.IsMacOS() ? "macOS" : "Linux") + (IsContainer() ? " (container)" : "");
 
 public partial class Program;
