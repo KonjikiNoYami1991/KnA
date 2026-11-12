@@ -1,6 +1,7 @@
 <Window xmlns="https://github.com/avaloniaui"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         xmlns:vm="using:TnA.App.ViewModels"
+        xmlns:v="using:TnA.App.Views"
         x:Class="TnA.App.Views.MainWindow"
         x:DataType="vm:MainViewModel"
         Title="{Binding WindowTitle}"
@@ -30,11 +31,11 @@
           </StackPanel>
         </Border>
         <StackPanel Grid.Column="3" Orientation="Horizontal" Spacing="8">
-          <Button Command="{Binding AddFilesCommand}" ToolTip.Tip="Add video files">
-            <StackPanel Orientation="Horizontal" Spacing="7"><PathIcon Data="{StaticResource IconPlus}" /><TextBlock Text="Files" /></StackPanel>
+          <Button Command="{Binding AddFilesCommand}" ToolTip.Tip="{v:T 'Add video files'}">
+            <StackPanel Orientation="Horizontal" Spacing="7"><PathIcon Data="{StaticResource IconPlus}" /><TextBlock Text="{v:T 'Files'}" /></StackPanel>
           </Button>
-          <Button Command="{Binding AddFolderCommand}" ToolTip.Tip="Add every video in a folder (recursive)">
-            <StackPanel Orientation="Horizontal" Spacing="7"><PathIcon Data="{StaticResource IconFolder}" /><TextBlock Text="Folder" /></StackPanel>
+          <Button Command="{Binding AddFolderCommand}" ToolTip.Tip="{v:T 'Add every video in a folder (recursive)'}">
+            <StackPanel Orientation="Horizontal" Spacing="7"><PathIcon Data="{StaticResource IconFolder}" /><TextBlock Text="{v:T 'Folder'}" /></StackPanel>
           </Button>
           <Button Command="{Binding StartStopCommand}" Classes="primary" Classes.danger="{Binding IsRunning}" MinWidth="96">
             <StackPanel Orientation="Horizontal" Spacing="7">
@@ -46,8 +47,8 @@
           <Button Command="{Binding PauseResumeCommand}" IsEnabled="{Binding IsRunning}" MinWidth="96">
             <StackPanel Orientation="Horizontal" Spacing="7"><PathIcon Data="{StaticResource IconPause}" /><TextBlock Text="{Binding PauseLabel}" /></StackPanel>
           </Button>
-          <Button Command="{Binding ToggleThemeCommand}" ToolTip.Tip="Light / dark"><PathIcon Data="{StaticResource IconMoon}" /></Button>
-          <Button Command="{Binding OpenSettingsCommand}" ToolTip.Tip="Settings"><PathIcon Data="{StaticResource IconGear}" /></Button>
+          <Button Command="{Binding ToggleThemeCommand}" ToolTip.Tip="{v:T 'Light / dark'}"><PathIcon Data="{StaticResource IconMoon}" /></Button>
+          <Button Command="{Binding OpenSettingsCommand}" ToolTip.Tip="{v:T 'Settings'}"><PathIcon Data="{StaticResource IconGear}" /></Button>
         </StackPanel>
       </Grid>
     </Border>
@@ -55,20 +56,24 @@
     <Grid ColumnDefinitions="*,370" Margin="20,16,20,16">
       <!-- ======================= queue -->
       <DockPanel Grid.Column="0" Margin="0,0,20,0">
+        <Button DockPanel.Dock="Top" Classes="primary" HorizontalAlignment="Stretch" Margin="0,0,0,12" Command="{Binding OpenUpdatesCommand}"
+                IsVisible="{Binding UpdateBanner, Converter={x:Static StringConverters.IsNotNullOrEmpty}}">
+          <TextBlock Text="{Binding UpdateBanner}" TextWrapping="Wrap" />
+        </Button>
         <Grid DockPanel.Dock="Top" ColumnDefinitions="Auto,*,Auto" Margin="0,0,0,12">
           <StackPanel Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
-            <TextBlock Classes="h2" Text="Queue" />
+            <TextBlock Classes="h2" Text="{v:T 'Queue'}" />
             <Border Classes="chip" Margin="0"><TextBlock Text="{Binding Jobs.Count}" /></Border>
           </StackPanel>
           <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="4">
-            <Button Classes="ghost" Command="{Binding SelectAllCommand}" Content="Select all" />
+            <Button Classes="ghost" Command="{Binding SelectAllCommand}" Content="{v:T 'Select all'}" />
             <Button Classes="ghost" Command="{Binding RetrySelectedCommand}">
-              <StackPanel Orientation="Horizontal" Spacing="6"><PathIcon Data="{StaticResource IconRedo}" /><TextBlock Text="Retry" /></StackPanel>
+              <StackPanel Orientation="Horizontal" Spacing="6"><PathIcon Data="{StaticResource IconRedo}" /><TextBlock Text="{v:T 'Retry'}" /></StackPanel>
             </Button>
             <Button Classes="ghost" Command="{Binding RemoveSelectedCommand}">
-              <StackPanel Orientation="Horizontal" Spacing="6"><PathIcon Data="{StaticResource IconTrash}" /><TextBlock Text="Remove" /></StackPanel>
+              <StackPanel Orientation="Horizontal" Spacing="6"><PathIcon Data="{StaticResource IconTrash}" /><TextBlock Text="{v:T 'Remove'}" /></StackPanel>
             </Button>
-            <Button Classes="ghost" Command="{Binding ClearFinishedCommand}" Content="Clear finished" />
+            <Button Classes="ghost" Command="{Binding ClearFinishedCommand}" Content="{v:T 'Clear finished'}" />
           </StackPanel>
         </Grid>
 
@@ -93,12 +98,13 @@
                                      Foreground="{StaticResource InfoBrush}" />
                         </Border>
                         <StackPanel Orientation="Horizontal" Spacing="0">
-                          <Button Classes="ghost" Command="{Binding MoveUpCommand}" IsEnabled="{Binding CanEdit}" ToolTip.Tip="Move up"><PathIcon Data="{StaticResource IconUp}" /></Button>
-                          <Button Classes="ghost" Command="{Binding MoveDownCommand}" IsEnabled="{Binding CanEdit}" ToolTip.Tip="Move down"><PathIcon Data="{StaticResource IconDown}" /></Button>
-                          <Button Classes="ghost" Command="{Binding ShowCommandCommand}" ToolTip.Tip="FFmpeg command"><PathIcon Data="{StaticResource IconTerm}" /></Button>
-                          <Button Classes="ghost" Command="{Binding ShowLogCommand}" ToolTip.Tip="Log"><PathIcon Data="{StaticResource IconLog}" /></Button>
-                          <Button Classes="ghost" Command="{Binding RetryCommand}" IsEnabled="{Binding CanEdit}" ToolTip.Tip="Process again"><PathIcon Data="{StaticResource IconRedo}" /></Button>
-                          <Button Classes="ghost" Command="{Binding RemoveCommand}" IsEnabled="{Binding CanEdit}" ToolTip.Tip="Remove"><PathIcon Data="{StaticResource IconTrash}" /></Button>
+                          <Button Classes="ghost" Command="{Binding EditCommand}" IsEnabled="{Binding CanEdit}" ToolTip.Tip="{v:T 'Edit tracks, trim, filters, preview'}"><PathIcon Data="{StaticResource IconEdit}" /></Button>
+                          <Button Classes="ghost" Command="{Binding MoveUpCommand}" IsEnabled="{Binding CanEdit}" ToolTip.Tip="{v:T 'Move up'}"><PathIcon Data="{StaticResource IconUp}" /></Button>
+                          <Button Classes="ghost" Command="{Binding MoveDownCommand}" IsEnabled="{Binding CanEdit}" ToolTip.Tip="{v:T 'Move down'}"><PathIcon Data="{StaticResource IconDown}" /></Button>
+                          <Button Classes="ghost" Command="{Binding ShowCommandCommand}" ToolTip.Tip="{v:T 'FFmpeg command'}"><PathIcon Data="{StaticResource IconTerm}" /></Button>
+                          <Button Classes="ghost" Command="{Binding ShowLogCommand}" ToolTip.Tip="{v:T 'Log'}"><PathIcon Data="{StaticResource IconLog}" /></Button>
+                          <Button Classes="ghost" Command="{Binding RetryCommand}" IsEnabled="{Binding CanEdit}" ToolTip.Tip="{v:T 'Process again'}"><PathIcon Data="{StaticResource IconRedo}" /></Button>
+                          <Button Classes="ghost" Command="{Binding RemoveCommand}" IsEnabled="{Binding CanEdit}" ToolTip.Tip="{v:T 'Remove'}"><PathIcon Data="{StaticResource IconTrash}" /></Button>
                         </StackPanel>
                       </StackPanel>
 
@@ -140,11 +146,11 @@
               <Border Width="72" Height="72" CornerRadius="20" Background="{StaticResource AccentGradient}" HorizontalAlignment="Center">
                 <PathIcon Data="{StaticResource IconFilm}" Width="34" Height="34" Foreground="White" />
               </Border>
-              <TextBlock Text="Drop episodes or folders here" FontSize="17" FontWeight="SemiBold" HorizontalAlignment="Center" />
+              <TextBlock Text="{v:T 'Drop episodes or folders here'}" FontSize="17" FontWeight="SemiBold" HorizontalAlignment="Center" />
               <TextBlock Classes="muted" TextWrapping="Wrap" TextAlignment="Center"
-                         Text="Subtitles and fonts inside MKV files are found automatically. Pick a profile on the right, then press Start." />
+                         Text="{v:T 'Subtitles and fonts inside MKV files are found automatically. Pick a profile on the right, then press Start.'}" />
               <Button Classes="primary" HorizontalAlignment="Center" Margin="0,8,0,0" Command="{Binding AddFilesCommand}">
-                <StackPanel Orientation="Horizontal" Spacing="7"><PathIcon Data="{StaticResource IconPlus}" /><TextBlock Text="Add files" /></StackPanel>
+                <StackPanel Orientation="Horizontal" Spacing="7"><PathIcon Data="{StaticResource IconPlus}" /><TextBlock Text="{v:T 'Add files'}" /></StackPanel>
               </Button>
             </StackPanel>
           </Border>
@@ -157,56 +163,12 @@
           <Border Classes="card">
             <StackPanel Spacing="10">
               <Grid ColumnDefinitions="*,Auto">
-                <TextBlock Classes="h2" Text="Encode settings" />
+                <TextBlock Classes="h2" Text="{v:T 'Encode settings'}" />
                 <TextBlock Grid.Column="1" Classes="muted" FontSize="12" Text="{Binding SettingsTarget}" VerticalAlignment="Center" />
               </Grid>
-
-              <StackPanel>
-                <TextBlock Classes="label" Text="PROFILE" />
-                <ComboBox HorizontalAlignment="Stretch" ItemsSource="{Binding ProfileOptions}" SelectedItem="{Binding SelectedProfile}" />
-                <TextBlock Classes="muted" FontSize="12" TextWrapping="Wrap" Margin="0,5,0,0" Text="{Binding SelectedProfile.Description}" />
-              </StackPanel>
-
-              <StackPanel IsVisible="{Binding ShowCodec}">
-                <TextBlock Classes="label" Text="VIDEO CODEC" />
-                <ComboBox HorizontalAlignment="Stretch" ItemsSource="{Binding CodecOptions}" SelectedItem="{Binding SelectedCodec}" />
-              </StackPanel>
-
-              <StackPanel IsVisible="{Binding ShowEncoder}">
-                <TextBlock Classes="label" Text="ENCODER" />
-                <ComboBox HorizontalAlignment="Stretch" ItemsSource="{Binding BackendOptions}" SelectedItem="{Binding SelectedBackend}">
-                  <ComboBox.ItemContainerTheme>
-                    <ControlTheme TargetType="ComboBoxItem" x:DataType="vm:BackendOption" BasedOn="{StaticResource {x:Type ComboBoxItem}}">
-                      <Setter Property="IsEnabled" Value="{Binding IsEnabled}" />
-                    </ControlTheme>
-                  </ComboBox.ItemContainerTheme>
-                </ComboBox>
-                <TextBlock Classes="muted" FontSize="12" Margin="0,5,0,0" Text="{Binding BackendNote}" />
-              </StackPanel>
-
-              <ToggleSwitch IsVisible="{Binding ShowTenBit}" IsChecked="{Binding TenBit}" IsEnabled="{Binding TenBitPossible}"
-                            OnContent="10-bit output (HEVC / AV1)" OffContent="10-bit output (HEVC / AV1)" />
-
-              <Grid ColumnDefinitions="*,10,*">
-                <StackPanel IsVisible="{Binding ShowResolution}">
-                  <TextBlock Classes="label" Text="RESOLUTION" />
-                  <ComboBox HorizontalAlignment="Stretch" ItemsSource="{Binding ResolutionOptions}" SelectedItem="{Binding SelectedResolution}" />
-                </StackPanel>
-                <StackPanel Grid.Column="2" IsVisible="{Binding ShowQuality}">
-                  <TextBlock Classes="label" Text="QUALITY" />
-                  <ComboBox HorizontalAlignment="Stretch" ItemsSource="{Binding QualityOptions}" SelectedItem="{Binding SelectedQuality}" />
-                </StackPanel>
-              </Grid>
-
-              <StackPanel IsVisible="{Binding ShowSubtitles}">
-                <TextBlock Classes="label" Text="SUBTITLES" />
-                <ComboBox HorizontalAlignment="Stretch" ItemsSource="{Binding SubtitleOptions}" SelectedItem="{Binding SelectedSubtitles}" />
-              </StackPanel>
-              <ToggleSwitch IsVisible="{Binding ShowSidecar}" IsChecked="{Binding UseSidecar}"
-                            OnContent="Prefer external .ass/.srt" OffContent="Prefer external .ass/.srt" />
-
+              <ContentControl x:Name="QuickPanel" />
               <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Spacing="8" Margin="0,4,0,0">
-                <Button Content="Save as default" Command="{Binding SaveDefaultsCommand}" />
+                <Button Content="{v:T 'Save as default'}" Command="{Binding SaveDefaultsCommand}" />
                 <Button Content="{Binding ApplyLabel}" Command="{Binding ApplyToSelectedCommand}" />
               </StackPanel>
             </StackPanel>
@@ -215,8 +177,8 @@
           <Border Classes="card">
             <StackPanel Spacing="10">
               <Grid ColumnDefinitions="*,Auto">
-                <TextBlock Classes="h2" Text="Hardware" />
-                <Button Grid.Column="1" Classes="ghost" Content="Detect again" Command="{Binding DetectHardwareCommand}" IsEnabled="{Binding !IsDetecting}" />
+                <TextBlock Classes="h2" Text="{v:T 'Hardware'}" />
+                <Button Grid.Column="1" Classes="ghost" Content="{v:T 'Detect again'}" Command="{Binding DetectHardwareCommand}" IsEnabled="{Binding !IsDetecting}" />
               </Grid>
               <Grid ColumnDefinitions="70,*,*,*">
                 <TextBlock Grid.Column="1" Text="H.264" Classes="muted" FontSize="12" HorizontalAlignment="Center" />

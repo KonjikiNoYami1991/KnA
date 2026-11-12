@@ -5,6 +5,8 @@ using Avalonia.Layout;
 using Avalonia.Media;
 using Avalonia.Platform.Storage;
 using TnA.App.ViewModels;
+using TnA.Core.Localization;
+using TnA.Core.Queue;
 using TnA.Core.Settings;
 
 namespace TnA.App.Views;
@@ -29,23 +31,113 @@ public partial class MainWindow : Window, IDialogService
             if (e.Key == Key.V && e.KeyModifiers.HasFlag(KeyModifiers.Control) || e.Key == Key.V && e.KeyModifiers.HasFlag(KeyModifiers.Meta))
                 await PasteAsync();
         };
-        Opened += (_, _) =>
+        Opened += async (_, _) =>
         {
             if (DataContext is MainViewModel vm)
             {
                 Width = Math.Max(MinWidth, vm.Queue.Settings.WindowWidth);
                 Height = Math.Max(MinHeight, vm.Queue.Settings.WindowHeight);
+                BuildQuickPanel(vm);
+                vm.FormReloaded += () => BuildQuickPanel(vm);
+                await vm.CheckUpdatesOnStartAsync();
             }
         };
-        Closing += (_, _) =>
+        Closing += async (_, e) =>
         {
-            if (DataContext is MainViewModel vm && WindowState == WindowState.Normal)
+            if (DataContext is not MainViewModel vm) return;
+            if (!_closeConfirmed && vm.Queue.IsRunning && vm.Queue.Settings.ConfirmOnClose)
+            {
+                e.Cancel = true;
+                if (!await ConfirmAsync("TnA", L.T("Encoding is in progress. Stop it and close TnA? Segmented encodes resume from the last finished segment."))) return;
+                _closeConfirmed = true;
+                Close();
+                return;
+            }
+            if (WindowState == WindowState.Normal)
             {
                 vm.Queue.Settings.WindowWidth = Width;
                 vm.Queue.Settings.WindowHeight = Height;
                 vm.Queue.SaveSettings();
             }
         };
+    }
+
+    private bool _closeConfirmed;
+
+    /// <summary>Side panel: preset picker + wizard, then the shared settings form.</summary>
+    private void BuildQuickPanel(MainViewModel vm)
+    {
+        var presets = vm.Presets;
+        var items = new List<(string?, string)> { (null, L.T("— custom —")) };
+        items.AddRange(presets.Select(p => ((string?)p.Name, (p.BuiltIn ? "" : "★ ") + p.Name)));
+        var combo = Ui.Combo(items, vm.FormSettings.PresetName is { } n && presets.Any(p => p.Name == n) ? n : null, name =>
+        {
+            if (name is not null && presets.FirstOrDefault(p => p.Name == name) is { } p) vm.ApplyPreset(p);
+        });
+        var wizard = IconButton("IconWand");
+        ToolTip.SetTip(wizard, L.T("Preset wizard"));
+        wizard.Click += async (_, _) => await vm.RunWizardAsync();
+        var saveAs = IconButton("IconSave");
+        ToolTip.SetTip(saveAs, L.T("Save as preset"));
+        saveAs.Click += async (_, _) =>
+        {
+            if (await PromptAsync(L.T("Save as preset"), L.T("Preset name"), vm.FormSettings.PresetName ?? "") is { Length: > 0 } name)
+            {
+                try { vm.SaveAsPreset(name); }
+                catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or IOException) { await ShowTextAsync(L.T("Error"), ex.Message); }
+            }
+        };
+        var current = presets.FirstOrDefault(p => p.Name == vm.FormSettings.PresetName);
+        var delete = IconButton("IconTrash");
+        delete.IsEnabled = current is { BuiltIn: false };
+        ToolTip.SetTip(delete, L.T("Delete preset"));
+        delete.Click += async (_, _) => { if (current is not null) await vm.DeletePresetAsync(current); };
+
+        var row = new DockPanel();
+        var buttons = Ui.Row(4, wizard, saveAs, delete);
+        buttons.Margin = new Thickness(6, 0, 0, 0);
+        DockPanel.SetDock(buttons, Dock.Right);
+        row.Children.Add(buttons);
+        row.Children.Add(combo);
+
+        var form = new SettingsForm(vm.FormSettings, () => vm.Queue.Settings.Capabilities, full: false);
+        form.Changed += s =>
+        {
+            // Any manual change detaches the form from its preset.
+            vm.FormSettings = s with { PresetName = null };
+            if (combo.SelectedIndex != 0) combo.SelectedIndex = 0;
+            delete.IsEnabled = false;
+        };
+        QuickPanel.Content = new StackPanel { Spacing = 12, Children = { Ui.Field("Preset", row), form } };
+    }
+
+    private Button IconButton(string key) => new()
+    {
+        Padding = new Thickness(9, 6),
+        Content = new PathIcon { Data = this.FindResource(key) as Geometry, Width = 16, Height = 16 },
+    };
+
+    private async Task<string?> PromptAsync(string title, string label, string value)
+    {
+        string? result = null;
+        var box = new TextBox { Text = value, Watermark = label, MinWidth = 340 };
+        var ok = new Button { Content = L.T("Save"), Classes = { "primary" }, MinWidth = 80, IsDefault = true };
+        var cancel = new Button { Content = L.T("Cancel"), MinWidth = 80, IsCancel = true };
+        var win = new Window
+        {
+            Title = title, SizeToContent = SizeToContent.WidthAndHeight, CanResize = false, Icon = Icon,
+            WindowStartupLocation = WindowStartupLocation.CenterOwner,
+            Content = new StackPanel
+            {
+                Margin = new Thickness(20), Spacing = 14,
+                Children = { Ui.Field(label, box), new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, HorizontalAlignment = HorizontalAlignment.Right, Children = { cancel, ok } } },
+            },
+        };
+        ok.Click += (_, _) => { result = box.Text; win.Close(); };
+        cancel.Click += (_, _) => win.Close();
+        box.AttachedToVisualTree += (_, _) => box.Focus();
+        await win.ShowDialog(this);
+        return result?.Trim();
     }
 
     private async Task PasteAsync()
@@ -67,11 +159,11 @@ public partial class MainWindow : Window, IDialogService
     {
         var files = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions
         {
-            Title = "Add video files",
+            Title = L.T("Add files"),
             AllowMultiple = true,
             FileTypeFilter =
             [
-                new FilePickerFileType("Video files") { Patterns = TnA.Core.Settings.MediaExtensions.Video.Select(e => "*" + e).ToList() },
+                new FilePickerFileType(L.T("Video")) { Patterns = TnA.Core.Settings.MediaExtensions.Video.Select(e => "*" + e).ToList() },
                 FilePickerFileTypes.All,
             ],
         });
@@ -80,37 +172,17 @@ public partial class MainWindow : Window, IDialogService
 
     public async Task<string?> PickFolderAsync()
     {
-        var folders = await StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions { Title = "Add a folder" });
+        var folders = await StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions { Title = L.T("Add this folder") });
         return folders.FirstOrDefault()?.TryGetLocalPath();
     }
 
-    public Task ShowTextAsync(string title, string text)
-    {
-        var box = new TextBox
-        {
-            Text = text, IsReadOnly = true, AcceptsReturn = true, TextWrapping = TextWrapping.Wrap,
-            FontFamily = new FontFamily("Cascadia Code,Consolas,Menlo,monospace"), FontSize = 12,
-        };
-        var copy = new Button { Content = "Copy", HorizontalAlignment = HorizontalAlignment.Right };
-        var win = new Window
-        {
-            Title = title, Width = 900, Height = 560, Icon = Icon, WindowStartupLocation = WindowStartupLocation.CenterOwner,
-            Content = new DockPanel
-            {
-                Margin = new Thickness(14),
-                Children = { WithDock(copy, Dock.Bottom), box },
-            },
-        };
-        copy.Margin = new Thickness(0, 10, 0, 0);
-        copy.Click += async (_, _) => { if (win.Clipboard is { } c) await c.SetTextAsync(text); };
-        return win.ShowDialog(this);
-    }
+    public Task ShowTextAsync(string title, string text) => TextWindow.ShowAsync(this, title, text);
 
     public async Task<bool> ConfirmAsync(string title, string message)
     {
         bool result = false;
-        var yes = new Button { Content = "Yes", Classes = { "primary" }, MinWidth = 80 };
-        var no = new Button { Content = "No", MinWidth = 80 };
+        var yes = new Button { Content = L.T("Yes"), Classes = { "primary" }, MinWidth = 80 };
+        var no = new Button { Content = L.T("No"), MinWidth = 80 };
         var win = new Window
         {
             Title = title, SizeToContent = SizeToContent.WidthAndHeight, CanResize = false, Icon = Icon,
@@ -131,13 +203,16 @@ public partial class MainWindow : Window, IDialogService
         return result;
     }
 
-    public Task ShowSettingsAsync(MainViewModel vm) => new SettingsWindow(vm.Queue) { Icon = Icon }.ShowDialog(this);
+    public Task ShowSettingsAsync(MainViewModel vm, string tab = "general") => new SettingsWindow(vm.Queue, tab) { Icon = Icon }.ShowDialog(this);
+
+    public Task ShowEditorAsync(MainViewModel vm, QueueJob job, string tab) => new JobEditorWindow(vm.Queue, job, tab) { Icon = Icon }.ShowDialog(this);
+
+    public async Task<Preset?> ShowWizardAsync(MainViewModel vm)
+    {
+        var w = new PresetWizardWindow(vm.Queue) { Icon = Icon };
+        await w.ShowDialog(this);
+        return w.Result;
+    }
 
     public void CloseApp() => Close();
-
-    private static Control WithDock(Control c, Dock dock)
-    {
-        DockPanel.SetDock(c, dock);
-        return c;
-    }
 }

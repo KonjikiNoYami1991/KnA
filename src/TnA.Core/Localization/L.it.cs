@@ -498,5 +498,33 @@ public static partial class L
         ["vspipe was not found: install VapourSynth (or set TNA_VSPIPE)."] = "vspipe non trovato: installa VapourSynth (o imposta TNA_VSPIPE).",
         ["This FFmpeg cannot read AviSynth scripts (it needs AviSynth+ installed and an FFmpeg built with --enable-avisynth): {0}"] =
             "Questo FFmpeg non legge gli script AviSynth (servono AviSynth+ installato e un FFmpeg compilato con --enable-avisynth): {0}",
+
+        // ------------------------------------------------------------ desktop app
+        ["Files"] = "File",
+        ["Folder"] = "Cartella",
+        ["Add video files"] = "Aggiungi file video",
+        ["Add every video in a folder (recursive)"] = "Aggiungi tutti i video di una cartella (anche sottocartelle)",
+        ["Select all"] = "Seleziona tutto",
+        ["Drop episodes or folders here"] = "Trascina qui episodi o cartelle",
+        ["Subtitles and fonts inside MKV files are found automatically. Pick a profile on the right, then press Start."] =
+            "Sottotitoli e font dentro gli MKV vengono trovati automaticamente. Scegli un profilo a destra, poi premi Avvia.",
+        ["Yes"] = "Sì",
+        ["No"] = "No",
+        ["HDR"] = "HDR",
+        ["Ask before closing while encoding"] = "Chiedi conferma prima di chiudere durante una codifica",
+        ["Restart TnA to apply the language."] = "Riavvia TnA per applicare la lingua.",
+        ["Empty = next to each source file. Existing files are never overwritten."] = "Vuoto = accanto a ogni file sorgente. I file esistenti non vengono mai sovrascritti.",
+        ["Encoding is in progress. Stop it and close TnA? Segmented encodes resume from the last finished segment."] =
+            "C'è una codifica in corso. Fermarla e chiudere TnA? Le codifiche a segmenti ripartono dall'ultimo segmento completato.",
+        ["\"Send to\" menu"] = "Menu \"Invia a\"",
+        ["File manager menu"] = "Menu del file manager",
+        ["Add to the TnA queue"] = "Aggiungi alla coda di TnA",
+        ["Adds \"TnA\" to the Send to menu of Explorer, plus one entry for each preset ticked below (adds the files with that preset and starts the queue). Many files sent together go to the same window."] =
+            "Aggiunge \"TnA\" al menu Invia a di Esplora file, più una voce per ogni preset spuntato qui sotto (aggiunge i file con quel preset e avvia la coda). Più file inviati insieme finiscono nella stessa finestra.",
+        ["Adds TnA to \"Open with\", to the Nautilus scripts and to the Dolphin menu, plus one entry for each preset ticked below (adds the files with that preset and starts the queue)."] =
+            "Aggiunge TnA ad \"Apri con\", agli script di Nautilus e al menu di Dolphin, più una voce per ogni preset spuntato qui sotto (aggiunge i file con quel preset e avvia la coda).",
+        ["Not available on this system: drop files on the window or the Dock icon."] = "Non disponibile su questo sistema: trascina i file sulla finestra o sull'icona nel Dock.",
+        ["Install / update"] = "Installa / aggiorna",
+        ["Installed"] = "Installato",
     };
 }

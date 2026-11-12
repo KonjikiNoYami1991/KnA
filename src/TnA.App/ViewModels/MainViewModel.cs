@@ -4,6 +4,8 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using TnA.Core.Encoding;
 using TnA.Core.Queue;
+using TnA.Core.Localization;
+using TnA.Core.Settings;
 using TnA.Core.Tools;
 
 namespace TnA.App.ViewModels;
@@ -14,7 +16,9 @@ public interface IDialogService
     Task<IReadOnlyList<string>> PickFilesAsync();
     Task<string?> PickFolderAsync();
     Task ShowTextAsync(string title, string text);
-    Task ShowSettingsAsync(MainViewModel vm);
+    Task ShowSettingsAsync(MainViewModel vm, string tab = "general");
+    Task ShowEditorAsync(MainViewModel vm, QueueJob job, string tab);
+    Task<Preset?> ShowWizardAsync(MainViewModel vm);
     Task<bool> ConfirmAsync(string title, string message);
     void CloseApp();
 }
@@ -22,53 +26,35 @@ public interface IDialogService
 public sealed partial class MainViewModel : ObservableObject
 {
     private readonly Dictionary<Guid, JobViewModel> _byId = [];
-    private bool _loadingForm;
 
     public QueueService Queue { get; }
     public IDialogService? Dialogs { get; set; }
     public ObservableCollection<JobViewModel> Jobs { get; } = [];
     public ObservableCollection<HardwareRow> Hardware { get; } = [];
 
-    public IReadOnlyList<ProfileDefinition> ProfileOptions { get; } = Profiles.All;
-    public IReadOnlyList<Option<QualityLevel>> QualityOptions => OptionLists.Qualities;
-    public IReadOnlyList<Option<int>> ResolutionOptions => OptionLists.Resolutions;
-    public IReadOnlyList<Option<SubtitleMode>> SubtitleOptions => OptionLists.SubtitleModes;
+    /// <summary>Settings of the side panel form (used for new files and "apply to selected").</summary>
+    public JobSettings FormSettings { get; set; }
 
-    [ObservableProperty] private IReadOnlyList<Option<VideoCodec>> _codecOptions = [];
-    [ObservableProperty] private IReadOnlyList<BackendOption> _backendOptions = [];
+    public IReadOnlyList<Preset> Presets => Queue.Presets.All;
 
-    [ObservableProperty] private ProfileDefinition _selectedProfile = Profiles.UniversalMkv;
-    [ObservableProperty] private Option<VideoCodec>? _selectedCodec;
-    [ObservableProperty] private BackendOption? _selectedBackend;
-    [ObservableProperty] private Option<QualityLevel>? _selectedQuality;
-    [ObservableProperty] private Option<int>? _selectedResolution;
-    [ObservableProperty] private Option<SubtitleMode>? _selectedSubtitles;
-    [ObservableProperty] private bool _tenBit = true;
-    [ObservableProperty] private bool _tenBitPossible;
-    [ObservableProperty] private bool _useSidecar = true;
-    [ObservableProperty] private string _backendNote = "";
-
+    [ObservableProperty] private string? _updateBanner;
     [ObservableProperty] private bool _isRunning;
     [ObservableProperty] private bool _isPaused;
-    [ObservableProperty] private string _queueStatus = "Idle";
-    [ObservableProperty] private string _hardwareInfo = "Not detected yet.";
+    [ObservableProperty] private string _queueStatus = L.T("Idle");
+    [ObservableProperty] private string _hardwareInfo = L.T("Not detected yet.");
     [ObservableProperty] private bool _isDetecting;
     [ObservableProperty] private int _selectedCount;
     [ObservableProperty] private string _windowTitle = "TnA - Tanoshimi no Autohardsubber";
 
     public string Version => "v" + AppInfo.Version;
     public bool IsEmpty => Jobs.Count == 0;
-    public string StartLabel => IsRunning ? "Stop" : "Start";
-    public string PauseLabel => IsPaused ? "Resume" : "Pause";
-    public string SettingsTarget => SelectedCount > 0 ? $"{SelectedCount} selected" : "for new files";
-    public string ApplyLabel => SelectedCount > 0 ? $"Apply to {SelectedCount} selected" : "Apply to selected";
-    public bool ShowCodec => SelectedProfile.AllowsCodecChoice;
-    public bool ShowEncoder => SelectedProfile.EncodesVideo || SelectedProfile.Kind == ProfileKind.RemuxMp4;
-    public bool ShowQuality => SelectedProfile.UsesQuality;
-    public bool ShowResolution => SelectedProfile.UsesResolution;
-    public bool ShowSubtitles => SelectedProfile.UsesSubtitleMode;
-    public bool ShowSidecar => ShowSubtitles && SelectedSubtitles?.Value == SubtitleMode.Hardsub;
-    public bool ShowTenBit => SelectedProfile.EncodesVideo;
+    public string StartLabel => IsRunning ? L.T("Stop") : L.T("Start");
+    public string PauseLabel => IsPaused ? L.T("Resume") : L.T("Pause");
+    public string SettingsTarget => SelectedCount > 0 ? L.T("{0} selected", SelectedCount) : L.T("for new files");
+    public string ApplyLabel => SelectedCount > 0 ? L.T("Apply to {0} selected", SelectedCount) : L.T("Apply to selected");
+
+    /// <summary>Raised when the side panel must reload <see cref="FormSettings"/> (preset picked, wizard).</summary>
+    public event Action? FormReloaded;
 
     public MainViewModel(QueueService queue)
     {
@@ -80,97 +66,44 @@ public sealed partial class MainViewModel : ObservableObject
             PowerActions.Run(action, () => Dialogs?.CloseApp()));
         Jobs.CollectionChanged += (_, _) => OnPropertyChanged(nameof(IsEmpty));
 
-        LoadForm(queue.Settings.Defaults);
+        FormSettings = queue.Settings.Defaults;
         RefreshHardware();
         if (queue.Tools is not null && queue.Settings.Capabilities is null)
             _ = DetectHardwareAsync();
     }
 
-    // ------------------------------------------------------------------ form
+    // ------------------------------------------------------------------ form & presets
 
-    private void LoadForm(JobSettings s)
+    public void ApplyPreset(Preset p)
     {
-        _loadingForm = true;
-        SelectedProfile = s.ProfileDefinition;
-        TenBit = s.TenBit;
-        UseSidecar = s.UseSidecarSubtitles;
-        SelectedQuality = QualityOptions.First(o => o.Value == s.Quality);
-        SelectedResolution = ResolutionOptions.FirstOrDefault(o => o.Value == s.Resolution) ?? ResolutionOptions[0];
-        SelectedSubtitles = SubtitleOptions.First(o => o.Value == s.Subtitles);
-        _loadingForm = false;
-        RebuildCodecs(s.Codec);
-        RebuildBackends(s.Backend);
+        FormSettings = p.Settings with { PresetName = p.Name };
+        FormReloaded?.Invoke();
     }
 
-    public JobSettings CurrentSettings() => new()
+    public async Task RunWizardAsync()
     {
-        Profile = SelectedProfile.Kind,
-        Codec = SelectedCodec?.Value ?? VideoCodec.H264,
-        Backend = SelectedBackend?.Value ?? EncoderBackend.Software,
-        Quality = SelectedQuality?.Value ?? QualityLevel.Normal,
-        Resolution = SelectedResolution?.Value ?? 1080,
-        Subtitles = SelectedSubtitles?.Value ?? SubtitleMode.Hardsub,
-        TenBit = TenBit,
-        UseSidecarSubtitles = UseSidecar,
-    };
-
-    partial void OnSelectedProfileChanged(ProfileDefinition value)
-    {
-        foreach (var n in new[] { nameof(ShowCodec), nameof(ShowEncoder), nameof(ShowQuality), nameof(ShowResolution), nameof(ShowSubtitles), nameof(ShowSidecar), nameof(ShowTenBit) })
-            OnPropertyChanged(n);
-        if (_loadingForm) return;
-        RebuildCodecs(SelectedCodec?.Value);
-        RebuildBackends(SelectedBackend?.Value);
+        if (Dialogs is null) return;
+        if (await Dialogs.ShowWizardAsync(this) is { } p) { OnPropertyChanged(nameof(Presets)); ApplyPreset(p); }
     }
 
-    partial void OnSelectedCodecChanged(Option<VideoCodec>? value)
+    public async Task DeletePresetAsync(Preset p)
     {
-        if (!_loadingForm) RebuildBackends(SelectedBackend?.Value);
+        if (p.BuiltIn || Dialogs is null) return;
+        if (!await Dialogs.ConfirmAsync(L.T("Delete preset"), L.T("Delete the preset \"{0}\"?", p.Name))) return;
+        Queue.Presets.Delete(p.Name);
+        FormSettings = FormSettings with { PresetName = null };
+        OnPropertyChanged(nameof(Presets));
+        FormReloaded?.Invoke();
     }
 
-    partial void OnTenBitChanged(bool value)
+    public void SaveAsPreset(string name)
     {
-        if (!_loadingForm) RebuildBackends(SelectedBackend?.Value);
+        var p = Queue.Presets.Save(new Preset(name.Trim(), null, FormSettings with { PresetName = name.Trim() }));
+        OnPropertyChanged(nameof(Presets));
+        ApplyPreset(p);
     }
 
-    partial void OnSelectedSubtitlesChanged(Option<SubtitleMode>? value) => OnPropertyChanged(nameof(ShowSidecar));
-
-    partial void OnSelectedBackendChanged(BackendOption? value) =>
-        BackendNote = !SelectedProfile.AllowsHardware ? "This profile is CPU only."
-            : value?.Value == EncoderBackend.Software ? "CPU encoding: slowest, best compression."
-            : "Hardware encoding: much faster, slightly bigger files.";
-
-    private void RebuildCodecs(VideoCodec? keep)
-    {
-        var codecs = SelectedProfile.Codecs.Select(c => new Option<VideoCodec>(c, c.Display())).ToList();
-        _loadingForm = true;
-        CodecOptions = codecs;
-        SelectedCodec = codecs.FirstOrDefault(c => c.Value == keep) ?? codecs.FirstOrDefault();
-        _loadingForm = false;
-    }
-
-    private void RebuildBackends(EncoderBackend? keep)
-    {
-        var p = SelectedProfile;
-        var codec = p.Kind == ProfileKind.RemuxMp4 ? VideoCodec.H264 : SelectedCodec?.Value ?? VideoCodec.H264;
-        TenBitPossible = VideoEncoders.Supports10Bit(codec, EncoderBackend.Software) && p.Kind is ProfileKind.UniversalMkv or ProfileKind.Streaming;
-        bool tenBit = TenBit && TenBitPossible;
-        var caps = Queue.Settings.Capabilities;
-        var list = new List<BackendOption>();
-        foreach (var b in VideoEncoders.AllBackends)
-        {
-            if (!p.AllowsHardware && b != EncoderBackend.Software) continue;
-            if (VideoEncoders.EncoderName(codec, b) is null) continue;
-            bool ok = caps is null || caps.IsUsable(codec, b, tenBit);
-            string note = ok ? "" : caps!.Find(codec, b) is { Compiled: false } ? " — not in this FFmpeg" : tenBit && caps.IsUsable(codec, b, false) ? " — 8-bit only" : " — not available";
-            list.Add(new BackendOption(b, b.Display() + note, ok));
-        }
-        _loadingForm = true;
-        BackendOptions = list;
-        SelectedBackend = list.FirstOrDefault(o => o.Value == keep && o.IsEnabled) ?? list.FirstOrDefault(o => o.IsEnabled) ?? list.FirstOrDefault();
-        _loadingForm = false;
-        OnSelectedBackendChanged(SelectedBackend);
-    }
+    public JobSettings CurrentSettings() => FormSettings;
 
     [RelayCommand]
     private void SaveDefaults()
@@ -190,7 +123,16 @@ public sealed partial class MainViewModel : ObservableObject
 
     // ------------------------------------------------------------------ queue
 
-    public void AddPaths(IEnumerable<string> paths) => Queue.AddPaths(paths, CurrentSettings());
+    public void AddPaths(IEnumerable<string> paths, string? preset = null)
+    {
+        var settings = preset is not null && Queue.Presets.Get(preset) is { } p ? p.Settings with { PresetName = p.Name } : CurrentSettings();
+        Queue.AddPaths(paths, settings, Queue.Settings.FolderExtensions);
+    }
+
+    public async Task OpenEditorAsync(JobViewModel j, string tab = "tracks")
+    {
+        if (Dialogs is not null) await Dialogs.ShowEditorAsync(this, j.Job, tab);
+    }
 
     [RelayCommand]
     private async Task AddFiles()
@@ -216,8 +158,8 @@ public sealed partial class MainViewModel : ObservableObject
         }
         if (Queue.RefreshTools() is null)
         {
-            await (Dialogs?.ShowTextAsync("FFmpeg not found",
-                "TnA needs FFmpeg.\n\n" + FfmpegDownloader.ManualInstructions + "\n\nOpen Settings to download it (Windows) or set its path.") ?? Task.CompletedTask);
+                if (Dialogs is not null) await Dialogs.ShowSettingsAsync(this, "updates");
+            if (Queue.RefreshTools() is null) return;
             return;
         }
         Queue.Start();
@@ -244,7 +186,7 @@ public sealed partial class MainViewModel : ObservableObject
     {
         if (Dialogs is null) return;
         var log = j.Job.Log;
-        await Dialogs.ShowTextAsync("Log — " + j.FileName, string.IsNullOrWhiteSpace(log) ? "(empty — the log fills while the file is processed)" : log);
+        await Dialogs.ShowTextAsync(L.T("Log") + " — " + j.FileName, string.IsNullOrWhiteSpace(log) ? L.T("(empty — the log fills while the file is processed)") : log);
     }
 
     public async Task ShowCommandAsync(JobViewModel j)
@@ -252,8 +194,8 @@ public sealed partial class MainViewModel : ObservableObject
         if (Dialogs is null) return;
         string cmd;
         try { cmd = j.Job.CommandLine ?? await Queue.PreviewCommandAsync(j.Job); }
-        catch (Exception ex) { cmd = "Cannot build the command: " + ex.Message; }
-        await Dialogs.ShowTextAsync("FFmpeg command", cmd);
+        catch (Exception ex) { cmd = L.T("Cannot build the command: {0}", ex.Message); }
+        await Dialogs.ShowTextAsync(L.T("FFmpeg command"), cmd);
     }
 
     internal void OnSelectionChanged()
@@ -307,9 +249,9 @@ public sealed partial class MainViewModel : ObservableObject
         int ready = all.Count(j => j.Status == JobStatus.Ready);
         int failed = all.Count(j => j.Status is JobStatus.Error or JobStatus.Stopped);
         var cur = Queue.CurrentJob;
-        QueueStatus = Queue.IsPaused ? "Paused"
-            : Queue.IsRunning ? $"Encoding {done + 1}/{all.Count}{(cur is null ? "" : $" · {cur.Percent:0}%")}"
-            : all.Count > 0 ? $"{ready} ready · {done} done{(failed > 0 ? $" · {failed} failed" : "")}" : "Idle";
+        QueueStatus = Queue.IsPaused ? L.T("Paused")
+            : Queue.IsRunning ? $"{L.T("Encoding")} {done + 1}/{all.Count}{(cur is null ? "" : $" · {cur.Percent:0}%")}"
+            : all.Count > 0 ? L.T("{0} ready · {1} done", ready, done) + (failed > 0 ? " · " + L.T("{0} failed", failed) : "") : L.T("Idle");
         WindowTitle = Queue.IsRunning && cur is not null ? $"{cur.Percent:0}% · TnA" : "TnA - Tanoshimi no Autohardsubber";
     }
 
@@ -319,7 +261,7 @@ public sealed partial class MainViewModel : ObservableObject
     private async Task DetectHardwareAsync()
     {
         IsDetecting = true;
-        HardwareInfo = "Testing encoders…";
+        HardwareInfo = L.T("Testing…");
         try
         {
             var progress = new Progress<string>(l => HardwareInfo = l.Trim());
@@ -327,13 +269,13 @@ public sealed partial class MainViewModel : ObservableObject
         }
         catch (Exception ex)
         {
-            HardwareInfo = "Detection failed: " + ex.Message;
+            HardwareInfo = ex.Message;
         }
         finally
         {
             IsDetecting = false;
             RefreshHardware();
-            RebuildBackends(SelectedBackend?.Value);
+            FormReloaded?.Invoke();
         }
     }
 
@@ -343,7 +285,7 @@ public sealed partial class MainViewModel : ObservableObject
         var caps = Queue.Settings.Capabilities;
         if (caps is null)
         {
-            HardwareInfo = Queue.Tools is null ? "FFmpeg not found — open Settings." : "Not detected yet.";
+            HardwareInfo = Queue.Tools is null ? L.T("FFmpeg not found — open Settings.") : L.T("Not detected yet.");
             return;
         }
         HardwareCell Cell(VideoCodec c, EncoderBackend b)
@@ -364,7 +306,7 @@ public sealed partial class MainViewModel : ObservableObject
             if (b == EncoderBackend.Amf && OperatingSystem.IsMacOS()) continue;
             Hardware.Add(new HardwareRow { Name = b.Short(), H264 = Cell(VideoCodec.H264, b), Hevc = Cell(VideoCodec.HEVC, b), Av1 = Cell(VideoCodec.AV1, b) });
         }
-        HardwareInfo = $"{caps.Version.Replace("ffmpeg version ", "FFmpeg ").Split(" Copyright")[0]} · libass {(caps.HasLibass ? "✓" : "missing!")}";
+        HardwareInfo = $"{caps.Version.Replace("ffmpeg version ", "FFmpeg ").Split(" Copyright")[0]} · libass {(caps.HasLibass ? "✓" : "✕")}";
     }
 
     [RelayCommand]
@@ -374,6 +316,29 @@ public sealed partial class MainViewModel : ObservableObject
         await Dialogs.ShowSettingsAsync(this);
         Queue.RefreshTools();
         RefreshHardware();
+        OnPropertyChanged(nameof(Presets));
+    }
+
+    /// <summary>Once a day at most: is a newer TnA published on GitHub?</summary>
+    public async Task CheckUpdatesOnStartAsync()
+    {
+        var s = Queue.Settings;
+        if (!s.CheckUpdatesOnStart || s.LastUpdateCheck is { } last && DateTimeOffset.Now - last < TimeSpan.FromHours(20)) return;
+        try
+        {
+            var u = await AppUpdater.CheckAsync("desktop");
+            s.LastUpdateCheck = DateTimeOffset.Now;
+            Queue.SaveSettings();
+            if (u.IsNewer) UpdateBanner = u.Message;
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or InvalidOperationException) { }
+    }
+
+    [RelayCommand]
+    private async Task OpenUpdates()
+    {
+        UpdateBanner = null;
+        if (Dialogs is not null) await Dialogs.ShowSettingsAsync(this, "updates");
     }
 
     [RelayCommand]

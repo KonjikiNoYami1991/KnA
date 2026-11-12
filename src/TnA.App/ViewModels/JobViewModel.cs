@@ -15,7 +15,7 @@ public sealed partial class JobViewModel(QueueJob job, MainViewModel owner) : Ob
     [ObservableProperty] private bool _isSelected;
     [ObservableProperty] private string _status = "";
     [ObservableProperty] private double _percent;
-    [ObservableProperty] private string _media = "Analysing…";
+    [ObservableProperty] private string _media = TnA.Core.Localization.L.T("Analysing…");
     [ObservableProperty] private string _stats = "";
     [ObservableProperty] private string? _message;
     [ObservableProperty] private IReadOnlyList<Chip> _chips = [];
@@ -31,7 +31,7 @@ public sealed partial class JobViewModel(QueueJob job, MainViewModel owner) : Ob
     public void Refresh()
     {
         var j = Job;
-        Status = j.Status.ToString().ToUpperInvariant();
+        Status = TnA.Core.Localization.L.T(j.Status.ToString()).ToUpperInvariant();
         IsRunning = j.Status == JobStatus.Running;
         IsPaused = j.Status == JobStatus.Paused;
         IsDone = j.Status is JobStatus.Done or JobStatus.Warning;
@@ -40,8 +40,8 @@ public sealed partial class JobViewModel(QueueJob job, MainViewModel owner) : Ob
         Percent = j.Percent;
         ShowProgress = IsRunning || IsPaused || j.Percent > 0;
         Message = j.Message;
-        Media = j.Media?.Summary ?? j.ProbeError ?? "Analysing…";
-        Chips = BuildChips(j.Settings);
+        Media = j.Media?.Summary ?? j.ProbeError ?? TnA.Core.Localization.L.T("Analysing…");
+        Chips = BuildChips(j.Settings, j.Edit);
 
         if (IsRunning || IsPaused)
         {
@@ -52,21 +52,25 @@ public sealed partial class JobViewModel(QueueJob job, MainViewModel owner) : Ob
         }
         else if (j.Elapsed is { } took)
         {
-            Stats = $"took {Fmt(took)}" + (j.OutputPath is { } o ? "   → " + Path.GetFileName(o) : "");
+            Stats = $"{TnA.Core.Localization.L.T("took")} {Fmt(took)}" + (j.OutputPath is { } o ? "   → " + Path.GetFileName(o) : "");
         }
         else Stats = "";
     }
 
-    private static IReadOnlyList<Chip> BuildChips(JobSettings s)
+    private static IReadOnlyList<Chip> BuildChips(JobSettings s, JobEdit e)
     {
         var p = s.ProfileDefinition;
-        var chips = new List<Chip> { new(p.Name) };
+        var chips = new List<Chip> { new(s.PresetName ?? p.Name) };
         if (p.AllowsCodecChoice) chips.Add(new(s.EffectiveCodec.Short()));
         if (p.EncodesVideo && s.EffectiveBackend != EncoderBackend.Software) chips.Add(new(s.EffectiveBackend.Display(), "hw"));
         if (s.EffectiveTenBit) chips.Add(new("10-bit", "bit"));
         if (p.UsesResolution) chips.Add(new(Resolutions.Display(s.Resolution)));
         if (p.UsesQuality) chips.Add(new(s.Quality.Display()));
         if (p.UsesSubtitleMode) chips.Add(new(s.Subtitles.Display()));
+        if (p.EncodesVideo && s.Chunks.Enabled) chips.Add(new(TnA.Core.Localization.L.T("Chunked ×{0}", s.Chunks.Workers), "bit"));
+        if (s.Frameserver.Kind != TnA.Core.Media.FrameserverKind.None) chips.Add(new(s.Frameserver.Kind.ToString(), "hw"));
+        if (e.Tracks is not null || e.ExternalFiles.Count > 0) chips.Add(new("✎ " + TnA.Core.Localization.L.T("edited")));
+        if (e.IsTrimmed) chips.Add(new($"✂ {(e.TrimStart ?? 0):0.#}s–{(e.TrimEnd is { } te ? te.ToString("0.#") + "s" : TnA.Core.Localization.L.T("end"))}"));
         return chips;
     }
 
@@ -81,6 +85,7 @@ public sealed partial class JobViewModel(QueueJob job, MainViewModel owner) : Ob
         return $"{v:0.#} {u[i]}";
     }
 
+    [RelayCommand] private Task Edit() => owner.OpenEditorAsync(this);
     [RelayCommand] private void Remove() => owner.Queue.Remove([Id]);
     [RelayCommand] private void Retry() => owner.Queue.Reset([Id]);
     [RelayCommand] private void MoveUp() => owner.Queue.Move(Id, -1);
