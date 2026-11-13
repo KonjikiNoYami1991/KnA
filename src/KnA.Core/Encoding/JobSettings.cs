@@ -211,25 +211,90 @@ public sealed record TrackPlan
     public bool Forced { get; init; }
     /// <summary>Informative (codec name) for the UIs.</summary>
     public string? Codec { get; init; }
+    /// <summary>
+    /// What to do with this track, chosen in the track list; null = follow the profile.
+    /// Video: "copy". Audio: an <see cref="AudioCodec"/> name ("Copy", "Aac", "Opus"…).
+    /// Subtitles: "copy", "srt", "ass", "webvtt" or "mov_text".
+    /// </summary>
+    public string? Output { get; init; }
+    /// <summary>Audio bitrate of this track in kb/s per stereo pair (null = the job's setting).</summary>
+    public int? Bitrate { get; init; }
+
+    [JsonIgnore] public bool CopyVideo => Kind == "video" && string.Equals(Output, "copy", StringComparison.OrdinalIgnoreCase);
 
     [JsonIgnore] public double DelaySeconds => DelayMs / 1000.0;
 }
 
+/// <summary>One kept part of the final timeline (seconds); End null = until the end.</summary>
+public sealed record TrimSegment(double Start, double? End);
+
+/// <summary>A chapter mark on the source timeline (seconds).</summary>
+public sealed record ChapterMark(double Start, string? Title);
+
 /// <summary>Per-file edits: trim, external files, explicit track plan.</summary>
 public sealed record JobEdit
 {
-    /// <summary>Applied to the final timeline, after filters, imports and delays.</summary>
+    /// <summary>Applied to the final timeline, after filters, imports and delays (single segment).</summary>
     public double? TrimStart { get; init; }
     public double? TrimEnd { get; init; }
+    /// <summary>
+    /// Two or more kept parts, joined into one output (a single cut uses <see cref="TrimStart"/>/<see cref="TrimEnd"/>).
+    /// Sorted, non overlapping, on the final timeline.
+    /// </summary>
+    public List<TrimSegment>? Segments { get; init; }
     /// <summary>External audio/subtitle/font/container files available to the track plan.</summary>
     public List<string> ExternalFiles { get; init; } = [];
     /// <summary>Explicit output tracks in order; null = automatic (based on the subtitle mode).</summary>
     public List<TrackPlan>? Tracks { get; init; }
     public bool KeepChapters { get; init; } = true;
+    /// <summary>Edited chapters (source timeline); null = the chapters of the file as they are.</summary>
+    public List<ChapterMark>? Chapters { get; init; }
     /// <summary>Destination folder of this job (watch folders, editor), null = the global output folder or next to the source.</summary>
     public string? OutputFolder { get; init; }
+    /// <summary>Added to the output name ("part 2") when a multi-segment job was split into several jobs.</summary>
+    public string? PartLabel { get; init; }
 
-    [JsonIgnore] public bool IsTrimmed => TrimStart is > 0 || TrimEnd is > 0;
+    [JsonIgnore] public bool IsMultiSegment => Segments is { Count: > 1 };
+    [JsonIgnore] public bool IsTrimmed => TrimStart is > 0 || TrimEnd is > 0 || IsMultiSegment;
+
+    /// <summary>The kept parts (start, end) clamped to the duration; empty = not trimmed.</summary>
+    public List<(double Start, double End)> KeptParts(double duration)
+    {
+        var list = new List<(double, double)>();
+        double max = duration > 0 ? duration : double.MaxValue;
+        if (IsMultiSegment)
+        {
+            foreach (var s in Segments!.OrderBy(x => x.Start))
+            {
+                double a = Math.Max(0, s.Start), b = Math.Min(s.End ?? max, max);
+                if (b - a >= 0.05) list.Add((a, b));
+            }
+        }
+        else if (TrimStart is > 0 || TrimEnd is > 0)
+        {
+            double a = Math.Max(0, TrimStart ?? 0), b = Math.Min(TrimEnd is > 0 and var e ? e : max, max);
+            if (b - a >= 0.05) list.Add((a, b));
+        }
+        return list;
+    }
+
+    /// <summary>Stores the parts the canonical way: one → TrimStart/TrimEnd, several → Segments, none → no trim.</summary>
+    public JobEdit WithParts(IReadOnlyList<TrimSegment> parts, double duration)
+    {
+        var sorted = parts.Where(p => (p.End ?? double.MaxValue) - p.Start >= 0.05).OrderBy(p => p.Start).ToList();
+        if (sorted.Count > 1) return this with { Segments = sorted, TrimStart = null, TrimEnd = null };
+        if (sorted.Count == 0) return this with { Segments = null, TrimStart = null, TrimEnd = null };
+        var only = sorted[0];
+        return this with
+        {
+            Segments = null,
+            TrimStart = only.Start > 0.0005 ? only.Start : null,
+            TrimEnd = only.End is { } e && (duration <= 0 || e < duration - 0.0005) ? e : null,
+        };
+    }
+
+    /// <summary>The edit with no trim at all (previews, thumbnails).</summary>
+    [JsonIgnore] public JobEdit Untrimmed => this with { TrimStart = null, TrimEnd = null, Segments = null };
 }
 
 public sealed record ValidationIssue(bool IsError, string Message);

@@ -44,7 +44,7 @@ public sealed class PreviewService(QueueService queue)
             var ctx = JobRunner.BuildContext(job, queue.Settings, queue.Tools, queue.Store.DataDirectory) with
             {
                 Settings = settings with { Profile = settings.ProfileDefinition.UsesVideoFilters ? settings.Profile : ProfileKind.UniversalMkv },
-                Edit = edit with { TrimStart = null, TrimEnd = null },
+                Edit = edit.Untrimmed,
                 Burn = subs,
                 Preview = new PreviewRequest(PreviewKind.Frame, Math.Max(0, seconds), MaxWidth: maxWidth),
                 ForcedOutputPath = path,
@@ -120,7 +120,7 @@ public sealed class PreviewService(QueueService queue)
             var baseCtx = JobRunner.BuildContext(job, queue.Settings, queue.Tools, queue.Store.DataDirectory);
             var ctx = baseCtx with
             {
-                Edit = baseCtx.Edit with { TrimStart = null, TrimEnd = null },
+                Edit = baseCtx.Edit.Untrimmed,
                 ScriptAudio = await ScriptAudioAsync(job, dir, ct),
                 Burn = subs,
                 Settings = job.Settings.ProfileDefinition.UsesVideoFilters ? job.Settings : job.Settings with { Profile = ProfileKind.UniversalMkv },
@@ -297,7 +297,7 @@ public sealed class PreviewService(QueueService queue)
     }
 
     private static string SettingsHash(QueueJob job) =>
-        Hash(JsonSerializer.Serialize(job.Settings, SettingsStore.Json) + JsonSerializer.Serialize(job.Edit with { TrimStart = null, TrimEnd = null }, SettingsStore.Json));
+        Hash(JsonSerializer.Serialize(job.Settings, SettingsStore.Json) + JsonSerializer.Serialize(job.Edit.Untrimmed, SettingsStore.Json));
 
     private static string Hash(string s) => Convert.ToHexString(SHA1.HashData(System.Text.Encoding.UTF8.GetBytes(s)))[..12].ToLowerInvariant();
 

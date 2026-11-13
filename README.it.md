@@ -95,7 +95,12 @@ il suo encoder (prima le personalizzate, preferendo quella con libfdk_aac). Il c
 | **FSRCNNX** | GPU (libplacebo) | rete neurale piccola, anche live action |
 | **Neurale**: Real-ESRGAN, AnimeVideo v3, qualsiasi modello *spandrel* (.pth/.safetensors) o .onnx | PyTorch su CUDA (RTX 50 inclusa), ROCm, Apple MPS, CPU | qualità massima |
 
-Gli shader e il **runtime AI** (ambiente Python privato con la build PyTorch giusta per la tua GPU) si installano da *Componenti*; i modelli ufficiali Real-ESRGAN
+Gli shader e il **runtime AI** (ambiente Python privato con la build PyTorch giusta per la tua GPU) si installano da *Componenti*.
+**Python non serve**: se nel sistema non ce n'è uno adatto (3.11–3.14; lo stub del Microsoft Store non conta) KnA scarica un **Python portabile**
+(python-build-standalone, checksum verificato) nella sua cartella dati. PyTorch arriva da download.pytorch.org con la **build CUDA più recente supportata
+dal tuo driver** (letta da `nvidia-smi`; le RTX 50 / Blackwell richiedono CUDA 12.8+), ROCm su AMD/Linux, la build standard su macOS (MPS), CPU negli altri casi.
+Il componente mostra la versione di PyTorch installata e la più recente (PyPI) e *Aggiorna* la porta all'ultima; un ambiente creato con un Python troppo
+vecchio per l'attuale PyTorch viene ricreato. I modelli ufficiali Real-ESRGAN
 si scaricano al primo uso. Il sidecar `ai/kna_upscale.py` decodifica la sorgente con i filtri di KnA, esegue il modello e passa i fotogrammi RGB a 16 bit
 all'FFmpeg che codifica: sottotitoli impressi, audio, capitoli, codifica a segmenti e anteprime funzionano come sempre.
 
@@ -136,17 +141,28 @@ duplicati, file non supportati e cartelle enormi vengono mostrati prima di proce
 ### Editor per file
 Ogni file in coda ha un editor (✎) con cinque schede:
 
-1. **Tracce**: usa, rimuovi o sostituisci i flussi della sorgente; aggiungi **audio, sottotitoli, font e altri file esterni**.
+1. **Tracce**: vengono elencati **tutti** i flussi del file (video, audio, sottotitoli, allegati), in ogni profilo, Demux compreso;
+   usali, rimuovili o sostituiscili e aggiungi **audio, sottotitoli, font e altri file esterni**.
    I file MKV / MKA / MP4 vengono analizzati e spunti i flussi da importare. Ogni traccia ha lingua, titolo,
    flag predefinita/forzata e un proprio **ritardo** (video, audio e sottotitoli). Un sottotitolo può essere impresso.
+   - **Uscita per traccia**: copia o converti ogni flusso direttamente dalla lista: video *copia* (senza ricodifica, filtri esclusi),
+     audio *copia* oppure AAC / HE-AAC / Opus / AC-3 / E-AC-3 / FLAC / … con il proprio bitrate, sottotitoli *copia* oppure SRT / ASS / WebVTT / mov_text
+     (verificato con il contenitore: i sottotitoli bitmap non possono diventare testo).
+   - **Allegati**: togli la spunta agli allegati del file per escluderli, **aggiungi** font, copertine o qualsiasi altro file (✕ li rimuove).
+   - **Capitoli**: elencati con tempo e titolo; aggiungi, rimuovi, rinomina, sposta, "ogni 5 minuti", oppure torna ai capitoli del file.
+     I tempi sono sulla timeline originale: i tagli li spostano automaticamente.
+   - In **Demux** tracce, allegati e capitoli spuntati sono i file che vengono estratti.
 2. **Taglio**: timeline visiva con miniature e forma d'onda dell'audio, maniglie trascinabili, spostamenti al fotogramma.
+   **Più segmenti**: aggiungi quante parti vuoi tenere (*Aggiungi segmento alla testina*), poi **uniscile** in un unico file
+   (ogni parte viene prodotta con le stesse impostazioni e le parti vengono unite senza ricodifica; i capitoli seguono) oppure
+   **crea N elementi in coda**, uno per segmento (uscite chiamate "… - parte N").
    **Il taglio è sempre applicato per ultimo**, dopo tracce importate, ritardi, filtri e sottotitoli impressi: un sottotitolo
    importato con un ritardo resta sincronizzato anche dopo il taglio.
 3. **Filtri**: orientamento (i video ruotati dei telefoni vengono riconosciuti; rotazione e specchiatura si possono correggere),
    deinterlacciamento, ritaglio (con rilevamento delle bande nere), riduzione rumore, deband, nitidezza, frame rate, filtri FFmpeg personalizzati;
    guadagno audio, normalizzazione del volume (EBU R128), riduzione a stereo, frequenza di campionamento.
    Come frameserver si possono scegliere **VapourSynth** e **AviSynth+**, con modelli pronti; è supportato anche l'audio prodotto dallo script.
-4. **Uscita**: tutte le impostazioni del profilo, contenitore, modalità HDR, codifica a segmenti, opzioni immagini o demux, destinazione,
+4. **Uscita**: tutte le impostazioni del profilo, contenitore, modalità HDR, codifica a segmenti, opzioni immagini o demux (i flussi si scelgono in *Tracce*), destinazione,
    "salva come preset" e il comando FFmpeg esatto.
 5. **Anteprima**: il fotogramma finale (filtri, sottotitoli impressi, conversione HDR) in qualsiasi punto, più una clip di 6 secondi del risultato.
    Tutte le anteprime (fotogrammi, miniature, forma d'onda, rilevamento bande nere, clip) funzionano anche con sorgenti VapourSynth e AviSynth.
@@ -167,6 +183,7 @@ Preset integrati, preset personali salvati da qualsiasi file e una **procedura g
   (l'app desktop la scarica e la installa; il server mostra come aggiornare il container o il servizio).
 - **FFmpeg, ffprobe, dovi_tool e hdr10plus_tool** si installano o aggiornano dalle loro pagine di release ufficiali
   (build FFmpeg di BtbN su Windows/Linux, Homebrew su macOS).
+- **Runtime AI**: Python portabile quando serve, PyTorch (CUDA adatto al driver / ROCm / MPS / CPU), spandrel; controllo aggiornamenti su PyPI.
 
 ### Integrazione col desktop
 - **"Invia a" di Windows**: *Impostazioni → Uscita* aggiunge la voce "KnA" più una voce per ogni preset scelto (aggiunge i file con

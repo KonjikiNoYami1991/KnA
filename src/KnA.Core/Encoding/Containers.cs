@@ -63,6 +63,38 @@ public static class Containers
     public static bool AcceptsAttachments(string container) => container == "mkv";
 
     /// <summary>Codec to use for a subtitle track in this container: "copy", a conversion, or null when impossible.</summary>
+    /// <summary>Subtitle formats offered in the track list: value → label.</summary>
+    public static IReadOnlyList<(string Value, string Label)> SubtitleOutputs { get; } =
+        [("copy", "Copy"), ("srt", "SRT"), ("ass", "ASS"), ("webvtt", "WebVTT"), ("mov_text", "mov_text (MP4)")];
+
+    /// <summary>FFmpeg subtitle encoder for an explicit choice, or null when the container/source can't take it.</summary>
+    public static string? ChosenSubtitleCodec(string container, SubtitleStream? source, string? sourceCodec, string wanted)
+    {
+        var codec = source?.CodecName ?? sourceCodec ?? "";
+        bool text = source?.IsText ?? codec is "ass" or "ssa" or "subrip" or "srt" or "webvtt" or "mov_text" or "text";
+        wanted = wanted.ToLowerInvariant();
+        if (wanted == "copy")
+        {
+            bool ok = container switch
+            {
+                "mkv" => codec != "mov_text",
+                "mp4" or "mov" => codec == "mov_text",
+                "webm" => codec == "webvtt",
+                "ts" => codec == "dvb_subtitle",
+                _ => false,
+            };
+            return ok ? "copy" : null;
+        }
+        if (!text) return null; // bitmap subtitles can't become text without OCR
+        return (container, wanted) switch
+        {
+            ("mkv", "srt" or "ass" or "webvtt") => wanted,
+            ("mp4" or "mov", "mov_text") => "mov_text",
+            ("webm", "webvtt") => "webvtt",
+            _ => null,
+        };
+    }
+
     public static string? SubtitleCodec(string container, SubtitleStream? source, string? sourceCodec = null)
     {
         var codec = source?.CodecName ?? sourceCodec ?? "";

@@ -142,7 +142,7 @@ bash install-linux.sh --unattended
 | `KNA_PASSWORD` | – | Web UI password (no single quotes) |
 | `KNA_GPU` | `auto` | `auto`, `none`, or any of `intel amd nvidia` |
 | `KNA_FFMPEG_SOURCE` | `btbn` | `btbn` (newest static build) or `distro` |
-| `KNA_COMPONENTS` | `anime4k fsrcnnx dovi_tool hdr10plus_tool` | Also `ai-runtime` (Python + PyTorch, several GB); empty for none |
+| `KNA_COMPONENTS` | `anime4k fsrcnnx dovi_tool hdr10plus_tool` | Also `ai-runtime` (Python + PyTorch, several GB: the container's Python 3.11–3.14, or a portable one KnA downloads); empty for none |
 | `KNA_UID` · `KNA_GID` | system ids | Ids of the `kna` user |
 | `KNA_RPMFUSION` | `auto` | Fedora: `yes` enables RPM Fusion for the full AMD/Intel VA-API drivers (H.264/HEVC); `auto` = yes when an AMD/Intel GPU is used |
 

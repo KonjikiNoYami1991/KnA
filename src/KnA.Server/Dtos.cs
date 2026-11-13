@@ -22,7 +22,7 @@ public sealed record JobDto(
         j.Progress?.Remaining?.TotalSeconds, j.Elapsed?.TotalSeconds,
         j.Progress?.Position.TotalSeconds ?? 0, j.Progress?.Duration.TotalSeconds ?? j.Media?.Duration.TotalSeconds ?? 0,
         j.HdrSummary, j.Issues,
-        j.Edit.Tracks is not null || j.Edit.IsTrimmed || j.Edit.ExternalFiles.Count > 0);
+        j.Edit.Tracks is not null || j.Edit.IsTrimmed || j.Edit.ExternalFiles.Count > 0 || j.Edit.Chapters is not null);
 }
 
 public sealed record QueueStateDto(bool Running, bool Paused, Guid? CurrentJob, int Total, int Ready, int Done, int Failed);
@@ -83,7 +83,8 @@ public sealed record StateDto(string Version, string Platform, string Language, 
 
 public sealed record StreamDto(int Index, string Kind, string Codec, string? Language, string? Title, string? Details, bool Default, bool Forced);
 
-public sealed record FileDto(string Path, string Name, bool IsSource, string? Summary, double Duration, IReadOnlyList<StreamDto> Streams);
+public sealed record FileDto(string Path, string Name, bool IsSource, string? Summary, double Duration, IReadOnlyList<StreamDto> Streams,
+    IReadOnlyList<ChapterMark> Chapters);
 
 public sealed record AnalysisDto(IReadOnlyList<TrackPlan> Tracks, bool TracksAreDefault, IReadOnlyList<ValidationIssue> Issues,
     string Container, IReadOnlyList<string> AllowedContainers, string HdrSummary, string? CommandLine, double OutputDuration,
@@ -98,7 +99,8 @@ public sealed record AnalysisDto(IReadOnlyList<TrackPlan> Tracks, bool TracksAre
     }
 
     private static FileDto File(MediaInfo m, bool isSource) => new(m.Path, Path.GetFileName(m.Path), isSource, m.Summary, m.Duration.TotalSeconds,
-        m.AllStreams.Select(s => new StreamDto(s.Index, s.Kind, s.CodecName, s.Language, s is AttachmentStream at ? at.FileName : s.Title, Details(s), s.IsDefault, s.IsForced)).ToList());
+        m.AllStreams.Select(s => new StreamDto(s.Index, s.Kind, s.CodecName, s.Language, s is AttachmentStream at ? at.FileName : s.Title, Details(s), s.IsDefault, s.IsForced)).ToList(),
+        KnA.Core.Encoding.Chapters.FromSource(m));
 
     private static string? Details(StreamBase s) => s switch
     {

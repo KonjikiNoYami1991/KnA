@@ -1,9 +1,10 @@
-# KnA neural upscaler (ai/kna_upscale.py).
+# KnA neural upscaler (ai/kna_upscale.py). Python 3.11–3.14 (current PyTorch needs 3.11+).
 # Install PyTorch for your GPU first (https://pytorch.org/get-started/locally/), e.g.
-#   NVIDIA (RTX 20…50):  pip install torch --index-url https://download.pytorch.org/whl/cu128
-#   AMD (Linux, ROCm):   pip install torch --index-url https://download.pytorch.org/whl/rocm6.4
+#   NVIDIA (RTX 20…50):  pip install torch --index-url https://download.pytorch.org/whl/cu130   (cu128 with drivers older than 580)
+#   AMD (Linux, ROCm):   pip install torch --index-url https://download.pytorch.org/whl/rocm6.4 (or the newest rocmX.Y listed there)
 #   Apple Silicon / CPU: pip install torch
-# KnA does all of this itself: Settings → Components → "AI upscaler".
+# KnA does all of this itself: Settings → Components → "AI upscaler" (it also downloads a portable Python when none fits
+# and picks the newest CUDA build the driver supports).
 spandrel>=0.4
 numpy>=1.26
 # optional, for .onnx models:

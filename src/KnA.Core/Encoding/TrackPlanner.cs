@@ -20,6 +20,20 @@ public static class TrackPlanner
         var p = s.ProfileDefinition;
         var mode = s.EffectiveSubtitles;
 
+        if (p.IsDemux)
+        {
+            // Demux: every stream is offered, the chosen ones (all by default) are extracted.
+            var chosen = s.Demux.Streams is { Count: > 0 } l ? l.ToHashSet() : null;
+            foreach (var st in source.AllStreams)
+            {
+                if (st is VideoStream { IsAttachedPicture: true }) continue;
+                bool on = st is AttachmentStream ? s.Demux.Attachments && (chosen is null || chosen.Contains(st.Index))
+                                                 : chosen is null || chosen.Contains(st.Index);
+                plan.Add(FromStream(source.Path, st, include: on));
+            }
+            return plan;
+        }
+
         // Script applied to the file: the picture comes from the script (and the audio too, when asked).
         if (frameserver?.PrimaryVideo is { } fv)
         {
@@ -33,12 +47,10 @@ public static class TrackPlanner
         if (scriptAudio)
             foreach (var a in frameserver!.Audio) plan.Add(FromStream(frameserver.Path, a, include: true));
 
-        if (p.UsesAudio)
-        {
-            var audio = p.IsRemux ? source.Audio : AudioPlanner.SelectTracks(source, mode, s.Profile);
-            foreach (var a in source.Audio)
-                plan.Add(FromStream(source.Path, a, include: !scriptAudio && audio.Contains(a)));
-        }
+        // Audio tracks are always listed (so they can be switched on); profiles without audio leave them off.
+        var audio = !p.UsesAudio ? [] : p.IsRemux ? source.Audio : AudioPlanner.SelectTracks(source, mode, s.Profile);
+        foreach (var a in source.Audio)
+            plan.Add(FromStream(source.Path, a, include: !scriptAudio && audio.Contains(a)));
 
         var burnChoice = mode == SubtitleMode.Hardsub ? SubtitleSelector.Choose(source, s.UseSidecarSubtitles) : null;
         bool keepSubs = mode == SubtitleMode.Softsub || p.IsRemux;
@@ -61,6 +73,57 @@ public static class TrackPlanner
                 plan.AddRange(ForExternal(path, media, include: false));
         return plan;
     }
+
+    /// <summary>
+    /// Adds the source streams a saved (custom) plan doesn't mention, switched off, after the last track of
+    /// the same kind: older plans and plans made with another profile then still list every track.
+    /// </summary>
+    public static List<TrackPlan> Complete(IReadOnlyList<TrackPlan> plan, MediaInfo source)
+    {
+        var list = plan.ToList();
+        foreach (var st in source.AllStreams)
+        {
+            if (st is VideoStream { IsAttachedPicture: true }) continue;
+            if (list.Any(t => t.File == source.Path && t.Stream == st.Index)) continue;
+            var entry = FromStream(source.Path, st, include: false) with { Default = false };
+            int last = list.FindLastIndex(t => t.Kind == st.Kind);
+            if (last < 0) list.Add(entry); else list.Insert(last + 1, entry);
+        }
+        return list;
+    }
+
+    /// <summary>A file attached as is (font, cover, text…): no stream, the file itself becomes the attachment.</summary>
+    public static TrackPlan Attachment(string path) => new()
+    {
+        File = path, Stream = -1, Kind = "attachment", Include = true, Title = Path.GetFileName(path),
+        Codec = IsFontFile(path) ? "font" : Path.GetExtension(path).TrimStart('.').ToLowerInvariant(),
+    };
+
+    /// <summary>A plan entry that is a standalone file (no stream to probe).</summary>
+    public static bool IsStandaloneFile(TrackPlan t) => t.Kind == "attachment" && t.Stream < 0;
+
+    /// <summary>MIME type written for an attached file (Matroska needs one).</summary>
+    public static string MimeType(string path) => Path.GetExtension(path).ToLowerInvariant() switch
+    {
+        ".otf" => "application/vnd.ms-opentype",
+        ".ttf" or ".ttc" => "application/x-truetype-font",
+        ".otc" => "font/collection",
+        ".woff" => "font/woff",
+        ".woff2" => "font/woff2",
+        ".jpg" or ".jpeg" => "image/jpeg",
+        ".png" => "image/png",
+        ".webp" => "image/webp",
+        ".gif" => "image/gif",
+        ".bmp" => "image/bmp",
+        ".txt" or ".nfo" or ".log" => "text/plain",
+        ".xml" => "application/xml",
+        ".json" => "application/json",
+        ".pdf" => "application/pdf",
+        ".ass" or ".ssa" => "text/x-ssa",
+        ".srt" => "application/x-subrip",
+        ".zip" => "application/zip",
+        _ => "application/octet-stream",
+    };
 
     /// <summary>Tracks offered by an external file (all streams, or the file itself for fonts).</summary>
     public static IEnumerable<TrackPlan> ForExternal(string path, MediaInfo? media, bool include)

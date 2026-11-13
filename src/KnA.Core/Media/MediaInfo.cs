@@ -16,6 +16,8 @@ public sealed class MediaInfo
     /// <summary>Data/unknown streams (SCTE-35, teletext, bin_data, timed ID3…): never mapped to outputs.</summary>
     public IReadOnlyList<StreamBase> Ignored { get; init; } = [];
     public int ChapterCount { get; init; }
+    /// <summary>Chapters of the container (seconds), in order.</summary>
+    public IReadOnlyList<ChapterInfo> Chapters { get; init; } = [];
 
     /// <summary>MPEG transport streams and friends need extra care (unknown metadata, broken timestamps).</summary>
     public bool IsTransportStream =>
@@ -51,6 +53,8 @@ public sealed class MediaInfo
         }
     }
 }
+
+public sealed record ChapterInfo(double Start, double End, string? Title);
 
 public class StreamBase
 {

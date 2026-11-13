@@ -123,7 +123,10 @@ public static class JobRunner
             // ------------------------------------------------------------ run
             job.Stage = p.IsRemux ? L.T("Remuxing") : p.IsImages ? L.T("Exporting images") : L.T("Encoding");
             ctx.Changed(job);
-            int exit = s.Chunks.Enabled && p.EncodesVideo
+            bool videoCopied = compiled.Tracks.FirstOrDefault(t => t.Include && t.Kind == "video")?.CopyVideo == true;
+            int exit = job.Edit.IsMultiSegment
+                ? await RunSegmentsAsync(job, ctx, baseCtx with { Burn = subs, HdrFiles = sideFiles }, compiled, workDir, ct)
+                : s.Chunks.Enabled && p.EncodesVideo && !videoCopied
                 ? await ChunkedEncoder.RunAsync(job, ctx, baseCtx with { Burn = subs, HdrFiles = sideFiles }, compiled, workDir, ct)
                 : await RunFfmpegWithProgressAsync(job, compiled.Plan.Arguments, workDir, compiled.OutputDuration, ctx, ct, compiled.Pipe);
 
@@ -167,6 +170,77 @@ public static class JobRunner
         }
     }
 
+    /// <summary>
+    /// Several kept parts joined into one file: every part is made with the job's own command (cut to that part,
+    /// no chapters) in the working folder, then the parts are joined without re-encoding (concat demuxer) and
+    /// the chapters, moved onto the joined timeline, are added.
+    /// </summary>
+    private static async Task<int> RunSegmentsAsync(QueueJob job, RunnerContext ctx, CompileContext cc, CompiledJob full, string workDir, CancellationToken ct)
+    {
+        var parts = job.Edit.KeptParts(job.Media!.Duration.TotalSeconds);
+        var ext = full.Container is "mp4" or "mov" or "mkv" or "webm" or "avi" or "ts" or "mxf" ? full.Container : "mkv";
+        var files = new List<string>();
+        for (int i = 0; i < parts.Count; i++)
+        {
+            var (start, end) = parts[i];
+            var file = Path.Combine(workDir, $"part{i + 1:000}.{ext}");
+            var partCtx = cc with
+            {
+                Edit = cc.Edit with { Segments = null, TrimStart = start > 0.0005 ? start : null, TrimEnd = end, KeepChapters = false },
+                ForcedOutputPath = file,
+                ChaptersFile = null,
+            };
+            var c = CommandBuilder.Compile(partCtx);
+            if (c.HasErrors) throw new InvalidOperationException(c.Issues.First(x => x.IsError).Message);
+            job.Stage = L.T("Encoding segment {0} of {1}", i + 1, parts.Count);
+            ctx.Changed(job);
+            job.AppendLog($"Segment {i + 1}/{parts.Count}: {start:0.###}s → {end:0.###}s");
+            job.AppendLog("Command: " + c.Plan.CommandLine(ctx.Tools.Ffmpeg));
+            int exit = await RunFfmpegWithProgressAsync(job, c.Plan.Arguments, workDir, c.OutputDuration, ctx, ct, c.Pipe);
+            if (exit != 0) return exit;
+            if (!File.Exists(file)) throw new InvalidOperationException(L.T("FFmpeg finished but the output file is empty."));
+            files.Add(file);
+        }
+
+        job.Stage = L.T("Joining segments");
+        ctx.Changed(job);
+        var list = Path.Combine(workDir, "parts.txt");
+        await File.WriteAllLinesAsync(list, files.Select(f => "file '" + f.Replace("'", "'\\''") + "'"), ct);
+        var args = new List<string> { "-hide_banner", "-nostdin", "-n", "-f", "concat", "-safe", "0", "-i", list };
+        var chapters = Encoding.Chapters.Remap(Encoding.Chapters.Effective(job.Media!, job.Edit), parts);
+        if (chapters.Count > 0)
+        {
+            var chapFile = Encoding.Chapters.Write(Path.Combine(workDir, "chapters.txt"), chapters, full.OutputDuration.TotalSeconds);
+            args.AddRange(["-f", "ffmetadata", "-i", chapFile, "-map_chapters", "1"]);
+        }
+        else args.AddRange(["-map_chapters", "-1"]);
+        args.AddRange(["-map", "0", "-c", "copy", "-map_metadata", "0", "-max_muxing_queue_size", "4096"]);
+        switch (full.Container)
+        {
+            case "mp4" or "mov": args.AddRange(["-movflags", "+faststart"]); break;
+            case "avi": args.AddRange(["-f", "avi"]); break;
+            case "ts": args.AddRange(["-f", "mpegts"]); break;
+            case "webm": args.AddRange(["-f", "webm"]); break;
+            case "mxf": args.AddRange(["-f", "mxf"]); break;
+        }
+        args.AddRange(CommandBuilder.ProgressArgs);
+        args.Add(full.Plan.OutputPath);
+        job.AppendLog("Join: " + new EncodePlan(args, full.Plan.OutputPath).CommandLine(ctx.Tools.Ffmpeg));
+        return await RunFfmpegWithProgressAsync(job, args, workDir, full.OutputDuration, ctx, ct);
+    }
+
+    /// <summary>Writes the edited chapters of a job (FFmetadata) and returns the file, or null when the source's chapters are used.</summary>
+    public static string? WriteChaptersFile(QueueJob job, string? dataDirectory)
+    {
+        if (job.Media is null || !job.Edit.KeepChapters || job.Edit.Chapters is null || job.Edit.IsMultiSegment) return null;
+        var dir = Path.Combine(dataDirectory ?? Path.GetTempPath(), "temp", "chapters");
+        try
+        {
+            return Encoding.Chapters.Write(Path.Combine(dir, job.Id.ToString("N") + ".txt"), job.Edit.Chapters, job.Media.Duration.TotalSeconds);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return null; }
+    }
+
     public static CompileContext BuildContext(QueueJob job, RunnerContext ctx) => BuildContext(job, ctx.Settings, ctx.Tools, ctx.Store.DataDirectory);
 
     public static CompileContext BuildContext(QueueJob job, AppSettings settings, FfmpegTools? tools, string? dataDirectory = null)
@@ -194,6 +268,7 @@ public static class JobRunner
             },
             Hdr = new HdrEnvironment(caps?.HasZscale ?? true, caps?.HasLibplacebo ?? false, tools?.DoviTool is not null, tools?.Hdr10PlusTool is not null),
             Upscale = dataDirectory is null ? null : UpscaleEnvironmentFor(job.Settings, settings, tools, dataDirectory),
+            ChaptersFile = WriteChaptersFile(job, dataDirectory),
         };
     }
 
@@ -262,7 +337,7 @@ public static class JobRunner
         foreach (var t in check.Tracks.Where(t => t.Include && t.Kind == "audio"))
         {
             if (TrackPlanner.Lookup(t, media) is not AudioStream ast) continue;
-            var plan = AudioPlanner.Plan(ast, cc.Settings, check.Container, cc.Options.AudioEncoders);
+            var plan = AudioPlanner.Plan(ast, AudioPlanner.ForTrack(t, cc.Settings), check.Container, cc.Options.AudioEncoders);
             if (!plan.IsExternal) continue;
             job.Stage = L.T("Encoding audio (fdkaac)");
             ctx.Changed(job);
@@ -316,7 +391,7 @@ public static class JobRunner
             job.ExternalMedia.Remove(script); // the script text may have changed
             job.ExternalMedia[script] = await prober.ProbeAsync(script, ct, requireVideo: true);
         }
-        foreach (var file in job.Edit.ExternalFiles.Concat(job.Edit.Tracks?.Select(t => t.File) ?? []).Distinct())
+        foreach (var file in job.Edit.ExternalFiles.Concat(job.Edit.Tracks?.Where(t => !TrackPlanner.IsStandaloneFile(t)).Select(t => t.File) ?? []).Distinct())
         {
             if (file == job.SourcePath || TrackPlanner.IsFontFile(file) || job.ExternalMedia.ContainsKey(file)) continue;
             if (!File.Exists(file)) throw new FileNotFoundException(L.T("External file not found: {0}", file), file);
@@ -350,7 +425,8 @@ public static class JobRunner
 
     private static async Task<string> RunDemuxAsync(QueueJob job, RunnerContext ctx, CancellationToken ct)
     {
-        var plan = DemuxBuilder.Build(job.Media!, job.Settings, job.Edit, new BuildOptions { OutputDirectory = ctx.Settings.OutputDirectory });
+        var plan = DemuxBuilder.Build(job.Media!, job.Settings, job.Edit, new BuildOptions { OutputDirectory = ctx.Settings.OutputDirectory },
+            chaptersFile: WriteChaptersFile(job, ctx.Store.DataDirectory));
         job.Issues = plan.Issues;
         if (plan.Issues.FirstOrDefault(i => i.IsError) is { } err) throw new InvalidOperationException(err.Message);
         CheckDestination(Path.GetDirectoryName(plan.Folder)!, job.Media!);
@@ -364,9 +440,8 @@ public static class JobRunner
         var args = plan.Plan.Arguments.ToList();
         int pos = args.LastIndexOf("-i");
         args.InsertRange(pos + 2, CommandBuilder.ProgressArgs);
-        var duration = job.Edit.IsTrimmed
-            ? TimeSpan.FromSeconds((job.Edit.TrimEnd ?? job.Media!.Duration.TotalSeconds) - (job.Edit.TrimStart ?? 0))
-            : job.Media!.Duration;
+        var kept = job.Edit.KeptParts(job.Media!.Duration.TotalSeconds);
+        var duration = kept.Count > 0 ? TimeSpan.FromSeconds(kept.Sum(x => x.End - x.Start)) : job.Media!.Duration;
         // Attachments are dumped in the working directory → the destination folder.
         int exit = await RunFfmpegWithProgressAsync(job, args, plan.Folder, duration, ctx, ct);
         if (exit != 0) throw new InvalidOperationException(LastError(job.Log) ?? L.T("FFmpeg exited with code {0}.", exit));

@@ -293,6 +293,9 @@ app.MapPut("/api/jobs/{id:guid}/edit", async (Guid id, EditRequest req, Cancella
     return Results.Ok(AnalysisDto.From(a, j.SourcePath));
 });
 
+app.MapPost("/api/jobs/{id:guid}/split-segments", (Guid id) =>
+    Results.Ok(queue.SplitSegments(id).Select(j => j.Id)));
+
 // Previews (cached PNG/JPEG/MP4 files).
 app.MapGet("/api/jobs/{id:guid}/preview/frame", async (Guid id, double t, bool? final, int? w, CancellationToken ct) =>
     Results.File(await queue.Preview.FrameAsync(id, t, final ?? true, Math.Clamp(w ?? 1280, 160, 3840), ct), "image/png"));

@@ -10,6 +10,7 @@ namespace KnA.App.Views;
 /// <summary>
 /// Visual trim: thumbnail strip + waveform, draggable in/out handles and a playhead.
 /// Click/drag on the strip moves the playhead; drag near a handle moves the cut.
+/// Several kept segments can be shown: the active one has the handles, the others are outlined.
 /// </summary>
 public sealed class TrimTimeline : Grid
 {
@@ -21,6 +22,8 @@ public sealed class TrimTimeline : Grid
     public double? Start { get; private set; }
     public double? End { get; private set; }
     public double Playhead { get; private set; }
+    /// <summary>The other kept segments (not the one being edited).</summary>
+    public IReadOnlyList<(double Start, double End)> Others { get; private set; } = [];
 
     /// <summary>(start, end) after a handle drag; null = no cut on that side.</summary>
     public event Action<double?, double?>? TrimChanged;
@@ -55,6 +58,8 @@ public sealed class TrimTimeline : Grid
 
     public void SetTrim(double? start, double? end) { Start = start; End = end; _overlay.InvalidateVisual(); }
 
+    public void SetOthers(IReadOnlyList<(double Start, double End)> others) { Others = others; _overlay.InvalidateVisual(); }
+
     public void SetPlayhead(double t) { Playhead = Math.Clamp(t, 0, Duration); _overlay.InvalidateVisual(); }
 
     private sealed class Overlay : Control
@@ -62,6 +67,7 @@ public sealed class TrimTimeline : Grid
         private static readonly IBrush Shade = new SolidColorBrush(Color.Parse("#99000000"));
         private static readonly IBrush Accent = new SolidColorBrush(Color.Parse("#F43F5E"));
         private static readonly IBrush Head = Brushes.White;
+        private static readonly IBrush Other = new SolidColorBrush(Color.Parse("#FBBF24"));
         private readonly TrimTimeline _t;
         private string? _drag;
 
@@ -75,8 +81,17 @@ public sealed class TrimTimeline : Grid
             var h = Bounds.Height;
             double s = X(_t.Start ?? 0), e = X(_t.End ?? _t.Duration);
             ctx.FillRectangle(Brushes.Transparent, new Rect(Bounds.Size));
-            ctx.FillRectangle(Shade, new Rect(0, 0, s, h));
-            ctx.FillRectangle(Shade, new Rect(e, 0, Bounds.Width - e, h));
+            // Shade everything outside the kept segments.
+            var kept = _t.Others.Select(o => (X(o.Start), X(o.End))).Append((s, e)).OrderBy(x => x.Item1).ToList();
+            double from = 0;
+            foreach (var (a, b) in kept)
+            {
+                if (a > from) ctx.FillRectangle(Shade, new Rect(from, 0, a - from, h));
+                from = Math.Max(from, b);
+            }
+            if (from < Bounds.Width) ctx.FillRectangle(Shade, new Rect(from, 0, Bounds.Width - from, h));
+            foreach (var (a, b) in _t.Others.Select(o => (X(o.Start), X(o.End))))
+                ctx.DrawRectangle(new Pen(Other, 2, new DashStyle([3, 2], 0)), new Rect(a, 1, Math.Max(b - a, 1), h - 2));
             ctx.DrawRectangle(new Pen(Accent, 2), new Rect(s, 1, Math.Max(e - s, 1), h - 2));
             ctx.FillRectangle(Accent, new Rect(s - 4, 0, 8, h), 3);
             ctx.FillRectangle(Accent, new Rect(e - 4, 0, 8, h), 3);

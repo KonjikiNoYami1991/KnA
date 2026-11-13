@@ -69,8 +69,10 @@ public sealed partial class JobViewModel(QueueJob job, MainViewModel owner) : Ob
         if (p.UsesSubtitleMode) chips.Add(new(s.Subtitles.Display()));
         if (p.EncodesVideo && s.Chunks.Enabled) chips.Add(new(KnA.Core.Localization.L.T("Chunked ×{0}", s.Chunks.Workers), "bit"));
         if (s.Frameserver.Kind != KnA.Core.Media.FrameserverKind.None) chips.Add(new(s.Frameserver.Kind.ToString(), "hw"));
-        if (e.Tracks is not null || e.ExternalFiles.Count > 0) chips.Add(new("✎ " + KnA.Core.Localization.L.T("edited")));
-        if (e.IsTrimmed) chips.Add(new($"✂ {(e.TrimStart ?? 0):0.#}s–{(e.TrimEnd is { } te ? te.ToString("0.#") + "s" : KnA.Core.Localization.L.T("end"))}"));
+        if (e.Tracks is not null || e.ExternalFiles.Count > 0 || e.Chapters is not null) chips.Add(new("✎ " + KnA.Core.Localization.L.T("edited")));
+        if (e.IsMultiSegment) chips.Add(new("✂ " + KnA.Core.Localization.L.T("{0} segments", e.Segments!.Count)));
+        else if (e.IsTrimmed) chips.Add(new($"✂ {(e.TrimStart ?? 0):0.#}s–{(e.TrimEnd is { } te ? te.ToString("0.#") + "s" : KnA.Core.Localization.L.T("end"))}"));
+        if (!string.IsNullOrEmpty(e.PartLabel)) chips.Add(new(e.PartLabel));
         return chips;
     }
 

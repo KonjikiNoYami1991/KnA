@@ -12,7 +12,7 @@ const kindLabel = k => ({ video: t("Video"), audio: t("Audio"), subtitle: t("Sub
 export async function openEditor(id, tab = "tracks") {
   const job = state.jobs.get(id);
   if (!job) return;
-  ed = { id, job, settings: cloneSettings(job.settings), edit: cloneSettings(job.edit), analysis: null, tab, playhead: job.edit.trimStart ?? 0, final: true };
+  ed = { id, job, settings: cloneSettings(job.settings), edit: cloneSettings(job.edit), analysis: null, tab, playhead: job.edit.segments?.[0]?.start ?? job.edit.trimStart ?? 0, final: true, parts: null, seg: 0 };
   $("#ed-title").textContent = job.fileName;
   $("#ed-sub").textContent = job.folder;
   $$("#ed-tabs button").forEach(b => b.classList.toggle("on", b.dataset.tab === tab));
@@ -76,11 +76,51 @@ function streamInfo(tp) {
   return f?.streams.find(s => s.index === tp.stream);
 }
 
+const subtitleOutputs = [["", "Automatic"], ["copy", "Copy (no re-encoding)"], ["srt", "SRT"], ["ass", "ASS"], ["webvtt", "WebVTT"], ["mov_text", "mov_text (MP4)"]];
+function outputOptions(kind, current) {
+  let opts = [];
+  if (kind === "video") opts = [["", t("Profile (encode)")], ["copy", t("Copy (no re-encoding)")]];
+  else if (kind === "audio") opts = [["", t("Job setting")], ...(state.options.audioCodecs ?? []).filter(o => o.value !== "Auto").map(o => [o.value, o.label])];
+  else if (kind === "subtitle") opts = subtitleOutputs.map(([v, l]) => [v, v === "" || v === "copy" ? t(l) : l]);
+  return opts.map(([v, l]) => `<option value="${esc(v)}" ${(current ?? "").toLowerCase() === v.toLowerCase() ? "selected" : ""}>${esc(l)}</option>`).join("");
+}
+
+const chapterList = () => ed.edit.chapters ?? ed.analysis.files[0].chapters ?? [];
+function materializeChapters() { if (!ed.edit.chapters) ed.edit.chapters = cloneSettings(ed.analysis.files[0].chapters ?? []); return ed.edit.chapters; }
+const chapterTitle = n => t("Chapter {0}", String(n).padStart(2, "0"));
+function addChapter(at) {
+  const l = materializeChapters();
+  l.push({ start: Math.max(0, at), title: chapterTitle(l.length + 1) });
+  l.sort((a, b) => a.start - b.start);
+}
+
+function renderChapters() {
+  const list = chapterList(), keep = ed.edit.keepChapters !== false;
+  return `<div class="section"><h3>${esc(t("Chapters"))}</h3>
+    <label class="toggle"><input type="checkbox" data-k="keepChapters" ${keep ? "checked" : ""}><span class="switch"></span><span>${esc(t("Keep chapters"))}</span></label>
+    ${!keep ? "" : `<p class="muted small">${esc(ed.edit.chapters ? t("Edited chapters (times on the original timeline: cuts move them automatically).") : t("The chapters of the file ({0}). Any change makes them custom.", list.length))}</p>
+    ${list.length ? `<table class="tracks"><tbody>${list.map((c, i) => `<tr data-ci="${i}">
+      <td class="muted">${i + 1}.</td>
+      <td><input class="mono" data-c="start" value="${fmtStamp(c.start)}" style="width:130px"></td>
+      <td><input data-c="title" value="${esc(c.title ?? "")}"></td>
+      <td><button class="btn icon ghost sm" data-a="rm-ch" title="${esc(t("Remove"))}"><svg><use href="#i-x"/></svg></button></td></tr>`).join("")}</tbody></table>`
+      : `<p class="muted small">${esc(t("No chapters."))}</p>`}
+    <div class="row" style="flex-wrap:wrap;margin-top:8px">
+      <button class="btn sm" data-a="add-ch">${esc(t("Add chapter"))}</button>
+      <button class="btn sm" data-a="ch-5min">${esc(t("Every 5 minutes"))}</button>
+      <button class="btn sm ghost" data-a="ch-none">${esc(t("Remove all"))}</button>
+      <button class="btn sm ghost" data-a="ch-reset">${esc(t("Back to the file's chapters"))}</button>
+    </div>`}
+  </div>`;
+}
+
 function renderTracks(body) {
   const list = tracks();
   const src = ed.analysis.files[0].path;
   const externals = ed.edit.externalFiles;
   const p = profileOf(ed.settings.profile);
+  const outputs = p.encodesVideo || p.isRemux;
+  const dur = ed.analysis.files[0].duration || 1;
   body.innerHTML = `
     <div class="row" style="margin-bottom:10px;flex-wrap:wrap">
       <button class="btn sm" data-a="add-ext"><svg><use href="#i-plus"/></svg><span>${esc(t("Add external files…"))}</span></button>
@@ -89,50 +129,76 @@ function renderTracks(body) {
       <span class="muted small">${esc(ed.edit.tracks ? t("Custom track plan.") : t("Automatic plan (from the subtitle mode). Any change makes it custom."))}</span>
     </div>
     ${externals.length ? `<div class="chips" style="margin-bottom:10px">${externals.map(f => `<label title="${esc(f)}">${esc(f.split(/[\\/]/).pop())} <button class="btn icon ghost sm" data-a="rm-ext" data-f="${esc(f)}" title="${esc(t("Remove"))}"><svg><use href="#i-x"/></svg></button></label>`).join("")}</div>` : ""}
-    <p class="muted small">${esc(t("Delays shift a single track (positive = later). The trim is applied afterwards, on the final timeline."))}</p>
+    <p class="muted small">${esc(p.isDemux ? t("Demux: the ticked tracks, attachments and chapters are extracted to separate files.") : t("Delays shift a single track (positive = later). The trim is applied afterwards, on the final timeline."))}</p>
     ${kinds.map(k => {
       const rows = list.map((tp, i) => ({ tp, i })).filter(x => x.tp.kind === k);
-      if (!rows.length) return "";
-      return `<div class="section"><h3><span class="kind ${k}">${esc(kindLabel(k))}</span></h3>
+      if (!rows.length && k !== "attachment") return "";
+      const head = k === "attachment"
+        ? `<h3 class="row" style="justify-content:space-between"><span class="kind ${k}">${esc(kindLabel(k))}</span><button class="btn sm" data-a="add-att"><svg><use href="#i-plus"/></svg><span>${esc(t("Add attachments…"))}</span></button></h3>`
+        : `<h3><span class="kind ${k}">${esc(kindLabel(k))}</span></h3>`;
+      const note = k === "attachment" ? (!rows.length ? `<p class="muted small">${esc(t("No attachments. Fonts, covers or any other file can be added."))}</p>`
+          : p.isDemux ? "" : `<p class="muted small">${esc(t("Untick an attachment of the file to leave it out; added files can be removed with ✕. Attachments need MKV."))}</p>`)
+        : k === "audio" && !p.usesAudio && !p.isDemux ? `<p class="issue warn">${esc(t("This profile has no audio output."))}</p>` : "";
+      if (!rows.length) return `<div class="section">${head}${note}</div>`;
+      return `<div class="section">${head}${note}
       <table class="tracks"><thead><tr>
         <th>${esc(t("Use"))}</th><th>${esc(t("Source"))}</th><th>${esc(t("Stream"))}</th>
-        ${k !== "attachment" ? `<th>${esc(t("Language"))}</th>` : ""}<th class="hide-sm">${esc(t("Title"))}</th>
-        ${k !== "attachment" && k !== "video" ? `<th>${esc(t("Delay (ms)"))}</th>` : k === "video" ? `<th>${esc(t("Delay (ms)"))}</th>` : ""}
+        ${k !== "attachment" ? `<th>${esc(t("Language"))}</th>` : ""}<th class="hide-sm">${esc(k === "attachment" ? t("File name") : t("Title"))}</th>
+        ${k !== "attachment" ? `<th>${esc(t("Delay (ms)"))}</th>` : ""}
+        ${outputs && k !== "attachment" ? `<th>${esc(t("Output"))}</th>` : ""}${outputs && k === "audio" ? `<th>kb/s</th>` : ""}
         ${k === "audio" || k === "subtitle" ? `<th>${esc(t("Default"))}</th><th>${esc(t("Forced"))}</th>` : ""}
         ${k === "subtitle" && p.usesVideoFilters ? `<th>${esc(t("Burn"))}</th>` : ""}
         <th></th></tr></thead><tbody>
         ${rows.map(({ tp, i }) => {
           const si = streamInfo(tp);
           const isSrc = tp.file === src;
+          const standalone = k === "attachment" && tp.stream < 0;
+          const copies = (tp.output ?? "").toLowerCase() === "copy";
           return `<tr class="${tp.include || tp.burn ? "" : "off"}" data-i="${i}">
             <td><input type="checkbox" data-f="include" ${tp.include ? "checked" : ""}></td>
             <td><span class="src-badge ellipsis ${isSrc ? "source" : ""}" title="${esc(tp.file)}">${esc(isSrc ? t("Source") : tp.file.split(/[\\/]/).pop())}</span></td>
             <td><span class="codec">${tp.stream >= 0 ? "#" + tp.stream + " " : ""}${esc(tp.codec ?? si?.codec ?? "")}</span><div class="details">${esc(si?.details ?? "")}</div></td>
             ${k !== "attachment" ? `<td><input class="lang" data-f="language" value="${esc(tp.language ?? "")}" maxlength="3" placeholder="und"></td>` : ""}
-            <td class="hide-sm"><input data-f="title" value="${esc(tp.title ?? "")}"></td>
+            <td class="hide-sm"><input data-f="title" value="${esc(tp.title ?? "")}" ${k === "attachment" && !standalone ? "readonly" : ""}></td>
             ${k !== "attachment" ? `<td><input class="delay" type="number" step="10" data-f="delayMs" value="${tp.delayMs || 0}"></td>` : ""}
+            ${outputs && k !== "attachment" ? `<td><select data-f="output">${outputOptions(k, tp.output)}</select></td>` : ""}
+            ${outputs && k === "audio" ? `<td><input class="delay" type="number" min="0" step="16" data-f="bitrate" value="${tp.bitrate ?? ""}" placeholder="auto" ${copies ? "disabled" : ""} title="${esc(t("Per stereo pair; 0 = job setting"))}"></td>` : ""}
             ${k === "audio" || k === "subtitle" ? `<td><input type="checkbox" data-f="default" ${tp.default ? "checked" : ""}></td><td><input type="checkbox" data-f="forced" ${tp.forced ? "checked" : ""}></td>` : ""}
             ${k === "subtitle" && p.usesVideoFilters ? `<td><input type="radio" name="burn" data-f="burn" ${tp.burn ? "checked" : ""}></td>` : ""}
             <td class="row"><button class="btn icon ghost sm" data-a="up" title="${esc(t("Move up"))}"><svg><use href="#i-up"/></svg></button>
-              <button class="btn icon ghost sm" data-a="down" title="${esc(t("Move down"))}"><svg><use href="#i-down"/></svg></button></td>
+              <button class="btn icon ghost sm" data-a="down" title="${esc(t("Move down"))}"><svg><use href="#i-down"/></svg></button>
+              ${standalone ? `<button class="btn icon ghost sm" data-a="rm-att" title="${esc(t("Remove"))}"><svg><use href="#i-x"/></svg></button>` : ""}</td>
           </tr>`;
         }).join("")}
       </tbody></table>
       ${k === "subtitle" && p.usesVideoFilters && rows.some(r => r.tp.burn) ? `<button class="btn sm ghost" data-a="no-burn">${esc(t("Don't burn any subtitle"))}</button>` : ""}
       </div>`;
-    }).join("")}`;
+    }).join("")}
+    ${p.isKeyframes || p.isImages ? "" : renderChapters()}`;
 
   body.oninput = e => {
+    const ch = e.target.closest("tr[data-ci]");
+    if (ch && e.target.dataset.c === "title") { const l = materializeChapters(); l[+ch.dataset.ci].title = e.target.value || null; return save(); }
     const tr = e.target.closest("tr[data-i]"); const f = e.target.dataset.f;
-    if (!tr || !f || e.target.type === "checkbox" || e.target.type === "radio") return;
+    if (!tr || !f || e.target.type === "checkbox" || e.target.type === "radio" || e.target.tagName === "SELECT") return;
     const tp = materialize()[+tr.dataset.i];
-    tp[f] = f === "delayMs" ? Number(e.target.value) || 0 : e.target.value;
+    tp[f] = f === "delayMs" ? Number(e.target.value) || 0 : f === "bitrate" ? (Number(e.target.value) > 0 ? Number(e.target.value) : null) : e.target.value;
     save();
   };
   body.onchange = e => {
+    if (e.target.dataset.k === "keepChapters") { ed.edit.keepChapters = e.target.checked; return saveAndRender(); }
+    const ch = e.target.closest("tr[data-ci]");
+    if (ch && e.target.dataset.c === "start") {
+      const v = parseStamp(e.target.value), l = materializeChapters(), c = l[+ch.dataset.ci];
+      if (v == null) { e.target.value = fmtStamp(c.start); return; }
+      c.start = Math.max(0, v); l.sort((a, b) => a.start - b.start);
+      return saveAndRender();
+    }
     const tr = e.target.closest("tr[data-i]"); const f = e.target.dataset.f;
-    if (!tr || !f || !(e.target.type === "checkbox" || e.target.type === "radio")) return;
+    if (!tr || !f) return;
     const list2 = materialize(); const tp = list2[+tr.dataset.i];
+    if (e.target.tagName === "SELECT") { tp[f] = e.target.value || null; renderTracks(body); return save(); }
+    if (!(e.target.type === "checkbox" || e.target.type === "radio")) return;
     if (f === "burn") list2.forEach(x => { if (x.kind === "subtitle") x.burn = x === tp; });
     else tp[f] = e.target.checked;
     if (f === "default" && e.target.checked) list2.forEach(x => { if (x !== tp && x.kind === tp.kind) x.default = false; });
@@ -143,6 +209,7 @@ function renderTracks(body) {
     const b = e.target.closest("button[data-a]"); if (!b) return;
     const a = b.dataset.a;
     if (a === "add-ext") return pickExternal();
+    if (a === "add-att") return pickAttachments();
     if (a === "upload-ext") { await saveNow(); return pickFiles(null, ed.id); }
     if (a === "reset") { ed.edit.tracks = null; return saveAndRender(); }
     if (a === "rm-ext") {
@@ -151,9 +218,20 @@ function renderTracks(body) {
       if (ed.edit.tracks) ed.edit.tracks = ed.edit.tracks.filter(x => x.file !== f);
       return saveAndRender();
     }
+    if (a === "add-ch") { const l = chapterList(); addChapter(l.length ? Math.min(l[l.length - 1].start + 300, Math.max(0, dur - 1)) : 0); return saveAndRender(); }
+    if (a === "ch-5min") { const l = []; for (let x = 0; x < Math.max(dur, 1); x += 300) l.push({ start: x, title: chapterTitle(l.length + 1) }); ed.edit.chapters = l; return saveAndRender(); }
+    if (a === "ch-none") { ed.edit.chapters = []; return saveAndRender(); }
+    if (a === "ch-reset") { ed.edit.chapters = null; return saveAndRender(); }
+    if (a === "rm-ch") { materializeChapters().splice(+b.closest("tr[data-ci]").dataset.ci, 1); return saveAndRender(); }
     if (a === "no-burn") { materialize().forEach(x => x.burn = false); renderTracks(body); return save(); }
     const tr = b.closest("tr[data-i]"); if (!tr) return;
     const list2 = materialize(); const i = +tr.dataset.i; const k = list2[i].kind;
+    if (a === "rm-att") {
+      const f = list2[i].file;
+      list2.splice(i, 1);
+      if (!list2.some(x => x.file === f)) ed.edit.externalFiles = ed.edit.externalFiles.filter(x => x !== f);
+      return saveAndRender();
+    }
     const same = list2.map((x, j) => ({ x, j })).filter(o => o.x.kind === k).map(o => o.j);
     const pos = same.indexOf(i), target = same[pos + (a === "up" ? -1 : 1)];
     if (target == null) return;
@@ -162,33 +240,69 @@ function renderTracks(body) {
   });
 }
 
+function pickAttachments() {
+  state.browse.external = true;
+  state.browse.mode = "all";
+  state.browse.onPick = async paths => {
+    const list = materialize();
+    for (const f of paths) {
+      if (list.some(x => x.kind === "attachment" && x.stream < 0 && x.file === f)) continue;
+      const name = f.split(/[\\/]/).pop(), ext = (name.includes(".") ? name.split(".").pop() : "").toLowerCase();
+      const entry = { file: f, stream: -1, kind: "attachment", include: true, title: name, codec: /^(ttf|otf|ttc|otc|woff2?)$/.test(ext) ? "font" : ext, delayMs: 0, default: false, forced: false, burn: false };
+      let last = -1; list.forEach((x, j) => { if (x.kind === "attachment") last = j; });
+      if (last < 0) list.push(entry); else list.splice(last + 1, 0, entry);
+    }
+    await saveNow(true);
+  };
+  document.dispatchEvent(new CustomEvent("kna:browse", { detail: { external: true } }));
+}
+
 function pickExternal() {
   state.browse.external = true;
+  state.browse.mode = null;
   state.browse.onPick = async paths => {
     const files = paths.filter(p => !ed.edit.externalFiles.includes(p));
     ed.edit.externalFiles = [...ed.edit.externalFiles, ...files];
-    if (ed.edit.tracks) {
-      // New streams are offered unchecked; the server adds them to the plan in saveNow.
-    }
     await saveNow(true);
     toast(t("{0} file(s) added: tick the tracks to use.", files.length), "ok");
   };
   document.dispatchEvent(new CustomEvent("kna:browse", { detail: { external: true } }));
 }
 
-// ---------------------------------------------------------------- trim (visual)
+// ---------------------------------------------------------------- trim (visual, several segments)
+// ed.parts = kept segments [{start, end|null}] sorted; ed.seg = the one the handles move.
+// One segment is stored as trimStart/trimEnd, several as edit.segments (joined, or split into jobs).
+function applyParts(dur) {
+  const parts = ed.parts.filter(x => (x.end ?? dur) - x.start >= 0.05).sort((a, b) => a.start - b.start);
+  if (parts.length > 1) { ed.edit.segments = parts.map(x => ({ start: x.start, end: x.end })); ed.edit.trimStart = ed.edit.trimEnd = null; }
+  else {
+    ed.edit.segments = null;
+    const one = parts[0];
+    ed.edit.trimStart = one && one.start > 0.0005 ? one.start : null;
+    ed.edit.trimEnd = one && one.end != null && one.end < dur - 0.0005 ? one.end : null;
+  }
+}
+
 function renderTrim(body) {
   const dur = ed.analysis.files[0].duration || 1;
   const fps = ed.analysis.frameRate || 25;
   const audio = tracks().find(x => x.kind === "audio" && x.include);
   const nThumbs = 12;
-  const s0 = ed.edit.trimStart ?? 0, e0 = ed.edit.trimEnd ?? dur;
+  if (!ed.parts) {
+    ed.parts = ed.edit.segments?.length > 1 ? ed.edit.segments.map(x => ({ ...x })).sort((a, b) => a.start - b.start)
+      : (ed.edit.trimStart != null || ed.edit.trimEnd != null) ? [{ start: ed.edit.trimStart ?? 0, end: ed.edit.trimEnd ?? null }] : [];
+    ed.seg = 0;
+  }
+  ed.seg = Math.min(Math.max(ed.seg ?? 0, 0), Math.max(ed.parts.length - 1, 0));
+  const cur = () => ed.parts[ed.seg];
+  const curStart = () => cur() && cur().start > 0.0005 ? cur().start : null;
+  const curEnd = () => cur()?.end ?? null;
   body.innerHTML = `
     <p class="muted small">${esc(t("The cut is applied last: after imported tracks, delays, filters and burned subtitles."))}</p>
     <div class="timeline" id="tl">
       <div class="thumbs">${Array.from({ length: nThumbs }, (_, i) => `<img loading="lazy" alt="" src="/api/jobs/${ed.id}/preview/thumb?t=${((i + 0.5) * dur / nThumbs).toFixed(2)}&w=192">`).join("")}</div>
       ${audio ? `<div class="wave"><img alt="" src="/api/jobs/${ed.id}/preview/waveform?file=${encodeURIComponent(audio.file)}&stream=${audio.stream}&w=1600&h=100"></div>` : ""}
-      <div class="shade" id="sh-l"></div><div class="shade" id="sh-r"></div>
+      <div id="shades"></div><div id="others"></div>
       <div class="sel-range" id="rng"></div>
       <div class="handle" id="h-start" title="${esc(t("Trim start"))}"></div>
       <div class="handle" id="h-end" title="${esc(t("Trim end"))}"></div>
@@ -196,8 +310,8 @@ function renderTrim(body) {
     </div>
     <div class="time-row"><span>0:00</span><span id="ph-time"></span><span>${fmtTime(dur)}</span></div>
     <div class="trim-controls">
-      <label class="field"><span>${esc(t("Trim start"))}</span><div class="timebox"><input id="in-start" value="${ed.edit.trimStart != null ? fmtStamp(s0) : ""}" placeholder="00:00:00.000"><button class="btn sm" data-a="set-start" title="${esc(t("Set at playhead"))}">⟵</button></div></label>
-      <label class="field"><span>${esc(t("Trim end"))}</span><div class="timebox"><input id="in-end" value="${ed.edit.trimEnd != null ? fmtStamp(e0) : ""}" placeholder="${fmtStamp(dur)}"><button class="btn sm" data-a="set-end" title="${esc(t("Set at playhead"))}">⟵</button></div></label>
+      <label class="field"><span>${esc(t("Trim start"))}</span><div class="timebox"><input id="in-start" placeholder="00:00:00.000"><button class="btn sm" data-a="set-start" title="${esc(t("Set at playhead"))}">⟵</button></div></label>
+      <label class="field"><span>${esc(t("Trim end"))}</span><div class="timebox"><input id="in-end" placeholder="${fmtStamp(dur)}"><button class="btn sm" data-a="set-end" title="${esc(t("Set at playhead"))}">⟵</button></div></label>
       <div class="row" style="justify-content:flex-end;flex-wrap:wrap">
         <button class="btn sm" data-a="nudge" data-d="-1">−1 s</button>
         <button class="btn sm" data-a="nudge" data-d="${(-1 / fps).toFixed(5)}">−1 f</button>
@@ -206,6 +320,7 @@ function renderTrim(body) {
         <button class="btn sm ghost" data-a="clear">${esc(t("No trim"))}</button>
       </div>
     </div>
+    <div id="segs" style="margin-top:8px"></div>
     <div class="row" style="margin:10px 0 6px">
       <div class="segmented" style="max-width:320px"><button type="button" data-a="final" class="${ed.final ? "on" : ""}">${esc(t("Final"))}</button><button type="button" data-a="orig" class="${ed.final ? "" : "on"}">${esc(t("Original"))}</button></div>
       <span class="muted small" id="ph-stamp"></span>
@@ -213,16 +328,37 @@ function renderTrim(body) {
     <div class="preview-wrap" id="pv"><img id="pv-img" alt=""><div class="spinner" id="pv-spin" hidden>${esc(t("Rendering…"))}</div></div>`;
 
   const tl = $("#tl", body);
-  const pos = s => (Math.min(Math.max(s, 0), dur) / dur * 100) + "%";
+  const pct = s => Math.min(Math.max(s, 0), dur) / dur * 100;
+  const pos = s => pct(s) + "%";
+  const renderSegs = () => {
+    const many = ed.parts.length > 1;
+    const total = ed.parts.reduce((a, x) => a + ((x.end ?? dur) - x.start), 0);
+    $("#segs").innerHTML = `
+      ${many ? `<div class="chips" style="margin-bottom:6px">${ed.parts.map((x, i) => `<label class="${i === ed.seg ? "on" : ""}">
+        <button class="btn sm ${i === ed.seg ? "" : "ghost"} mono" data-a="pick-seg" data-s="${i}">${i === ed.seg ? "●" : "○"} ${i + 1}. ${fmtStamp(x.start)} → ${fmtStamp(x.end ?? dur)}</button>
+        <button class="btn icon ghost sm" data-a="rm-seg" data-s="${i}" title="${esc(t("Remove segment"))}"><svg><use href="#i-x"/></svg></button></label>`).join("")}</div>
+        <p class="muted small">${esc(t("{0} segments, {1} in total: they are joined into one file, in time order.", ed.parts.length, fmtTime(total)))}</p>` : ""}
+      <div class="row" style="flex-wrap:wrap">
+        <button class="btn sm" data-a="add-seg" title="${esc(t("Keeps another part of the file: the parts are joined, or become separate jobs."))}"><svg><use href="#i-plus"/></svg><span>${esc(t("Add segment at playhead"))}</span></button>
+        <button class="btn sm" data-a="add-ch-ph">${esc(t("Add chapter at playhead"))}</button>
+        ${many ? `<button class="btn sm" data-a="split">${esc(t("Create {0} jobs in the queue (one per segment)", ed.parts.length))}</button>` : ""}
+      </div>`;
+  };
   const layout = () => {
-    const s = ed.edit.trimStart ?? 0, e = ed.edit.trimEnd ?? dur;
+    const s = curStart() ?? 0, e = curEnd() ?? dur;
     $("#h-start").style.left = pos(s); $("#h-end").style.left = pos(e);
     $("#rng").style.left = pos(s); $("#rng").style.width = ((e - s) / dur * 100) + "%";
-    $("#sh-l").style.left = "0"; $("#sh-l").style.width = pos(s);
-    $("#sh-r").style.left = pos(e); $("#sh-r").style.right = "0";
+    const kept = ed.parts.length ? ed.parts.map(x => [x.start, x.end ?? dur]).sort((a, b) => a[0] - b[0]) : [[0, dur]];
+    let from = 0, shades = "";
+    for (const [a, b] of kept) { if (a > from) shades += `<div class="shade" style="left:${pct(from)}%;width:${pct(a) - pct(from)}%"></div>`; from = Math.max(from, b); }
+    if (from < dur) shades += `<div class="shade" style="left:${pct(from)}%;right:0"></div>`;
+    $("#shades").innerHTML = shades;
+    $("#others").innerHTML = ed.parts.map((x, i) => i === ed.seg ? "" : `<div class="sel-range other" style="left:${pos(x.start)};width:${pct(x.end ?? dur) - pct(x.start)}%"></div>`).join("");
     $("#ph").style.left = pos(ed.playhead);
     $("#ph-time").textContent = fmtStamp(ed.playhead);
     $("#ph-stamp").textContent = `${t("Playhead")}: ${fmtStamp(ed.playhead)}`;
+    $("#in-start").value = curStart() != null ? fmtStamp(curStart()) : "";
+    $("#in-end").value = curEnd() != null ? fmtStamp(curEnd()) : "";
   };
   const loadFrame = debounce(() => {
     const img = $("#pv-img"); if (!img) return;
@@ -231,11 +367,14 @@ function renderTrim(body) {
     img.src = `/api/jobs/${ed.id}/preview/frame?t=${ed.playhead.toFixed(3)}&final=${ed.final}&w=1280&v=${Date.now() % 100000}`;
   }, 250);
   const setTrim = (s, e) => {
-    ed.edit.trimStart = s > 0.0005 ? Math.min(s, dur) : null;
-    ed.edit.trimEnd = e != null && e < dur - 0.0005 ? Math.max(e, (ed.edit.trimStart ?? 0) + 0.05) : null;
-    $("#in-start").value = ed.edit.trimStart != null ? fmtStamp(ed.edit.trimStart) : "";
-    $("#in-end").value = ed.edit.trimEnd != null ? fmtStamp(ed.edit.trimEnd) : "";
-    layout(); save();
+    const ns = s > 0.0005 ? Math.min(s, dur) : null;
+    const ne = e != null && e < dur - 0.0005 ? Math.max(e, (ns ?? 0) + 0.05) : null;
+    const part = { start: ns ?? 0, end: ne };
+    if (!ed.parts.length) { ed.parts.push(part); ed.seg = 0; } else ed.parts[ed.seg] = part;
+    ed.parts.sort((a, b) => a.start - b.start);
+    ed.seg = ed.parts.indexOf(part);
+    applyParts(dur);
+    layout(); renderSegs(); save();
   };
   const timeAt = ev => { const r = tl.getBoundingClientRect(); return Math.min(Math.max((ev.clientX - r.left) / r.width, 0), 1) * dur; };
 
@@ -248,27 +387,41 @@ function renderTrim(body) {
   tl.onpointermove = ev => {
     if (!drag) return;
     const tt = timeAt(ev);
-    if (drag === "start") setTrim(Math.min(tt, (ed.edit.trimEnd ?? dur) - 0.05), ed.edit.trimEnd);
-    else if (drag === "end") setTrim(ed.edit.trimStart ?? 0, Math.max(tt, (ed.edit.trimStart ?? 0) + 0.05));
-    ed.playhead = drag === "play" ? tt : tt;
+    if (drag === "start") setTrim(Math.min(tt, (curEnd() ?? dur) - 0.05), curEnd());
+    else if (drag === "end") setTrim(curStart() ?? 0, Math.max(tt, (curStart() ?? 0) + 0.05));
+    ed.playhead = tt;
     layout(); loadFrame();
   };
   tl.onpointerup = () => { drag = null; };
 
   body.onchange = e => {
-    if (e.target.id === "in-start") setTrim(parseStamp(e.target.value) ?? 0, ed.edit.trimEnd);
-    if (e.target.id === "in-end") setTrim(ed.edit.trimStart ?? 0, parseStamp(e.target.value));
+    if (e.target.id === "in-start") setTrim(parseStamp(e.target.value) ?? 0, curEnd());
+    if (e.target.id === "in-end") setTrim(curStart() ?? 0, parseStamp(e.target.value));
   };
-  body.onclick = e => {
+  body.onclick = guard(async e => {
     const b = e.target.closest("[data-a]"); if (!b) return;
     const a = b.dataset.a;
-    if (a === "set-start") setTrim(ed.playhead, ed.edit.trimEnd);
-    if (a === "set-end") setTrim(ed.edit.trimStart ?? 0, ed.playhead);
-    if (a === "clear") setTrim(0, null);
+    if (a === "set-start") setTrim(ed.playhead, curEnd());
+    if (a === "set-end") setTrim(curStart() ?? 0, ed.playhead);
+    if (a === "clear") { ed.parts = []; ed.seg = 0; applyParts(dur); layout(); renderSegs(); save(); }
     if (a === "nudge") { ed.playhead = Math.min(Math.max(ed.playhead + Number(b.dataset.d), 0), dur); layout(); loadFrame(); }
     if (a === "final" || a === "orig") { ed.final = a === "final"; renderTrim(body); }
-  };
-  layout(); loadFrame();
+    if (a === "pick-seg") { ed.seg = +b.dataset.s; ed.playhead = ed.parts[ed.seg].start; layout(); renderSegs(); loadFrame(); }
+    if (a === "rm-seg") { ed.parts.splice(+b.dataset.s, 1); ed.seg = Math.min(ed.seg, Math.max(ed.parts.length - 1, 0)); applyParts(dur); layout(); renderSegs(); save(); }
+    if (a === "add-seg") {
+      const part = { start: ed.playhead, end: Math.min(dur, ed.playhead + Math.max(1, Math.min(30, dur / 10))) };
+      ed.parts.push(part); ed.parts.sort((x, y) => x.start - y.start); ed.seg = ed.parts.indexOf(part);
+      applyParts(dur); layout(); renderSegs(); save();
+    }
+    if (a === "add-ch-ph") { addChapter(ed.playhead); await saveNow(); toast(t("Chapter added at {0}", fmtStamp(ed.playhead)), "ok"); }
+    if (a === "split") {
+      await saveNow();
+      const ids = await post(`/api/jobs/${ed.id}/split-segments`);
+      toast(t("{0} jobs created: one per segment.", ids.length), "ok");
+      $("#dlg-editor").close();
+    }
+  });
+  layout(); renderSegs(); loadFrame();
 }
 
 // ---------------------------------------------------------------- filters
@@ -411,9 +564,7 @@ function renderOutput(body) {
           <button class="btn sm" data-a="ai-ask"><svg><use href="#i-spark"/></svg><span>${esc(t("Ask"))}</span></button></div>
           <p class="muted small">${esc(t("A vision model looks at a few frames and proposes filters and the upscaler. Nothing changes until you apply it."))}</p>
         </div>
-        ${p.isDemux ? `<div class="section"><h3>${esc(t("Streams to extract"))}</h3>
-          ${src.streams.filter(s => s.kind !== "attachment").map(s => `<label class="check" style="display:flex;margin:4px 0"><input type="checkbox" data-ds="${s.index}" ${!ed.settings.demux.streams || ed.settings.demux.streams.includes(s.index) ? "checked" : ""}>
-            <span class="kind ${s.kind}">${esc(kindLabel(s.kind))}</span> #${s.index} ${esc(s.codec)} ${esc(s.language ?? "")} ${esc(s.title ?? "")}</label>`).join("")}</div>` : ""}
+        ${p.isDemux ? `<p class="issue info">${esc(t("Demux: choose the streams, attachments and chapters to extract in the Tracks tab."))}</p>` : ""}
         <div class="section"><h3>${esc(t("Preset"))}</h3>
           <div class="row"><input id="preset-name" placeholder="${esc(t("Preset name"))}" value="${esc(ed.settings.presetName ?? "")}">
           <button class="btn sm" data-a="save-preset">${esc(t("Save as preset"))}</button></div>
@@ -425,12 +576,6 @@ function renderOutput(body) {
   renderSettingsForm($("#out-form", body), ed.settings, { full: true, allowedContainers: ed.analysis.allowedContainers, onChange: () => saveAndRender() });
   body.onchange = e => {
     if (e.target.id === "out-folder") { ed.edit.outputFolder = e.target.value.trim() || null; save(); }
-    if (e.target.dataset.ds != null) {
-      const all = src.streams.filter(s => s.kind !== "attachment").map(s => s.index);
-      const chosen = $$("[data-ds]", body).filter(c => c.checked).map(c => Number(c.dataset.ds));
-      ed.settings.demux = { ...ed.settings.demux, streams: chosen.length === all.length ? null : chosen };
-      save();
-    }
   };
   body.onclick = guard(async e => {
     const a = e.target.closest("[data-a]")?.dataset.a;

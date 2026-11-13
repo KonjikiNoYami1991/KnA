@@ -326,7 +326,7 @@ $("#btn-copy").onclick = async () => {
 // ---------------------------------------------------------------- file browser (videos, or external files for the editor)
 async function browse(path) {
   const ext = state.browse.external;
-  const r = await api("GET", "/api/browse?" + new URLSearchParams({ ...(path ? { path } : {}), external: ext }));
+  const r = await api("GET", "/api/browse?" + new URLSearchParams({ ...(path ? { path } : {}), external: ext, ...(ext && state.browse.mode ? { mode: state.browse.mode } : {}) }));
   state.browse.path = r.path;
   state.browse.selected.clear();
   const crumbs = [`<button type="button" data-p="">${esc(t("Roots"))}</button>`];
@@ -394,7 +394,7 @@ const openBrowser = guard(async (external = false) => {
 $("#btn-add").onclick = () => openBrowser(false);
 $("#btn-add-empty").onclick = () => openBrowser(false);
 document.addEventListener("kna:browse", e => openBrowser(!!e.detail?.external));
-$("#dlg-browse").addEventListener("close", () => { state.browse.external = false; });
+$("#dlg-browse").addEventListener("close", () => { state.browse.external = false; state.browse.mode = null; });
 
 // ---------------------------------------------------------------- settings dialog
 $("#s-tabs").onclick = e => {

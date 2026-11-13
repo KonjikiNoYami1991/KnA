@@ -95,7 +95,12 @@ its encoder (custom builds first, the one with libfdk_aac preferred). The compon
 | **FSRCNNX** | GPU (libplacebo) | small neural network, live action too |
 | **Neural**: Real-ESRGAN, AnimeVideo v3, any *spandrel* model (.pth/.safetensors) or .onnx | PyTorch on CUDA (RTX 50 included), ROCm, Apple MPS, CPU | best quality |
 
-Shaders and the **AI runtime** (a private Python environment with the PyTorch build that fits your GPU) install from *Components*; the official
+Shaders and the **AI runtime** (a private Python environment with the PyTorch build that fits your GPU) install from *Components*.
+**No Python needed**: when the system has no suitable one (3.11–3.14; the Windows Store stub doesn't count) KnA downloads a **portable Python**
+(python-build-standalone, checksum verified) into its data folder. PyTorch comes from download.pytorch.org with the newest **CUDA build your driver
+supports** (read from `nvidia-smi`; RTX 50 / Blackwell need CUDA 12.8+), ROCm on AMD/Linux, the default build on macOS (MPS), CPU otherwise.
+The component shows the installed and the newest PyTorch (PyPI) and *Update* upgrades it; an environment built on a Python too old for current
+PyTorch is rebuilt. The official
 Real-ESRGAN models download on first use. The `ai/kna_upscale.py` sidecar decodes the source with KnA's filters, runs the model and pipes 16-bit
 RGB frames to the encoding FFmpeg: burned subtitles, audio, chapters, segmented encoding and previews work as usual.
 
@@ -136,17 +141,28 @@ duplicates, unsupported files and huge folders are shown before anything happens
 ### Per-file editor
 Every file in the queue has an editor (✎) with five tabs:
 
-1. **Tracks**: use, remove or replace the source streams; add **external audio, subtitles, fonts and other files**.
+1. **Tracks**: **every** stream of the file is listed (video, audio, subtitles, attachments), in every profile, Demux included;
+   use, remove or replace them and add **external audio, subtitles, fonts and other files**.
    MKV / MKA / MP4 files are analysed and you tick the streams to import. Each track has language, title,
    default/forced flags and its own **delay** (video, audio and subtitles). One subtitle can be burned in.
+   - **Output per track**: copy or convert each stream right from the list: video *copy* (no re-encoding, filters skipped),
+     audio *copy* or AAC / HE-AAC / Opus / AC-3 / E-AC-3 / FLAC / … with its own bitrate, subtitles *copy* or SRT / ASS / WebVTT / mov_text
+     (checked against the container: bitmap subtitles can't become text).
+   - **Attachments**: untick the file's attachments to drop them, **add** fonts, covers or any other file (✕ removes them).
+   - **Chapters**: listed with time and title; add, remove, rename, move, "every 5 minutes", or go back to the file's chapters.
+     Times are on the original timeline: cuts move them automatically.
+   - In **Demux** the ticked tracks, attachments and chapters are the files that get extracted.
 2. **Trim**: visual timeline with thumbnails and audio waveform, draggable handles, frame-accurate nudges.
+   **Several segments**: add as many kept parts as you like (*Add segment at playhead*), then either **join** them into one file
+   (each part is made with the same settings and the parts are joined without re-encoding; chapters follow) or
+   **create N jobs in the queue**, one per segment (outputs named "… - part N").
    **The cut is always applied last**, after imported tracks, delays, filters and burned subtitles, so a subtitle
    imported with a delay stays in sync after the cut.
 3. **Filters**: orientation (rotated phone videos are detected; rotation and mirroring can be corrected),
    deinterlace, crop (with black-border detection), denoise, deband, sharpen, frame rate, custom FFmpeg filters;
    audio gain, loudness normalization (EBU R128), stereo downmix, sample rate.
    **VapourSynth** and **AviSynth+** can be chosen as the frameserver, with ready-made templates; audio produced by the script is supported.
-4. **Output**: every setting of the profile, container, HDR mode, segmented encoding, image or demux options, destination,
+4. **Output**: every setting of the profile, container, HDR mode, segmented encoding, image or demux options (the streams are chosen in *Tracks*), destination,
    "save as preset" and the exact FFmpeg command.
 5. **Preview**: the final frame (filters, burned subtitles, HDR conversion) at any position, plus a 6-second clip of the result.
    All previews (frames, thumbnails, waveform, crop detection, clips) also work with VapourSynth and AviSynth sources.
@@ -167,6 +183,7 @@ Built-in presets, your own presets saved from any file, and a **wizard** that as
   (the desktop app downloads and installs it; the server shows how to update the container or the service).
 - **FFmpeg, ffprobe, dovi_tool and hdr10plus_tool** are installed or updated from their official release pages
   (BtbN FFmpeg builds on Windows/Linux, Homebrew on macOS).
+- **AI runtime**: portable Python when needed, PyTorch (CUDA matched to the driver / ROCm / MPS / CPU), spandrel; update check against PyPI.
 
 ### Desktop integration
 - **Windows "Send to"**: *Settings → Output* adds a "KnA" entry plus one entry per chosen preset (adds the files with that

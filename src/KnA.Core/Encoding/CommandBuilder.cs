@@ -64,6 +64,8 @@ public sealed record CompileContext
     public IReadOnlyDictionary<string, string> PreEncodedAudio { get; init; } = new Dictionary<string, string>();
     /// <summary>What the upscaling methods need (paths found by the runner); null = not available.</summary>
     public UpscaleEnvironment? Upscale { get; init; }
+    /// <summary>FFmetadata file with the edited chapters (written by the runner); null = the source's chapters.</summary>
+    public string? ChaptersFile { get; init; }
 }
 
 /// <summary>Files and programs for GPU shaders and the neural sidecar (see <see cref="Ai.UpscaleSidecar"/>).</summary>
@@ -131,7 +133,7 @@ public static class CommandBuilder
         var preview = ctx.Preview;
         var chunk = ctx.Chunk;
         var concat = ctx.Concat;
-        bool chunkedJob = s.Chunks.Enabled && p.EncodesVideo && preview is null;
+        bool chunkedJob = s.Chunks.Enabled && p.EncodesVideo && preview is null && !ctx.Edit.IsMultiSegment;
 
         // ------------------------------------------------------------ container
         string container = s.EffectiveContainer;
@@ -149,7 +151,13 @@ public static class CommandBuilder
             return Fail(Containers.Error("No video track selected."), tracks, container);
 
         bool copyVideo = preview is null && chunk is null && (concat is not null || p.Kind == ProfileKind.RemuxMkv
-                         || (p.Kind == ProfileKind.RemuxMp4 && Containers.AcceptsVideo("mp4", video.CodecName)));
+                         || (p.Kind == ProfileKind.RemuxMp4 && Containers.AcceptsVideo("mp4", video.CodecName))
+                         || (videoTrack.CopyVideo && (p.EncodesVideo || p.IsRemux)));
+        if (videoTrack.CopyVideo && copyVideo && p.EncodesVideo && concat is null)
+        {
+            issues.Add(Containers.Warning("The video is copied as it is (chosen in the track list): resolution, filters and burned subtitles are not applied."));
+            chunkedJob = false;
+        }
         var encodeCodec = p.Kind == ProfileKind.RemuxMp4 ? VideoCodec.H264 : s.EffectiveCodec;
         if (copyVideo && concat is null && !Containers.AcceptsVideo(container, video.CodecName))
             issues.Add(Containers.Error("The {0} video cannot be stored in {1}.", video.CodecName, container.ToUpperInvariant()));
@@ -390,7 +398,7 @@ public static class CommandBuilder
                     issues.Add(Containers.Warning("Audio track {0} of {1} not found: skipped.", t.Stream, Path.GetFileName(t.File)));
                     continue;
                 }
-                var aplan = AudioPlanner.Plan(ast, s, restOnly ? "mkv" : container, ctx.Options.AudioEncoders);
+                var aplan = AudioPlanner.Plan(ast, AudioPlanner.ForTrack(t, s), restOnly ? "mkv" : container, ctx.Options.AudioEncoders);
                 if (aplan.Issue is { } ai) issues.Add(ai);
                 if (ctx.PreEncodedAudio.GetValueOrDefault($"{t.File}|{t.Stream}") is { } pre)
                 {
@@ -412,6 +420,14 @@ public static class CommandBuilder
             {
                 var sst = TrackPlanner.Lookup(t, media) as SubtitleStream;
                 var codec = Containers.SubtitleCodec(restOnly ? "mkv" : container, sst, t.Codec);
+                if (t.Output is { Length: > 0 } wanted)
+                {
+                    var chosen = Containers.ChosenSubtitleCodec(restOnly ? "mkv" : container, sst, t.Codec, wanted);
+                    if (chosen is null)
+                        issues.Add(Containers.Warning("Subtitle track \"{0}\": {1} is not possible here, the automatic choice is used.",
+                            t.Title ?? t.Language ?? t.Stream.ToString(CultureInfo.InvariantCulture), wanted));
+                    else codec = chosen;
+                }
                 if (codec is null)
                 {
                     issues.Add(Containers.Warning("Subtitle track \"{0}\" ({1}) cannot be stored in {2}: skipped.",
@@ -436,13 +452,21 @@ public static class CommandBuilder
                 if (attOut > 0) body.AddRange(["-c:t", "copy"]);
                 foreach (var t in tracks.Where(t => t.Include && t.Kind == "attachment" && t.Stream < 0))
                 {
-                    body.AddRange(["-attach", t.File, $"-metadata:s:{outIndex.ToString(CultureInfo.InvariantCulture)}", "mimetype=" + FontMime(t.File)]);
+                    body.AddRange(["-attach", t.File, $"-metadata:s:{outIndex.ToString(CultureInfo.InvariantCulture)}", "mimetype=" + TrackPlanner.MimeType(t.File)]);
+                    if (!string.IsNullOrWhiteSpace(t.Title) && t.Title != Path.GetFileName(t.File))
+                        body.AddRange([$"-metadata:s:{outIndex.ToString(CultureInfo.InvariantCulture)}", "filename=" + t.Title]);
                     outIndex++;
                 }
             }
 
             bool scriptSource = Frameserver.IsVapourSynth(ctx.Source.Path);
-            body.AddRange(["-map_chapters", ctx.Edit.KeepChapters && !scriptSource ? "0" : "-1"]);
+            if (ctx.Edit.KeepChapters && ctx.ChaptersFile is { } chaptersFile)
+            {
+                int ci = inputs.Get(chaptersFile, 0);
+                inputs.AddOptions(ci, ["-f", "ffmetadata"]);
+                body.AddRange(["-map_chapters", ci.ToString(CultureInfo.InvariantCulture)]);
+            }
+            else body.AddRange(["-map_chapters", ctx.Edit.KeepChapters && !scriptSource ? "0" : "-1"]);
             // Transport streams carry service/provider tags that some muxers reject: keep only our own.
             body.AddRange(["-map_metadata", ctx.Source.IsTransportStream || scriptSource ? "-1" : "0"]);
             body.AddRange(["-metadata", $"comment=Encoded with KnA - Konjiki no Autoencoder {ctx.Options.AppVersion}"]);
@@ -496,7 +520,22 @@ public static class CommandBuilder
                 TimeSpan.FromSeconds(preview.Kind == PreviewKind.Clip ? preview.ClipSeconds : 0)) { Pipe = inputs.Pipe };
         }
 
-        if (TrimArgs(ctx.Edit, ctx.Source.Duration, issues) is { } trim)
+        if (ctx.Edit.IsMultiSegment)
+        {
+            // Several kept parts: the runner encodes each part with this same command and joins them.
+            var parts = ctx.Edit.KeptParts(ctx.Source.Duration.TotalSeconds);
+            if (parts.Count == 0) issues.Add(Containers.Error("The trim end must be after the start."));
+            else if (p.IsImages) issues.Add(Containers.Error("Several cut segments can't be joined in this profile: split them into separate jobs."));
+            else
+            {
+                duration = TimeSpan.FromSeconds(parts.Sum(x => x.End - x.Start));
+                for (int i = 1; i < parts.Count; i++)
+                    if (parts[i].Start < parts[i - 1].End - 0.0005) { issues.Add(Containers.Error("The cut segments overlap.")); break; }
+                if (copyVideo && concat is null) issues.Add(Containers.Warning("Copied video can only be cut cleanly on keyframes: the first frames may look broken."));
+                if (s.Chunks.Enabled && p.EncodesVideo) issues.Add(Containers.Warning("With several cut segments the chunked encoding is not used."));
+            }
+        }
+        else if (TrimArgs(ctx.Edit, ctx.Source.Duration, issues) is { } trim)
         {
             a2.AddRange(trim.Args);
             duration = trim.Duration;
@@ -524,7 +563,7 @@ public static class CommandBuilder
         string output;
         if (p.IsImages)
         {
-            var folder = ctx.ForcedOutputPath ?? OutputNaming.ImageFolder(ctx.Source.Path, ctx.Edit.OutputFolder ?? ctx.Options.OutputDirectory);
+            var folder = ctx.ForcedOutputPath ?? OutputNaming.Folder(ctx.Source.Path, L.T("Images") + (ctx.Edit.PartLabel is { Length: > 0 } pl ? " " + pl : ""), ctx.Edit.OutputFolder ?? ctx.Options.OutputDirectory);
             output = Path.Combine(folder, KnA.Core.Media.Discs.DiscSource.DisplayName(ctx.Source.Path).Replace("%", "%%") + "_%06d." + container);
             a2.AddRange(["-f", "image2"]);
             if (s.Images.Mode is ImageMode.SceneChanges or ImageMode.Interval or ImageMode.Count) a2.AddRange(["-fps_mode", "vfr"]);
@@ -533,7 +572,8 @@ public static class CommandBuilder
         }
         else
         {
-            output = ctx.ForcedOutputPath ?? OutputNaming.Build(ctx.Source.Path, s, container, ctx.Edit.OutputFolder ?? ctx.Options.OutputDirectory, ctx.Options.NameTemplate);
+            output = ctx.ForcedOutputPath ?? OutputNaming.Build(ctx.Source.Path, s, container, ctx.Edit.OutputFolder ?? ctx.Options.OutputDirectory,
+                OutputNaming.WithPart(ctx.Options.NameTemplate, ctx.Edit.PartLabel));
             a2.Add(output);
         }
         return new CompiledJob(new EncodePlan(a2, output), issues, hdr, tracks, container, duration) { Pipe = inputs.Pipe };
@@ -549,7 +589,7 @@ public static class CommandBuilder
     /// <summary>Output-side trim (after every filter and import). Returns null when not trimmed.</summary>
     public static (List<string> Args, TimeSpan Duration)? TrimArgs(JobEdit edit, TimeSpan sourceDuration, List<ValidationIssue> issues)
     {
-        if (!edit.IsTrimmed) return null;
+        if (!edit.IsTrimmed || edit.IsMultiSegment) return null;
         double start = Math.Max(0, edit.TrimStart ?? 0);
         double end = edit.TrimEnd is > 0 and var e ? e : sourceDuration.TotalSeconds;
         if (sourceDuration > TimeSpan.Zero) end = Math.Min(end, sourceDuration.TotalSeconds);
@@ -635,14 +675,6 @@ public static class CommandBuilder
         };
     }
 
-    private static string FontMime(string path) => Path.GetExtension(path).ToLowerInvariant() switch
-    {
-        ".otf" => "application/vnd.ms-opentype",
-        ".woff" => "font/woff",
-        ".woff2" => "font/woff2",
-        _ => "application/x-truetype-font",
-    };
-
     private static CompiledJob Fail(ValidationIssue issue, IReadOnlyList<TrackPlan> tracks, string container) =>
         new(new EncodePlan([], ""), [issue], new HdrPlan(), tracks, container, TimeSpan.Zero);
 
@@ -698,6 +730,10 @@ public static class OutputNaming
     }
 
     public static string ImageFolder(string source, string? outputDirectory) => Folder(source, L.T("Images"), outputDirectory);
+
+    /// <summary>The name template with the part label of a split job appended ("… - part 2").</summary>
+    public static string? WithPart(string? template, string? part) =>
+        string.IsNullOrWhiteSpace(part) ? template : (string.IsNullOrWhiteSpace(template) ? DefaultTemplate : template) + " - " + part;
 
     public static string Safe(string text) =>
         string.Concat(text.Select(c => Path.GetInvalidFileNameChars().Contains(c) || c is '/' or '\\' or ':' or '*' or '?' or '"' or '<' or '>' or '|' ? '-' : c)).Trim();

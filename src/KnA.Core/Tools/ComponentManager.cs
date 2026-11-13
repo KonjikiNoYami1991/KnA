@@ -98,13 +98,27 @@ public sealed class ComponentManager(string dataDirectory)
         bool fsr = File.Exists(Path.Combine(shaders, Ai.Upscalers.FsrcnnxShader));
         list.Add(new ComponentStatus("fsrcnnx", "FSRCNNX shader", L.T("Neural ×2 upscaling shader (igv/FSRCNN-TensorFlow). Runs on the GPU through libplacebo."),
             fsr && state.TryGetValue("fsrcnnx", out var fv) ? fv.Version : null, fsr ? shaders : null, fsr, null, false, true, null));
-        var venvPy = Path.Combine(dataDirectory, "ai", "venv", OperatingSystem.IsWindows() ? "Scripts" : "bin", FfmpegLocator.ExeName("python"));
-        bool venv = File.Exists(venvPy);
-        var sysPy = FfmpegLocator.LocateTool(["python3", "python"], dataDirectory);
-        list.Add(new ComponentStatus("ai-runtime", L.T("AI upscaler (Python + PyTorch)"),
-            L.T("Private Python environment with PyTorch ({0}) and spandrel for the neural models. Several GB.", TorchFlavor().Label),
-            venv && state.TryGetValue("ai-runtime", out var rv) ? rv.Version : null, venv ? venvPy : null, venv, null, false, sysPy is not null || venv,
-            sysPy is null && !venv ? L.T("Install Python 3.10+ first (python.org, your package manager, or the Docker image).") : null));
+        {
+            var venvPy = VenvPython(dataDirectory);
+            bool venv = File.Exists(venvPy);
+            string? installed = venv && state.TryGetValue("ai-runtime", out var rv) ? rv.Version : venv ? "?" : null;
+            string? latest = null, note = null;
+            bool portable = PortablePythonTriple() is not null;
+            if (online)
+            {
+                latest = await LatestTorchAsync(ct);
+                if (latest is not null) latest = "torch " + latest;
+            }
+            var installedTorch = installed is null ? null : System.Text.RegularExpressions.Regex.Match(installed, @"torch (\d+(\.\d+)+)") is { Success: true } m ? m.Groups[1].Value : null;
+            bool update = venv && latest is not null && (installedTorch is null || ReleaseInfo.ParseVersion(latest[6..]) > ReleaseInfo.ParseVersion(installedTorch));
+            if (!venv && !portable && FfmpegLocator.LocateTool(["python3", "python"], dataDirectory) is null)
+                note = L.T("Install Python 3.11–3.14 first (python.org, your package manager, or the Docker image).");
+            else if (!venv)
+                note = portable ? L.T("Python is not needed: KnA downloads a portable copy when the system has none (3.11–3.14).") : null;
+            list.Add(new ComponentStatus("ai-runtime", L.T("AI upscaler (Python + PyTorch)"),
+                L.T("Private Python environment with PyTorch ({0}) and spandrel for the neural models. Several GB.", (await TorchFlavorAsync(ct, online: false)).Label),
+                installed, venv ? venvPy : null, venv, latest, update, true, note));
+        }
 
         // ---------------------------------------------------------------- quietvoid tools
         foreach (var (id, name, desc, path) in new[]
@@ -138,7 +152,7 @@ public sealed class ComponentManager(string dataDirectory)
             else if (id == "fdkaac") await InstallFdkaacAsync(temp, progress, log, ct);
             else if (id == "anime4k") await InstallAnime4KAsync(temp, progress, log, ct);
             else if (id == "fsrcnnx") await InstallFsrcnnxAsync(progress, log, ct);
-            else if (id == "ai-runtime") await InstallAiRuntimeAsync(log, ct);
+            else if (id == "ai-runtime") await InstallAiRuntimeAsync(temp, progress, log, ct);
             else if (id is "dovi_tool" or "hdr10plus_tool") await InstallQuietvoidAsync(id, temp, progress, log, ct);
             else throw new ArgumentException("Unknown component " + id);
         }
@@ -315,22 +329,209 @@ public sealed class ComponentManager(string dataDirectory)
         SaveState("fsrcnnx", rel.Tag);
     }
 
-    /// <summary>Which PyTorch build fits this machine: CUDA (NVIDIA, incl. RTX 50 / Blackwell), ROCm (AMD, Linux), default (Apple MPS / CPU).</summary>
-    public static (string Label, string? IndexUrl) TorchFlavor()
+    // ---------------------------------------------------------------- AI runtime (Python + PyTorch)
+
+    private const string PythonRepo = "astral-sh/python-build-standalone";
+    /// <summary>Python minor versions KnA accepts for PyTorch, best first (portable copy: the first one found).</summary>
+    private static readonly int[] PythonMinors = [12, 13, 11, 14];
+
+    /// <summary>Target triple of the portable Python builds (python-build-standalone) for this machine, null when there is none.</summary>
+    public static string? PortablePythonTriple() => (OperatingSystem.IsWindows(), OperatingSystem.IsMacOS(), OperatingSystem.IsLinux(), Arch) switch
     {
-        if (OperatingSystem.IsMacOS()) return ("Apple MPS", null);
-        bool nvidia = FfmpegLocator.LocateTool(["nvidia-smi"], Path.GetTempPath()) is not null || File.Exists("/proc/driver/nvidia/version");
-        if (nvidia) return ("CUDA 12.8", "https://download.pytorch.org/whl/cu128");
-        if (OperatingSystem.IsLinux() && (Directory.Exists("/opt/rocm") || File.Exists("/dev/kfd"))) return ("ROCm 6.4", "https://download.pytorch.org/whl/rocm6.4");
-        return ("CPU", OperatingSystem.IsLinux() || OperatingSystem.IsWindows() ? "https://download.pytorch.org/whl/cpu" : null);
+        (true, _, _, "x64") => "x86_64-pc-windows-msvc",
+        (true, _, _, "arm64") => "aarch64-pc-windows-msvc",
+        (_, true, _, "arm64") => "aarch64-apple-darwin",
+        (_, true, _, "x64") => "x86_64-apple-darwin",
+        (_, _, true, "x64") => "x86_64-unknown-linux-gnu",
+        (_, _, true, "arm64") => "aarch64-unknown-linux-gnu",
+        _ => null,
+    };
+
+    /// <summary>KnA's own portable Python (data folder), whether installed or not.</summary>
+    public static string PortablePython(string dataDirectory) => OperatingSystem.IsWindows()
+        ? Path.Combine(dataDirectory, "ai", "python", "python.exe")
+        : Path.Combine(dataDirectory, "ai", "python", "bin", "python3");
+
+    public static string VenvPython(string dataDirectory) =>
+        Path.Combine(dataDirectory, "ai", "venv", OperatingSystem.IsWindows() ? "Scripts" : "bin", FfmpegLocator.ExeName("python"));
+
+    /// <summary>
+    /// Picks "cpython-3.12.N+TAG-triple-install_only.tar.gz" (newest patch of the preferred minor) from release file names.
+    /// </summary>
+    public static string? PickPortablePython(IEnumerable<string> names, string triple)
+    {
+        var rx = new System.Text.RegularExpressions.Regex(
+            $@"^cpython-3\.(\d+)\.(\d+)\+\d+-{System.Text.RegularExpressions.Regex.Escape(triple)}-install_only\.tar\.gz$");
+        var found = names.Select(n => (n, m: rx.Match(n))).Where(x => x.m.Success)
+            .Select(x => (x.n, minor: int.Parse(x.m.Groups[1].Value, System.Globalization.CultureInfo.InvariantCulture),
+                patch: int.Parse(x.m.Groups[2].Value, System.Globalization.CultureInfo.InvariantCulture))).ToList();
+        foreach (var minor in PythonMinors)
+            if (found.Where(x => x.minor == minor).OrderByDescending(x => x.patch).FirstOrDefault() is { n: { } name }) return name;
+        return null;
     }
 
-    private async Task InstallAiRuntimeAsync(IProgress<string>? log, CancellationToken ct)
+    /// <summary>"3.12" of a Python interpreter, null when it does not start (e.g. the Windows Store stub).</summary>
+    public static async Task<Version?> PythonVersionAsync(string python, CancellationToken ct)
     {
-        var py = FfmpegLocator.LocateTool(["python3", "python"], dataDirectory)
-                 ?? throw new InvalidOperationException(L.T("Install Python 3.10+ first (python.org, your package manager, or the Docker image)."));
+        if (OperatingSystem.IsWindows() && python.Contains("WindowsApps", StringComparison.OrdinalIgnoreCase)) return null;
+        try
+        {
+            var r = await ProcessRunner.RunAsync(python, ["-c", "import sys; print('%d.%d' % sys.version_info[:2])"], timeout: TimeSpan.FromSeconds(20), ct: ct);
+            return r.ExitCode == 0 && Version.TryParse(r.StdOut.Trim(), out var v) ? v : null;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException) { return null; }
+    }
+
+    private static bool Suitable(Version? v) => v is { Major: 3 } && PythonMinors.Contains(v.Minor);
+
+    /// <summary>Downloads the portable Python (python-build-standalone, with pip and venv) into the data folder.</summary>
+    private async Task<string> InstallPortablePythonAsync(string temp, IProgress<double>? progress, IProgress<string>? log, CancellationToken ct)
+    {
+        var triple = PortablePythonTriple() ?? throw new PlatformNotSupportedException(L.T("Install Python 3.11–3.14 first (python.org, your package manager, or the Docker image)."));
+        string? tag = null, name = null, sha = null;
+        // The release has hundreds of files: the API may not list them all, SHA256SUMS always does (and gives the checksum).
+        try
+        {
+            var rel = await GitHubReleases.LatestAsync(PythonRepo, ct);
+            tag = rel?.Tag;
+            if (rel is not null) name = PickPortablePython(rel.Assets.Select(a => a.Name), triple);
+        }
+        catch (Exception ex) when (ex is HttpRequestException or JsonException or InvalidOperationException or TaskCanceledException) { log?.Report(ex.Message); }
+        if (tag is null)
+        {
+            using var latest = await GitHubReleases.Client.GetAsync($"https://raw.githubusercontent.com/{PythonRepo}/latest-release/latest-release.json", ct);
+            latest.EnsureSuccessStatusCode();
+            using var doc = JsonDocument.Parse(await latest.Content.ReadAsStringAsync(ct));
+            tag = doc.RootElement.TryGetProperty("tag", out var t) ? t.ToString() : throw new InvalidOperationException(L.T("No release found for {0}.", "Python"));
+        }
+        var baseUrl = $"https://github.com/{PythonRepo}/releases/download/{tag}/";
+        try
+        {
+            var sums = await GitHubReleases.Client.GetStringAsync(baseUrl + "SHA256SUMS", ct);
+            var lines = sums.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                .Select(l => l.Split((char[])[' ', '\t'], 2, StringSplitOptions.RemoveEmptyEntries)).Where(x => x.Length == 2)
+                .ToDictionary(x => x[1].TrimStart('*'), x => x[0], StringComparer.Ordinal);
+            name ??= PickPortablePython(lines.Keys, triple);
+            if (name is not null) sha = lines.GetValueOrDefault(name);
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException) { log?.Report(ex.Message); }
+        if (name is null) throw new InvalidOperationException(L.T("No download for this platform in {0} {1}.", "python-build-standalone", tag));
+
+        var archive = Path.Combine(temp, name);
+        log?.Report(L.T("Downloading {0}…", name));
+        await GitHubReleases.DownloadAsync(baseUrl + Uri.EscapeDataString(name), archive, progress, ct);
+        if (sha is not null)
+        {
+            await using var fs = File.OpenRead(archive);
+            var hash = Convert.ToHexString(await System.Security.Cryptography.SHA256.HashDataAsync(fs, ct));
+            if (!hash.Equals(sha, StringComparison.OrdinalIgnoreCase)) throw new InvalidDataException(L.T("Checksum mismatch for {0}.", name));
+        }
+        var extracted = Path.Combine(temp, "py");
+        await ExtractAsync(archive, extracted, ct);
+        var root = Path.Combine(extracted, "python");
+        if (!Directory.Exists(root)) throw new InvalidDataException(L.T("The archive did not contain {0}.", "python"));
+        var target = Path.Combine(dataDirectory, "ai", "python");
+        if (Directory.Exists(target)) Directory.Delete(target, true);
+        Directory.CreateDirectory(Path.GetDirectoryName(target)!);
+        Directory.Move(root, target);
+        var exe = PortablePython(dataDirectory);
+        if (!OperatingSystem.IsWindows() && File.Exists(exe))
+            File.SetUnixFileMode(exe, File.GetUnixFileMode(exe) | UnixFileMode.UserExecute | UnixFileMode.GroupExecute | UnixFileMode.OtherExecute);
+        var v = await PythonVersionAsync(exe, ct) ?? throw new InvalidOperationException(L.T("The installed program does not start: {0}", exe));
+        log?.Report(L.T("Portable Python {0} ready.", v));
+        return exe;
+    }
+
+    private static readonly string[] FallbackCuda = ["cu130", "cu128", "cu126"];
+    private static readonly string[] FallbackRocm = ["rocm7.0", "rocm6.4"];
+    private const string TorchIndex = "https://download.pytorch.org/whl/";
+
+    /// <summary>
+    /// Which PyTorch build fits this machine: CUDA (NVIDIA, the newest the driver supports; RTX 50 / Blackwell need 12.8+),
+    /// ROCm (AMD, Linux), default PyPI build (Apple MPS) or CPU. IndexUrl = pip index, null = PyPI.
+    /// Online, the CUDA/ROCm builds of the newest PyTorch are read from download.pytorch.org; offline a known list is used.
+    /// </summary>
+    public static async Task<(string Label, string? IndexUrl)> TorchFlavorAsync(CancellationToken ct, bool online = true)
+    {
+        if (OperatingSystem.IsMacOS()) return ("Apple MPS", null);
+        var smi = FfmpegLocator.LocateTool(["nvidia-smi"], Path.GetTempPath());
+        bool nvidia = smi is not null || File.Exists("/proc/driver/nvidia/version");
+        if (nvidia)
+        {
+            // "CUDA Version: 12.8" in nvidia-smi's header is the newest CUDA runtime the driver can run.
+            double? driverCuda = null;
+            if (smi is not null)
+            {
+                try
+                {
+                    var r = await ProcessRunner.RunAsync(smi, [], timeout: TimeSpan.FromSeconds(15), ct: ct);
+                    var m = System.Text.RegularExpressions.Regex.Match(r.StdOut, @"CUDA Version:\s*(\d+)\.(\d+)");
+                    if (m.Success) driverCuda = int.Parse(m.Groups[1].Value, System.Globalization.CultureInfo.InvariantCulture) + int.Parse(m.Groups[2].Value, System.Globalization.CultureInfo.InvariantCulture) / 10.0;
+                }
+                catch (Exception ex) when (ex is not OperationCanceledException) { }
+            }
+            var tags = (online ? await TorchTagsAsync("cu", ct) : null) ?? [.. FallbackCuda];
+            var fit = tags.Select(t => (t, v: CudaOf(t))).Where(x => driverCuda is null || x.v <= driverCuda + 1e-6)
+                .OrderByDescending(x => x.v).Select(x => x.t).FirstOrDefault() ?? tags.OrderBy(CudaOf).First();
+            return ($"CUDA {CudaOf(fit):0.0}", TorchIndex + fit);
+        }
+        if (OperatingSystem.IsLinux() && (Directory.Exists("/opt/rocm") || File.Exists("/dev/kfd")))
+        {
+            var tags = (online ? await TorchTagsAsync("rocm", ct) : null) ?? [.. FallbackRocm];
+            var best = tags.OrderByDescending(t => Version.TryParse(t[4..], out var v) ? v : new Version(0, 0)).First();
+            return ("ROCm " + best[4..], TorchIndex + best);
+        }
+        return ("CPU", OperatingSystem.IsLinux() || OperatingSystem.IsWindows() ? TorchIndex + "cpu" : null);
+    }
+
+    public static double CudaOf(string tag) =>
+        int.TryParse(tag.AsSpan(2), System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var n) ? n / 10 + n % 10 / 10.0 : 0;
+
+    /// <summary>"cu130"/"rocm6.4" builds of the newest PyTorch on download.pytorch.org for this platform (null when unreachable).</summary>
+    private static async Task<List<string>?> TorchTagsAsync(string kind, CancellationToken ct)
+    {
+        try
+        {
+            using var cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            cts.CancelAfter(TimeSpan.FromSeconds(25));
+            var html = await GitHubReleases.Client.GetStringAsync(TorchIndex + "torch/", cts.Token);
+            var plat = OperatingSystem.IsWindows() ? (Arch == "arm64" ? "win_arm64" : "win_amd64") : Arch == "arm64" ? "aarch64" : "x86_64";
+            var tags = ParseTorchTags(html, kind, plat);
+            return tags.Count == 0 ? null : tags;
+        }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or FormatException) { return null; }
+    }
+
+    /// <summary>Builds ("cu130", "rocm6.4"…) of the newest PyTorch listed in the download.pytorch.org index page for a platform.</summary>
+    public static List<string> ParseTorchTags(string html, string kind, string platform)
+    {
+        var rx = new System.Text.RegularExpressions.Regex($@"torch-(\d+\.\d+\.\d+)(?:%2B|\+)({kind}\d+(?:\.\d+)*)-cp3\d+-cp3\d+t?-[^""<#]*{platform}[^""<#]*\.whl");
+        var all = rx.Matches(html).Select(m => (v: Version.Parse(m.Groups[1].Value), tag: m.Groups[2].Value)).ToList();
+        if (all.Count == 0) return [];
+        var newest = all.Max(x => x.v)!;
+        return [.. all.Where(x => x.v == newest).Select(x => x.tag).Distinct()];
+    }
+
+    /// <summary>Newest PyTorch on PyPI (null when offline).</summary>
+    public static async Task<string?> LatestTorchAsync(CancellationToken ct)
+    {
+        try
+        {
+            using var doc = JsonDocument.Parse(await GitHubReleases.Client.GetStringAsync("https://pypi.org/pypi/torch/json", ct));
+            return doc.RootElement.GetProperty("info").GetProperty("version").GetString();
+        }
+        catch (Exception ex) when (ex is HttpRequestException or JsonException or TaskCanceledException or KeyNotFoundException or InvalidOperationException) { return null; }
+    }
+
+    /// <summary>
+    /// Private AI environment: KnA's portable Python (downloaded when no suitable 3.11–3.14 is installed, or always
+    /// when it is already there) → venv in the data folder → PyTorch for the GPU found → spandrel + numpy.
+    /// Running it again upgrades everything (and rebuilds the venv when its Python is too old for current PyTorch).
+    /// </summary>
+    private async Task InstallAiRuntimeAsync(string temp, IProgress<double>? progress, IProgress<string>? log, CancellationToken ct)
+    {
         var venv = Path.Combine(dataDirectory, "ai", "venv");
-        var vpy = Path.Combine(venv, OperatingSystem.IsWindows() ? "Scripts" : "bin", FfmpegLocator.ExeName("python"));
+        var vpy = VenvPython(dataDirectory);
         async Task Run(string exe, string[] args, int minutes)
         {
             log?.Report("> " + Path.GetFileName(exe) + " " + string.Join(' ', args));
@@ -338,20 +539,58 @@ public sealed class ComponentManager(string dataDirectory)
             foreach (var line in (r.StdOut + r.StdErr).Split('\n').Where(l => l.Trim().Length > 0).TakeLast(5)) log?.Report(line.Trim());
             if (r.ExitCode != 0) throw new InvalidOperationException(L.T("{0} failed: {1}", Path.GetFileName(exe), (r.StdErr + r.StdOut).Trim().Split('\n').LastOrDefault()));
         }
-        if (!File.Exists(vpy)) await Run(py, ["-m", "venv", venv], 5);
+
+        // 1. Python: the portable copy, else a suitable system one, else download the portable copy.
+        string? basePy = File.Exists(PortablePython(dataDirectory)) && Suitable(await PythonVersionAsync(PortablePython(dataDirectory), ct)) ? PortablePython(dataDirectory) : null;
+        if (basePy is null)
+        {
+            foreach (var candidate in new[] { FfmpegLocator.LocateTool(["python3"], dataDirectory), FfmpegLocator.LocateTool(["python"], dataDirectory) }.OfType<string>().Distinct())
+            {
+                var v = await PythonVersionAsync(candidate, ct);
+                if (Suitable(v)) { basePy = candidate; log?.Report(L.T("Using the system Python {0}: {1}", v, candidate)); break; }
+                if (v is not null) log?.Report(L.T("Python {0} ({1}) is not supported by current PyTorch: KnA downloads its own.", v, candidate));
+            }
+        }
+        if (basePy is null && PortablePythonTriple() is not null)
+        {
+            log?.Report(L.T("Downloading a portable Python (no installation, stays in KnA's data folder)…"));
+            basePy = await InstallPortablePythonAsync(temp, progress, log, ct);
+        }
+        if (basePy is null) throw new InvalidOperationException(L.T("Install Python 3.11–3.14 first (python.org, your package manager, or the Docker image)."));
+
+        // 2. venv (rebuilt when its Python is missing or too old).
+        if (File.Exists(vpy) && !Suitable(await PythonVersionAsync(vpy, ct)))
+        {
+            log?.Report(L.T("The AI environment uses an unsupported Python: rebuilding it."));
+            Directory.Delete(venv, true);
+        }
+        if (!File.Exists(vpy)) await Run(basePy, ["-m", "venv", venv], 10);
         await Run(vpy, ["-m", "pip", "install", "--upgrade", "pip"], 10);
-        var (label, index) = TorchFlavor();
+
+        // 3. PyTorch for this GPU (newest CUDA the driver supports), falling back to PyPI.
+        var (label, index) = await TorchFlavorAsync(ct);
         log?.Report(L.T("Installing PyTorch ({0}): this can take a while…", label));
-        try { await Run(vpy, index is null ? ["-m", "pip", "install", "torch"] : ["-m", "pip", "install", "torch", "--index-url", index], 60); }
+        try { await Run(vpy, index is null ? ["-m", "pip", "install", "--upgrade", "torch"] : ["-m", "pip", "install", "--upgrade", "torch", "--index-url", index], 90); }
         catch (InvalidOperationException) when (index is not null)
         {
             log?.Report(L.T("The PyTorch index is not reachable: trying PyPI."));
-            await Run(vpy, ["-m", "pip", "install", "torch"], 60);
+            await Run(vpy, ["-m", "pip", "install", "--upgrade", "torch"], 90);
         }
-        await Run(vpy, ["-m", "pip", "install", "spandrel", "numpy"], 20);
-        var check = await ProcessRunner.RunAsync(vpy, ["-c", "import torch, spandrel; print(torch.__version__)"], timeout: TimeSpan.FromMinutes(2), ct: ct);
+        await Run(vpy, ["-m", "pip", "install", "--upgrade", "spandrel", "numpy"], 20);
+
+        // 4. Check: version and whether the GPU is really usable.
+        var check = await ProcessRunner.RunAsync(vpy, ["-c",
+            "import sys, torch, spandrel\n" +
+            "gpu = 'cuda' if torch.cuda.is_available() else ('mps' if getattr(torch.backends, 'mps', None) and torch.backends.mps.is_available() else 'cpu')\n" +
+            "name = torch.cuda.get_device_name(0) if gpu == 'cuda' else ''\n" +
+            "print(torch.__version__, gpu, '%d.%d.%d' % sys.version_info[:3], name, sep='|')"], timeout: TimeSpan.FromMinutes(3), ct: ct);
         if (check.ExitCode != 0) throw new InvalidOperationException(check.StdErr.Trim());
-        SaveState("ai-runtime", "torch " + check.StdOut.Trim() + " · " + label);
+        var parts = check.StdOut.Trim().Split('|');
+        string torch = parts[0], device = parts.ElementAtOrDefault(1) ?? "cpu", pyv = parts.ElementAtOrDefault(2) ?? "", gpuName = parts.ElementAtOrDefault(3) ?? "";
+        log?.Report(L.T("PyTorch {0} on {1}{2} · Python {3}", torch, device.ToUpperInvariant(), gpuName.Length > 0 ? " (" + gpuName + ")" : "", pyv));
+        if (label.StartsWith("CUDA", StringComparison.Ordinal) && device != "cuda")
+            log?.Report(L.T("PyTorch does not see the NVIDIA GPU: update the driver (RTX 50 needs 570 or newer) and install again."));
+        SaveState("ai-runtime", $"torch {torch} · {(device == "cpu" ? "CPU" : label)} · Python {pyv}");
     }
 
     private static string FfmpegVersionLabel(string asset, DateTimeOffset date)

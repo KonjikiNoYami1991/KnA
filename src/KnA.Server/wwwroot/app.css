@@ -309,6 +309,7 @@ input[type=checkbox], input[type=radio] { accent-color: var(--accent-2); width: 
 .wave { height: 56px; margin-top: 4px; border-radius: 8px; overflow: hidden; background: var(--bg-2); }
 .wave img { width: 100%; height: 100%; display: block; opacity: .9; }
 .sel-range { position: absolute; top: 0; bottom: 0; border: 2px solid var(--accent); border-radius: 10px; background: color-mix(in srgb, var(--accent) 10%, transparent); pointer-events: none; }
+.sel-range.other { border-style: dashed; border-color: #fbbf24; background: color-mix(in srgb, #fbbf24 8%, transparent); }
 .shade { position: absolute; top: 0; bottom: 0; background: rgba(0,0,0,.55); pointer-events: none; }
 .handle { position: absolute; top: -4px; bottom: -4px; width: 14px; margin-left: -7px; border-radius: 6px; background: var(--accent); cursor: ew-resize; box-shadow: 0 2px 8px rgba(0,0,0,.4); }
 .playhead { position: absolute; top: -8px; bottom: -8px; width: 2px; margin-left: -1px; background: #fff; box-shadow: 0 0 0 1px rgba(0,0,0,.5); pointer-events: none; }

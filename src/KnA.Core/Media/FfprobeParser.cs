@@ -17,6 +17,17 @@ public static class FfprobeParser
         var attachments = new List<AttachmentStream>();
         var ignored = new List<StreamBase>();
         int chapters = root.TryGetProperty("chapters", out var ch) && ch.ValueKind == JsonValueKind.Array ? ch.GetArrayLength() : 0;
+        var chapterList = new List<ChapterInfo>();
+        if (chapters > 0)
+            foreach (var c in ch.EnumerateArray())
+            {
+                double start = ParseSeconds(Str(c, "start_time")).TotalSeconds, end = ParseSeconds(Str(c, "end_time")).TotalSeconds;
+                string? title = null;
+                if (c.TryGetProperty("tags", out var ct) && ct.ValueKind == JsonValueKind.Object)
+                    foreach (var tag in ct.EnumerateObject())
+                        if (tag.Name.Equals("title", StringComparison.OrdinalIgnoreCase) && tag.Value.ValueKind == JsonValueKind.String) title = tag.Value.GetString();
+                chapterList.Add(new ChapterInfo(start, Math.Max(end, start), string.IsNullOrEmpty(title) ? null : title));
+            }
 
         TimeSpan duration = TimeSpan.Zero;
         long size = 0;
@@ -138,7 +149,7 @@ public static class FfprobeParser
         {
             Path = path, ContainerFormat = container, Duration = duration, SizeBytes = size,
             Video = video, Audio = audio, Subtitles = subs, Attachments = attachments,
-            Ignored = ignored, ChapterCount = chapters,
+            Ignored = ignored, ChapterCount = chapters, Chapters = chapterList,
         };
     }
 

@@ -97,6 +97,15 @@ public static class AudioPlanner
         BuildArgs(Plan(a, new JobSettings { Profile = profile, Quality = quality, AudioFilters = filters }, container, AudioEncoderSet.Default),
             outIndex, filters);
 
+    /// <summary>The job settings with the track's own codec/bitrate choice (track list) applied.</summary>
+    public static JobSettings ForTrack(TrackPlan t, JobSettings s)
+    {
+        if (t.Output is { Length: > 0 } o && Enum.TryParse<AudioCodec>(o, true, out var codec) && Enum.IsDefined(codec))
+            s = s with { AudioCodec = codec };
+        if (t.Bitrate is > 0 and var k) s = s with { AudioBitrate = k };
+        return s;
+    }
+
     public static AudioTrackPlan Plan(AudioStream a, JobSettings s, string container, AudioEncoderSet encoders)
     {
         int q = (int)s.Quality;

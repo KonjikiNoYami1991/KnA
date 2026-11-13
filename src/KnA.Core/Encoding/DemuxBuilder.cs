@@ -16,26 +16,36 @@ public sealed record DemuxPlan(EncodePlan Plan, string Folder, IReadOnlyList<Dem
 /// </summary>
 public static class DemuxBuilder
 {
-    public static DemuxPlan Build(MediaInfo media, JobSettings s, JobEdit edit, BuildOptions o, string? forcedFolder = null)
+    public static DemuxPlan Build(MediaInfo media, JobSettings s, JobEdit edit, BuildOptions o, string? forcedFolder = null, string? chaptersFile = null)
     {
         var d = s.Demux;
-        var folder = forcedFolder ?? OutputNaming.Folder(media.Path, "demux", edit.OutputFolder ?? o.OutputDirectory);
+        var folder = forcedFolder ?? OutputNaming.Folder(media.Path, "demux" + (edit.PartLabel is { Length: > 0 } pl ? " " + pl : ""), edit.OutputFolder ?? o.OutputDirectory);
         var baseName = OutputNaming.Safe(Path.GetFileNameWithoutExtension(media.Path));
         var issues = new List<ValidationIssue>();
-        var selected = d.Streams is { Count: > 0 } list ? list.ToHashSet() : null;
+        // The track list decides (all streams by default, or the "Streams to extract" of the preset).
+        var plan = edit.Tracks is { } custom ? TrackPlanner.Complete(custom, media) : TrackPlanner.Default(media, s);
+        var selected = plan.Where(t => t.Include && t.File == media.Path && t.Stream >= 0).Select(t => t.Stream).ToHashSet();
+        var order = plan.Where(t => t.File == media.Path && t.Stream >= 0).Select(t => t.Stream).ToList();
 
         var a = new List<string> { "-hide_banner", "-nostdin", "-y", "-ignore_unknown" };
-        bool dumpAttachments = d.Attachments && media.Attachments.Count > 0 && (selected is null || media.Attachments.Any(x => selected.Contains(x.Index)));
-        if (dumpAttachments) a.AddRange(["-dump_attachment:t", ""]);
+        var attachments = media.Attachments.Where(x => selected.Contains(x.Index)).ToList();
+        bool dumpAttachments = attachments.Count > 0;
+        if (attachments.Count == media.Attachments.Count && dumpAttachments) a.AddRange(["-dump_attachment:t", ""]);
+        else foreach (var at in attachments) a.AddRange([$"-dump_attachment:{at.Index.ToString(CultureInfo.InvariantCulture)}", ""]);
         a.AddRange(MediaProber.RobustInputArgs(media.Path));
         a.AddRange(KnA.Core.Media.Discs.DiscSource.InputArgs(media.Path));
+        bool customChapters = chaptersFile is not null && edit.KeepChapters && edit.Chapters is { Count: > 0 };
+        if (customChapters) a.AddRange(["-f", "ffmetadata", "-i", chaptersFile!]);
 
+        if (edit.IsMultiSegment) issues.Add(Containers.Error("Several cut segments can't be joined in this profile: split them into separate jobs."));
         var trim = CommandBuilder.TrimArgs(edit, media.Duration, issues);
         var outputs = new List<DemuxOutput>();
         var used = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var st in media.AllStreams.Where(x => x is not AttachmentStream))
+        var streams = media.AllStreams.Where(x => x is not AttachmentStream)
+            .OrderBy(x => order.IndexOf(x.Index) is >= 0 and var i ? i : int.MaxValue).ThenBy(x => x.Index);
+        foreach (var st in streams)
         {
-            if (selected is not null && !selected.Contains(st.Index)) continue;
+            if (!selected.Contains(st.Index)) continue;
             if (st is VideoStream { IsAttachedPicture: true }) continue;
             var (ext, extra) = Extension(st, d.Raw);
             var name = $"{baseName}.{st.Index.ToString(CultureInfo.InvariantCulture)}";
@@ -51,10 +61,10 @@ public static class DemuxBuilder
             outputs.Add(new DemuxOutput(st.Index, st.Kind, st.CodecName, file));
         }
 
-        if (d.Chapters && media.ChapterCount > 0)
+        bool wantChapters = d.Chapters && edit.KeepChapters && (customChapters || (edit.Chapters is null && media.ChapterCount > 0));
+        if (wantChapters && media.AllStreams.FirstOrDefault() is { } any)
         {
-            int any = media.AllStreams.First().Index;
-            a.AddRange(["-map_chapters", "0", "-map", $"0:{any}", "-c", "copy", "-f", "ffmetadata", Path.Combine(folder, baseName + ".chapters.txt")]);
+            a.AddRange(["-map_chapters", customChapters ? "1" : "0", "-map", $"0:{any.Index}", "-c", "copy", "-f", "ffmetadata", Path.Combine(folder, baseName + ".chapters.txt")]);
             outputs.Add(new DemuxOutput(-1, "chapters", "ffmetadata", baseName + ".chapters.txt"));
         }
 

@@ -267,6 +267,51 @@ public sealed class QueueService : IDisposable
         return await SetEditAsync(id, withFiles with { Tracks = tracks }, ct);
     }
 
+    /// <summary>
+    /// Turns a job with several cut segments into one job per segment (same settings, tracks and chapters),
+    /// placed right after it in the queue; each output name gets "part N". Returns the jobs, the original first.
+    /// </summary>
+    public IReadOnlyList<QueueJob> SplitSegments(Guid id)
+    {
+        var j = Find(id) ?? throw new KeyNotFoundException();
+        if (j == CurrentJob) throw new InvalidOperationException(L.T("The file is being processed."));
+        var parts = j.Edit.KeptParts(j.Media?.Duration.TotalSeconds ?? 0);
+        if (parts.Count < 2) return [j];
+        var result = new List<QueueJob>();
+        lock (_lock)
+        {
+            int at = _jobs.IndexOf(j);
+            for (int i = 0; i < parts.Count; i++)
+            {
+                var (start, end) = parts[i];
+                var edit = j.Edit with
+                {
+                    Segments = null,
+                    TrimStart = start > 0.0005 ? start : null,
+                    TrimEnd = end,
+                    PartLabel = L.T("part {0}", i + 1),
+                    Tracks = j.Edit.Tracks?.ToList(),
+                    ExternalFiles = [.. j.Edit.ExternalFiles],
+                    Chapters = j.Edit.Chapters?.ToList(),
+                };
+                if (i == 0)
+                {
+                    j.Edit = edit;
+                    if (j.Status != JobStatus.Ready) j.ResetForRun();
+                    result.Add(j);
+                    continue;
+                }
+                var copy = new QueueJob { SourcePath = j.SourcePath, Settings = j.Settings, Edit = edit, Media = j.Media };
+                foreach (var (k, v) in j.ExternalMedia) copy.ExternalMedia[k] = v;
+                _jobs.Insert(at + i, copy);
+                result.Add(copy);
+            }
+        }
+        foreach (var x in result) JobChanged?.Invoke(x);
+        QueueChanged?.Invoke();
+        return result;
+    }
+
     /// <summary>Probes the files (when needed) and returns the effective plan, validation and command.</summary>
     public async Task<JobAnalysis> AnalyzeAsync(QueueJob j, CancellationToken ct = default)
     {
@@ -280,7 +325,9 @@ public sealed class QueueService : IDisposable
 
         var edit = j.Edit;
         bool isDefault = edit.Tracks is null;
-        var tracks = edit.Tracks ?? TrackPlanner.Default(j.Media, j.Settings, frameserver: JobRunner.FrameserverMedia(j));
+        var tracks = edit.Tracks is { } custom
+            ? TrackPlanner.Complete(custom, j.Media)
+            : TrackPlanner.Default(j.Media, j.Settings, frameserver: JobRunner.FrameserverMedia(j));
         // Offer the streams of external files that are not in the plan yet.
         var extra = edit.ExternalFiles.Where(f => tracks.All(t => t.File != f))
             .SelectMany(f => TrackPlanner.ForExternal(f, j.ExternalMedia.GetValueOrDefault(f), include: false));
@@ -290,7 +337,7 @@ public sealed class QueueService : IDisposable
         var ctx = JobRunner.BuildContext(j, Settings, tools, Store.DataDirectory) with { Edit = edit with { Tracks = tracks } };
         if (p.IsDemux)
         {
-            var d = DemuxBuilder.Build(j.Media, j.Settings, edit, ctx.Options, forcedFolder: Path.Combine(j.Folder, "(demux)"));
+            var d = DemuxBuilder.Build(j.Media, j.Settings, edit with { Tracks = tracks }, ctx.Options, forcedFolder: Path.Combine(j.Folder, "(demux)"), chaptersFile: ctx.ChaptersFile);
             j.Issues = d.Issues;
             return new JobAnalysis(j.Media, j.ExternalMedia, tracks, isDefault, d.Issues, "", [], "", d.Plan.CommandLine(tools.Ffmpeg), j.Media.Duration);
         }
