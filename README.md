@@ -4,7 +4,7 @@
 
 **English** · [Italiano](README.it.md)
 
-An almost automatic encoder and hardsubber by KonjikiNoYami (formerly *TnA - Tanoshimi no Autohardsubber*), for **.NET 10**.
+An almost automatic encoder and hardsubber by KonjikiNoYami, for **.NET 10**.
 
 Drop in episodes, folders, **Blu-rays (BDMV / ISO) or DVDs** and pick a profile or a preset. KnA finds the right subtitles, extracts the fonts,
 burns subtitles with libass and encodes on the **CPU or the GPU** (NVENC, Quick Sync, AMF, VideoToolbox, VA-API, **Vulkan**):
@@ -12,7 +12,7 @@ H.264, HEVC, AV1, VP9, VVC, MPEG-2 and the professional **ProRes, DNxHR, CineFor
 with **HDR10 / HDR10+ / Dolby Vision**, resumable segmented encoding, **GPU and neural upscaling**, and a local **LLM assistant**.
 
 ### New in 3.0
-- **New name and icon** (a golden K: the stem is a film strip, the arms meet in an autoencoder's bottleneck).
+- **New icon** (a golden K: the stem is a film strip, the arms meet in an autoencoder's bottleneck).
 - **Professional and lossless codecs**, an **audio codec** choice (AAC, HE-AAC, Opus, FLAC, ALAC, PCM, AC-3, E-AC-3, TrueHD, DTS…).
 - **The best AAC with nothing to set up**: libfdk_aac → AudioToolbox → bundled **fdkaac** program → FFmpeg's AAC.
 - **Custom FFmpeg builds**: each job runs on the build that has its encoders; the downloaded FFmpeg is the **newest release branch**.
@@ -274,23 +274,6 @@ tests/           xUnit unit/integration tests + headless UI test
 deploy/          Linux/LXC installer (systemd)
 docs/            Proxmox guide, screenshots
 ```
-
-The original WinForms/.NET Framework 4.8 app (TnA 0.9.9) was removed from the tree in 3.0; it is still in the git history (`git checkout 5e911be -- legacy`).
-
-## What changed since 0.9.9
-
-The old code was a single 3,900-line WinForms form. Bugs fixed in the rewrite include:
-
-- `-crf: N` (with a stray colon) produced invalid commands, and quality names were compared inconsistently
-  ("Very High" vs "Very high", "Above medium" vs "Above normal"), so some presets silently got no quality settings.
-- Output files were overwritten (`-y`), despite the README promising otherwise.
-- Pausing keyframe generation paused `cmd.exe` instead of FFmpeg/SCXviD.
-- Fragile progress parsing of FFmpeg's human-readable status line, which failed on N/A values. It now uses `-progress`.
-- Paths with quotes or special characters broke the command line. It now uses an argument list.
-- TS stream-index parsing crashed (`Binary.Substring` on an empty string).
-- The window height was saved under the key "Heigth" and never restored.
-- `Thread.Abort` (unsupported on modern .NET), a global clipboard hook, and a Dropbox-based updater are gone.
-- No more mkvmerge, 7-Zip or MediaInfo native DLLs: FFmpeg/ffprobe do everything.
 
 ## License
 

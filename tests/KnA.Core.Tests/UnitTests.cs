@@ -20,7 +20,7 @@ public class ScaleCalculatorTests
     [Fact] public void Odd_dimensions_are_made_even_without_resizing() =>
         Assert.Equal(new ScaleResult(1554, 812, false), ScaleCalculator.Compute(V(1555, 813), 0));
 
-    [Fact] public void Four_by_three_uses_width_like_legacy() =>
+    [Fact] public void Four_by_three_uses_width() =>
         Assert.Equal(new ScaleResult(1280, 960, true), ScaleCalculator.Compute(V(1440, 1080), 720));
 
     [Fact] public void Portrait_uses_height() =>
