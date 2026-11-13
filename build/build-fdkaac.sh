@@ -41,16 +41,30 @@ case "$TARGET" in
     EXE=fdkaac.exe
     STRIP=x86_64-w64-mingw32-strip ;;
   osx)
-    CMAKE_ARGS+=("-DCMAKE_OSX_ARCHITECTURES=arm64;x86_64" -DCMAKE_OSX_DEPLOYMENT_TARGET=11.0) ;;
+    # One build per architecture joined with lipo: a single "arm64;x86_64" build leaves the bundled
+    # libfdk-aac with one slice only (the x86_64 link then fails).
+    CMAKE_ARGS+=(-DCMAKE_OSX_DEPLOYMENT_TARGET=11.0) ;;
   *) echo "unknown target $TARGET" >&2; exit 2 ;;
 esac
 
-cmake -S fdkaac -B b "${CMAKE_ARGS[@]}"
-cmake --build b --parallel
+build_one() { # <build dir> [extra cmake args…]
+  local dir=$1; shift
+  cmake -S fdkaac -B "$dir" "${CMAKE_ARGS[@]}" "$@" >&2
+  cmake --build "$dir" --parallel >&2
+  local exe; exe="$(find "$dir" -maxdepth 3 -type f -name "$EXE" | head -1)"
+  [ -n "$exe" ] || { echo "fdkaac executable not produced in $dir" >&2; exit 1; }
+  echo "$exe"
+}
 
-found="$(find b -maxdepth 3 -type f -name "$EXE" | head -1)"
-[ -n "$found" ] || { echo "fdkaac executable not produced" >&2; exit 1; }
-cp "$found" "$OUT/$EXE"
+if [ "$TARGET" = osx ]; then
+  arm="$(build_one b-arm64 -DCMAKE_OSX_ARCHITECTURES=arm64 | tail -1)"
+  x64="$(build_one b-x86_64 -DCMAKE_OSX_ARCHITECTURES=x86_64 | tail -1)"
+  lipo -create "$arm" "$x64" -output "$OUT/$EXE"
+  lipo -info "$OUT/$EXE"
+else
+  found="$(build_one b | tail -1)"
+  cp "$found" "$OUT/$EXE"
+fi
 "${STRIP:-strip}" "$OUT/$EXE" 2>/dev/null || true
 {
   echo "fdkaac $FDKAAC_REF (https://github.com/nu774/fdkaac) - Zlib licence"

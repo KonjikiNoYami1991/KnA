@@ -32,6 +32,7 @@
 **Fixes**
 - Editor: the selected buttons (segment, *Final*) were unreadable in the desktop app.
 - ShellCheck warnings in the installers.
+- fdkaac for macOS is built again (one build per architecture joined with `lipo`): it was missing from v3.0.0.
 
 ### Italiano
 
@@ -63,6 +64,7 @@
 **Correzioni**
 - Editor: i pulsanti selezionati (segmento, *Finale*) erano illeggibili nell'app desktop.
 - Avvisi ShellCheck negli installer.
+- fdkaac per macOS torna a essere compilato (una build per architettura unite con `lipo`): mancava nella v3.0.0.
 
 ## v3.0.0 — 2026-11-13
 
