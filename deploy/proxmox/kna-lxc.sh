@@ -21,6 +21,12 @@
 #   KNA_CT_FOLDERS  extra video folders created inside the container, ';'-separated
 #   KNA_CT_IDMAP    "uid:gid" host ids the container's kna user is mapped to (unprivileged only)
 #   bash kna-lxc.sh --unattended
+#
+# Existing KnA containers (tag "kna"): run the script again and choose one, or
+#   bash kna-lxc.sh --update <id>          disk-space check (offers to grow the disk), then kna-update inside
+#   bash kna-lxc.sh --resize <id> [+NG]    grow the disk (and RAM/cores: KNA_CT_RAM, KNA_CT_CORES)
+#   KNA_CT_AUTORESIZE=yes                  with --update --unattended: grow the disk by itself when space is low
+# From the one-liner: bash -c "$(curl -fsSL …/kna-lxc.sh)" _ --update 129
 set -euo pipefail
 
 REPO="${KNA_REPO:-KonjikiNoYami1991/KnA}"
@@ -33,13 +39,19 @@ log() { printf '\033[1;35m[KnA]\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33m[KnA] %s\033[0m\n' "$*" >&2; }
 die() { printf '\033[1;31m[KnA] %s\033[0m\n' "$*" >&2; exit 1; }
 
-UNATTENDED=0
-for a in "$@"; do
-  case "$a" in
+UNATTENDED=0 ACTION=create ACT_ID="" RESIZE_ADD=""
+while (($#)); do
+  case "$1" in
     --unattended) UNATTENDED=1 ;;
-    -h|--help) sed -n '2,22p' "${BASH_SOURCE[0]:-/dev/null}" 2>/dev/null | sed 's/^# \{0,1\}//'; exit 0 ;;
-    *) die "$(t "Unknown option: $a" "Opzione sconosciuta: $a")" ;;
+    --update|--resize)
+      ACTION=${1#--}; ACT_ID=${2:-}
+      [[ $ACT_ID =~ ^[0-9]+$ ]] || die "$(t "$1 needs a container id." "$1 richiede l'id di un container.")"
+      shift
+      if [[ $ACTION == resize && ${2:-} =~ ^\+?[0-9]+G?$ ]]; then RESIZE_ADD=${2//[+G]/}; shift; fi ;;
+    -h|--help) sed -n '2,30p' "${BASH_SOURCE[0]:-/dev/null}" 2>/dev/null | sed 's/^# \{0,1\}//'; exit 0 ;;
+    *) die "$(t "Unknown option: $1" "Opzione sconosciuta: $1")" ;;
   esac
+  shift
 done
 
 [[ $EUID -eq 0 ]] || die "$(t "Run as root on the Proxmox host." "Esegui come root sull'host Proxmox.")"
@@ -150,6 +162,7 @@ CT_CORES="${KNA_CT_CORES:-$(( HOST_CORES > 4 ? HOST_CORES / 2 : HOST_CORES ))}"
 CT_RAM="${KNA_CT_RAM:-4096}"
 CT_SWAP="${KNA_CT_SWAP:-512}"
 CT_DISK="${KNA_CT_DISK:-16}"
+DISK_SET=0; [[ -n ${KNA_CT_DISK:-} ]] && DISK_SET=1
 CT_STORAGE="${KNA_CT_STORAGE:-${ROOT_STORAGES[0]}}"
 CT_TSTORAGE="${KNA_CT_TEMPLATE_STORAGE:-${TMPL_STORAGES[0]}}"
 CT_BRIDGE="${KNA_CT_BRIDGE:-${BRIDGES[0]}}"
@@ -189,6 +202,17 @@ derive() {
   [[ -z $MEDIA_ROOTS && ${#B_HOST[@]} -eq 0 ]] && MEDIA_ROOTS="/srv/kna/videos"
   ((UPLOAD_SET)) || CT_UPLOAD="${MEDIA_ROOTS:+${MEDIA_ROOTS%%;*}/uploads}"
   RW_BINDS=0; for i in "${!B_RO[@]}"; do ((B_RO[i])) || RW_BINDS=$((RW_BINDS + 1)); done
+  ((DISK_SET)) || CT_DISK=$(recommended_disk)
+}
+# Root disk the choices need: system + KnA + temporary files, plus the AI upscaler's PyTorch when chosen
+# (ROCm builds for AMD are much bigger than CUDA/CPU ones). Estimates with some headroom.
+recommended_disk() {
+  local g extra=0
+  if [[ " $KNA_COMPONENTS " == *" ai-runtime "* ]]; then
+    extra=10
+    for g in $CT_GPU; do [[ $(gpu_label "$g") == AMD* ]] && extra=16; done
+  fi
+  echo $((16 + extra))
 }
 
 # Blocking problems, one per line (empty = all good).
@@ -226,8 +250,11 @@ problems() {
 
 # Non-blocking remarks shown before creating.
 remarks() {
-  local free
+  local free rec
   free=$(storage_free "$CT_STORAGE")
+  rec=$(recommended_disk)
+  [[ $CT_DISK =~ ^[0-9]+$ ]] && ((CT_DISK < rec)) \
+    && echo "• $(t "Disk $CT_DISK GB is below the $rec GB these choices need (AI upscaler: PyTorch takes 6–15 GB)." "Disco di $CT_DISK GB sotto i $rec GB che servono a queste scelte (upscaler AI: PyTorch occupa 6–15 GB).")"
   [[ -n $free && $CT_DISK =~ ^[0-9]+$ ]] && ((CT_DISK > free)) \
     && echo "• $(t "$CT_STORAGE has only $free GB free (disk: $CT_DISK GB)." "$CT_STORAGE ha solo $free GB liberi (disco: $CT_DISK GB).")"
   ((CT_UNPRIV && RW_BINDS)) && [[ -z $CT_IDMAP ]] \
@@ -242,7 +269,10 @@ describe_os() {
   if [[ -n $tp ]]; then echo "${tp%%_amd64*}"; else echo "$CT_OS: $(t "no template" "nessun template")"; fi
 }
 describe_priv() { ((CT_UNPRIV)) && t unprivileged "non privilegiato" || t privileged privilegiato; }
-describe_disk() { local f; f=$(storage_free "$CT_STORAGE"); echo "$CT_DISK GB $(t on su) $CT_STORAGE${f:+ ($f GB $(t free liberi))}"; }
+describe_disk() {
+  local f; f=$(storage_free "$CT_STORAGE")
+  echo "$CT_DISK GB$( ((DISK_SET)) || echo " (auto)") $(t on su) $CT_STORAGE${f:+ ($f GB $(t free liberi))}"
+}
 describe_net() { echo "$CT_BRIDGE, $( [[ $CT_IP == dhcp ]] && echo DHCP || echo "$CT_IP${CT_GW:+ gw $CT_GW}")${CT_VLAN:+, VLAN $CT_VLAN}"; }
 describe_gpu() {
   local g out=""
@@ -348,8 +378,8 @@ edit_disk() {
   for s in "${ROOT_STORAGES[@]}"; do items+=("$s" "$(pvesm status -storage "$s" 2>/dev/null | awk 'NR==2 {print $2}')  $(storage_free "$s") GB $(t free liberi)"); done
   v=$(wt --default-item "$CT_STORAGE" --menu "$(t "Storage for the container disk:" "Storage per il disco del container:")" 16 70 8 "${items[@]}") || return 0
   CT_STORAGE=$v
-  while v=$(ask "$(t "Root disk size in GB, ≥ 8 (system, KnA, temporary files; +6–10 GB if you add the AI upscaler, PyTorch):" "Dimensione del disco root in GB, ≥ 8 (sistema, KnA, file temporanei; +6–10 GB se aggiungi l'upscaler AI, PyTorch):")" "$CT_DISK"); do
-    [[ $v =~ ^[0-9]+$ ]] && ((v >= 8)) && { CT_DISK=$v; break; }; oops "≥ 8"
+  while v=$(ask "$(t "Root disk size in GB (recommended for your choices: $(recommended_disk); the AI upscaler's PyTorch alone takes 6–15 GB). It can be grown later, never shrunk:" "Dimensione del disco root in GB (consigliati per le tue scelte: $(recommended_disk); il solo PyTorch dell'upscaler AI occupa 6–15 GB). Si può ingrandire dopo, mai ridurre:")" "$CT_DISK"); do
+    [[ $v =~ ^[0-9]+$ ]] && ((v >= 8)) && { CT_DISK=$v; DISK_SET=1; break; }; oops "≥ 8"
   done
   return 0
 }
@@ -616,6 +646,142 @@ edit_kna() {
     ai-runtime "$(t "AI upscaler: Python + PyTorch (several GB)" "Upscaler AI: Python + PyTorch (diversi GB)")" "$(c ai-runtime)") || return 0
   KNA_COMPONENTS=$(echo "$v" | tr -d '"')
 }
+
+# ---------------------------------------------------------------- existing containers: resize and update
+# Containers created by this script carry the "kna" tag.
+kna_cts() {
+  local f
+  for f in /etc/pve/lxc/*.conf; do
+    [[ -f $f ]] && grep -Eq '^tags:(.*[ ;,])?kna([ ;,].*)?$' "$f" && basename "$f" .conf
+  done
+  return 0
+}
+# Facts of a container: CI_NAME CI_STORAGE CI_SIZE (GB) CI_RAM CI_CORES CI_RUNNING, and when running
+# CI_TOTAL CI_USED CI_FREE (GB, one decimal) CI_PCT (% of / used).
+ct_info() {
+  local cfg rootfs
+  cfg=$(pct config "$1" 2>/dev/null) || die "$(t "Container $1 not found on this node." "Container $1 non trovato su questo nodo.")"
+  CI_NAME=$(awk '/^hostname:/ {print $2}' <<<"$cfg")
+  CI_RAM=$(awk '/^memory:/ {print $2}' <<<"$cfg"); CI_RAM=${CI_RAM:-512}
+  CI_CORES=$(awk '/^cores:/ {print $2}' <<<"$cfg"); CI_CORES=${CI_CORES:-$HOST_CORES}
+  rootfs=$(sed -n 's/^rootfs: //p' <<<"$cfg")
+  CI_STORAGE=${rootfs%%:*}
+  CI_SIZE=$(grep -oE 'size=[0-9.]+[KMGT]?' <<<"$rootfs" | cut -d= -f2 \
+            | awk '{n=$0+0; u=substr($0,length($0)); if (u=="T") n*=1024; else if (u=="M") n/=1024; else if (u=="K") n/=1048576; printf "%d", n}')
+  CI_RUNNING=0; [[ $(pct status "$1" 2>/dev/null) == *running* ]] && CI_RUNNING=1
+  CI_TOTAL="" CI_USED="" CI_FREE="" CI_PCT=""
+  if ((CI_RUNNING)); then
+    read -r CI_TOTAL CI_USED CI_FREE CI_PCT < <(pct exec "$1" -- df -Pk / 2>/dev/null \
+      | awk 'NR==2 {gsub("%","",$5); printf "%.1f %.1f %.1f %d\n", $2/1048576, $3/1048576, $4/1048576, $5}') || true
+  fi
+  return 0
+}
+describe_usage() {
+  [[ -n $CI_PCT ]] || { t "usage unknown (container stopped)" "uso sconosciuto (container spento)"; return; }
+  echo "$(t used usati) $CI_USED GB ($CI_PCT%), $(t free liberi) $CI_FREE GB"
+}
+# GB to add so that / is at most 70% full afterwards (at least 4).
+suggest_growth() {
+  [[ -n $CI_USED ]] || { echo 8; return; }
+  awk -v u="$CI_USED" -v t="$CI_TOTAL" 'BEGIN { n = u / 0.7 - t; n = (n == int(n)) ? n : int(n) + 1; if (n < 4) n = 4; print n }'
+}
+grow_disk() { # id GB
+  local id=$1 n=$2 f
+  f=$(storage_free "$CI_STORAGE")
+  [[ -n $f ]] && ((n > f)) && die "$(t "$CI_STORAGE has only $f GB free." "$CI_STORAGE ha solo $f GB liberi.")"
+  log "$(t "Growing the disk of $id by $n GB ($CI_SIZE → $((CI_SIZE + n)) GB)…" "Ingrandimento del disco di $id di $n GB ($CI_SIZE → $((CI_SIZE + n)) GB)…")"
+  # pct grows the volume and the container's filesystem, also while it runs.
+  pct resize "$id" rootfs "+${n}G"
+  ct_info "$id"
+  log "$(t "Done" "Fatto"): $CI_SIZE GB, $(describe_usage)"
+}
+
+resize_ct() {
+  local id=$1 v last=disk
+  ct_info "$id"
+  if ((!INTERACTIVE)); then
+    [[ -n $RESIZE_ADD ]] && grow_disk "$id" "$RESIZE_ADD"
+    [[ -n ${KNA_CT_RAM:-} ]] && { pct set "$id" --memory "$KNA_CT_RAM"; log "RAM: $KNA_CT_RAM MB"; }
+    [[ -n ${KNA_CT_CORES:-} ]] && { pct set "$id" --cores "$KNA_CT_CORES"; log "$(t Cores Core): $KNA_CT_CORES"; }
+    [[ -n $RESIZE_ADD${KNA_CT_RAM:-}${KNA_CT_CORES:-} ]] || log "$CI_SIZE GB, $(describe_usage); RAM $CI_RAM MB; $CI_CORES core"
+    return 0
+  fi
+  while :; do
+    v=$(wt --notags --default-item "$last" --ok-button "$(t Select Scegli)" --cancel-button "$(t Exit Esci)" --menu \
+      "$(t "Resources of container $id ($CI_NAME). Changes apply at once, also while it runs." "Risorse del container $id ($CI_NAME). Le modifiche valgono subito, anche mentre è acceso.")" 14 78 4 \
+      disk  "$(printf '%-8s %s' "$(t Disk Disco)" "$(cut_to 64 "$CI_SIZE GB $(t on su) $CI_STORAGE — $(describe_usage)")")" \
+      ram   "$(printf '%-8s %s' RAM "$CI_RAM MB")" \
+      cores "$(printf '%-8s %s' Core "$CI_CORES / $HOST_CORES")" \
+      done  "$(t "← Done" "← Fine")") || return 0
+    last=$v
+    case $v in
+      done) return 0 ;;
+      disk)
+        while v=$(ask "$(t "GB to ADD to the disk (now $CI_SIZE GB, $(describe_usage); $CI_STORAGE has $(storage_free "$CI_STORAGE") GB free). A disk can only grow." \
+                           "GB da AGGIUNGERE al disco (ora $CI_SIZE GB, $(describe_usage); $CI_STORAGE ha $(storage_free "$CI_STORAGE") GB liberi). Un disco si può solo ingrandire.")" "$(suggest_growth)" 10); do
+          [[ $v =~ ^[0-9]+$ ]] && ((v > 0)) && { grow_disk "$id" "$v"; break; }; oops "GB > 0"
+        done ;;
+      ram)
+        while v=$(ask "RAM (MB, ≥ 1024):" "$CI_RAM" 8); do
+          [[ $v =~ ^[0-9]+$ ]] && ((v >= 1024)) && { pct set "$id" --memory "$v"; CI_RAM=$v; break; }; oops "≥ 1024"
+        done ;;
+      cores)
+        while v=$(ask "$(t "CPU cores (1–$HOST_CORES):" "Core CPU (1–$HOST_CORES):")" "$CI_CORES" 8); do
+          [[ $v =~ ^[0-9]+$ ]] && ((v >= 1 && v <= HOST_CORES)) && { pct set "$id" --cores "$v"; CI_CORES=$v; break; }; oops "1 – $HOST_CORES"
+        done ;;
+    esac
+  done
+}
+
+# Like the community scripts: check the free space before updating, and offer to grow the disk.
+update_ct() {
+  local id=$1 n
+  ct_info "$id"
+  if ((!CI_RUNNING)); then log "$(t "Starting container $id…" "Avvio del container $id…")"; pct start "$id"; sleep 3; ct_info "$id"; fi
+  pct exec "$id" -- test -x /usr/local/sbin/kna-update \
+    || die "$(t "KnA is not installed in container $id (no kna-update)." "KnA non è installato nel container $id (manca kna-update).")"
+  log "$(t "Container $id ($CI_NAME): disk" "Container $id ($CI_NAME): disco") $CI_SIZE GB, $(describe_usage); RAM $CI_RAM MB"
+  if [[ -n $CI_PCT ]] && { ((CI_PCT > 80)) || awk -v f="$CI_FREE" 'BEGIN { exit !(f < 3) }'; }; then
+    n=$(suggest_growth)
+    if ((INTERACTIVE)); then
+      if wt --yesno "$(t "Little space left in container $id: $(describe_usage).
+An update needs room for the new version next to the old one, and FFmpeg/components need more.
+
+Grow the disk by $n GB now?" "Poco spazio nel container $id: $(describe_usage).
+Un aggiornamento ha bisogno di spazio per la nuova versione accanto alla vecchia, e FFmpeg/componenti ne vogliono altro.
+
+Ingrandire ora il disco di $n GB?")" 13 78; then grow_disk "$id" "$n"; fi
+    elif [[ ${KNA_CT_AUTORESIZE:-} == yes ]]; then
+      grow_disk "$id" "$n"
+    elif awk -v f="$CI_FREE" 'BEGIN { exit !(f < 1) }'; then
+      die "$(t "Less than 1 GB free in container $id: grow it first (--resize $id +${n}G, or KNA_CT_AUTORESIZE=yes)." \
+               "Meno di 1 GB libero nel container $id: ingrandiscilo prima (--resize $id +${n}G, oppure KNA_CT_AUTORESIZE=yes).")"
+    else
+      warn "$(t "Little space left: $(describe_usage). Grow it with --resize $id +${n}G." "Poco spazio: $(describe_usage). Ingrandiscilo con --resize $id +${n}G.")"
+    fi
+  fi
+  ((CI_RAM < 2048)) && warn "$(t "Only $CI_RAM MB of RAM: encodes may fail (4096 MB recommended; --resize $id)." "Solo $CI_RAM MB di RAM: le codifiche possono fallire (consigliati 4096 MB; --resize $id).")"
+  log "$(t "Updating KnA in container $id…" "Aggiornamento di KnA nel container $id…")"
+  pct exec "$id" -- env KNA_INSTALL_LANG="$( ((IT)) && echo it || echo en)" /usr/local/sbin/kna-update
+}
+
+if [[ $ACTION == create ]] && ((INTERACTIVE)); then
+  mapfile -t EXISTING < <(kna_cts)
+  if ((${#EXISTING[@]})); then
+    items=(new "$(t "+ Create a NEW KnA container" "+ Crea un NUOVO container KnA")")
+    for id in "${EXISTING[@]}"; do
+      ct_info "$id"
+      items+=("update:$id" "$(cut_to 72 "$(t Update Aggiorna) $id ($CI_NAME) — $CI_SIZE GB, $(describe_usage)")")
+      items+=("resize:$id" "$(t "Resize" "Ridimensiona") $id ($CI_NAME): $(t "disk, RAM, cores" "disco, RAM, core")")
+    done
+    v=$(wt --notags --menu "$(t "KnA containers already on this node. What do you want to do?" "Container KnA già presenti su questo nodo. Cosa vuoi fare?")" 18 78 10 "${items[@]}") || cancelled
+    [[ $v != new ]] && { ACTION=${v%%:*}; ACT_ID=${v#*:}; }
+  fi
+fi
+case $ACTION in
+  update) update_ct "$ACT_ID"; exit 0 ;;
+  resize) resize_ct "$ACT_ID"; exit 0 ;;
+esac
 
 load_templates
 if ((INTERACTIVE)); then

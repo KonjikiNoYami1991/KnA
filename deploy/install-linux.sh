@@ -427,8 +427,16 @@ CURRENT=$(cat "$INSTALL_DIR/.kna-version" 2>/dev/null || true)
 if [[ $MODE == update && $CURRENT == "$TAG" && $FORCE -eq 0 ]]; then
   log "$(t "KnA $TAG is already installed." "KnA $TAG è già installato.")"
 else
-  log "$(t "Downloading KnA $TAG ($RID)…" "Download di KnA $TAG ($RID)…")"
   mkdir -p "$(dirname "$INSTALL_DIR")"
+  # New version, old one kept as .old and the download: about three times the program. Fail early with a clear
+  # message instead of halfway through (in a Proxmox container: kna-lxc.sh --resize <id> on the host).
+  need_mb=$(( $(du -sm "$INSTALL_DIR" 2>/dev/null | cut -f1 || echo 300) * 3 + 300 ))
+  free_mb=$(df -Pm "$(dirname "$INSTALL_DIR")" | awk 'NR==2 {print $4}')
+  if [[ $free_mb =~ ^[0-9]+$ ]] && ((free_mb < need_mb)); then
+    die "$(t "Not enough disk space: $free_mb MB free, about $need_mb MB needed. Free some space or grow the disk (Proxmox host: pct resize <id> rootfs +4G, or kna-lxc.sh --resize <id>)." \
+             "Spazio su disco insufficiente: $free_mb MB liberi, ne servono circa $need_mb. Libera spazio o ingrandisci il disco (host Proxmox: pct resize <id> rootfs +4G, oppure kna-lxc.sh --resize <id>).")"
+  fi
+  log "$(t "Downloading KnA $TAG ($RID)…" "Download di KnA $TAG ($RID)…")"
   tmp=$(mktemp -d "$(dirname "$INSTALL_DIR")/.kna-download.XXXXXX")
   trap 'rm -rf "$tmp"' EXIT
   curl -fL --retry 3 --progress-bar -o "$tmp/kna.zip" "https://github.com/$REPO/releases/download/$TAG/KnA-server-$RID.zip" \

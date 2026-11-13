@@ -51,6 +51,27 @@ At the end it prints the address of the web UI.
 
 Requirements: Proxmox VE 8 or newer (8.2+ for GPU passthrough to containers), internet access for the template and the KnA release.
 
+### Existing containers: resize and update
+
+Containers made by the script carry the `kna` tag. Run the same command again: when KnA containers exist on the
+node, the first screen offers **Update** or **Resize** for each of them (with the disk usage), or a new container.
+
+- **Resize**: grow the disk (`pct resize`, also while the container runs; a disk can only grow), change RAM and cores.
+  The proposed growth leaves the disk at most 70% full.
+- **Update**: like the community scripts, it first checks the free space. Above 80% or under 3 GB free it offers to
+  grow the disk, then runs `kna-update` inside. `kna-update` itself stops early with a clear message when the
+  space is not enough for the new version.
+- **Disk size at creation** follows your choices: 16 GB, +10 GB with the AI upscaler (PyTorch), +16 GB with the AI
+  upscaler on an AMD GPU (ROCm). An explicit size wins; a smaller one is flagged before creating.
+
+Without the menu (e.g. from cron):
+
+```bash
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/KonjikiNoYami1991/KnA/master/deploy/proxmox/kna-lxc.sh)" _ --update 129
+bash kna-lxc.sh --resize 129 +8G --unattended
+KNA_CT_AUTORESIZE=yes bash kna-lxc.sh --update 129 --unattended
+```
+
 ### Unattended
 
 All wizard answers can be given as variables. Example values from a test environment:

@@ -52,6 +52,27 @@ Alla fine mostra l'indirizzo dell'interfaccia web.
 
 Requisiti: Proxmox VE 8 o successivo (8.2+ per passare la GPU ai container), accesso a internet per il template e la release di KnA.
 
+### Container esistenti: ridimensionamento e aggiornamento
+
+I container creati dallo script hanno il tag `kna`. Rilancia lo stesso comando: se sul nodo ci sono container KnA,
+la prima schermata propone per ciascuno **Aggiorna** o **Ridimensiona** (con l'uso del disco), oppure un nuovo container.
+
+- **Ridimensiona**: ingrandisce il disco (`pct resize`, anche a container acceso; un disco si può solo ingrandire),
+  cambia RAM e core. L'aumento proposto lascia il disco pieno al massimo al 70%.
+- **Aggiorna**: come gli script della community, controlla prima lo spazio libero. Sopra l'80% o sotto i 3 GB liberi
+  propone di ingrandire il disco, poi lancia `kna-update` nel container. `kna-update` stesso si ferma subito, con un
+  messaggio chiaro, se lo spazio non basta per la nuova versione.
+- **Dimensione del disco alla creazione**: segue le tue scelte. 16 GB, +10 GB con l'upscaler AI (PyTorch), +16 GB con
+  l'upscaler AI su GPU AMD (ROCm). Una dimensione scelta da te ha la precedenza; se è più piccola viene segnalata prima di creare.
+
+Senza menu (es. da cron):
+
+```bash
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/KonjikiNoYami1991/KnA/master/deploy/proxmox/kna-lxc.sh)" _ --update 129
+bash kna-lxc.sh --resize 129 +8G --unattended
+KNA_CT_AUTORESIZE=yes bash kna-lxc.sh --update 129 --unattended
+```
+
 ### Senza domande
 
 Tutte le risposte del wizard si possono dare come variabili. Valori di esempio presi da un ambiente di prova:
