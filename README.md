@@ -221,8 +221,6 @@ Frameserver decoding happens in the script, so it does not use hardware decoding
 
 ## Environment variables
 
-The old `TNA_` prefix still works; the `TnA` data folder is renamed to `KnA` on first start.
-
 | Variable | Use |
 |---|---|
 | `KNA_DATA_DIR` | data folder (settings, presets, queue, logs, AI models) |

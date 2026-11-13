@@ -30,14 +30,6 @@ apt-get install -y --no-install-recommends ca-certificates curl ffmpeg fontconfi
 # Standalone Fraunhofer AAC encoder (Ubuntu multiverse / Debian non-free); KnA can also install its own build from Components.
 apt-get install -y --no-install-recommends fdkaac 2>/dev/null || log "fdkaac not in your repositories: install it later from Settings → Components."
 
-# Upgrade from TnA 2.x: stop the old service and keep its data.
-if systemctl list-unit-files tna.service >/dev/null 2>&1 && [[ -f /etc/systemd/system/tna.service ]]; then
-  log "Migrating the TnA service to KnA…"
-  systemctl disable --now tna.service || true
-  rm -f /etc/systemd/system/tna.service
-fi
-if [[ -d /var/lib/tna && ! -d "$DATA_DIR" ]]; then mv /var/lib/tna "$DATA_DIR"; fi
-
 if ! apt-cache show dotnet-sdk-10.0 >/dev/null 2>&1; then
   # Debian: .NET comes from the Microsoft repository.
   log "Adding the Microsoft package repository for .NET 10…"

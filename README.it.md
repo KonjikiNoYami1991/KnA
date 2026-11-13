@@ -221,8 +221,6 @@ Con un frameserver la decodifica avviene nello script, quindi senza decodifica h
 
 ## Variabili d'ambiente
 
-Tutte accettano anche il vecchio prefisso `TNA_`; la cartella dati `TnA` viene rinominata in `KnA` al primo avvio.
-
 | Variabile | Uso |
 |---|---|
 | `KNA_DATA_DIR` | cartella dati (impostazioni, preset, coda, log, modelli AI) |
