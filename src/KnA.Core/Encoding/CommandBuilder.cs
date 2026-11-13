@@ -452,6 +452,8 @@ public static class CommandBuilder
         var a2 = new List<string> { "-hide_banner", "-nostdin", preview is null && chunk is null ? "-n" : "-y", "-ignore_unknown" };
         if (preview is null && !restOnly && VideoEncoders.GlobalArgs(backend, ctx.Options.VaapiDevice) is { Count: > 0 } g && p.EncodesVideo && !copyVideo)
             a2.AddRange(g);
+        else if (body.Any(x => x.Contains("libplacebo=", StringComparison.Ordinal)))
+            a2.AddRange(Ai.Upscalers.VulkanDeviceArgs());
 
         if (chunk is not null)
         {

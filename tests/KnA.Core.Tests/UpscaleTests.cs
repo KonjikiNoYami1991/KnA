@@ -87,4 +87,32 @@ public class UpscaleTests(FeatureFixture fx) : IClassFixture<FeatureFixture>
         Assert.True(job.Log.Contains("[kna-ai] done: 24 frames"), string.Join("\n", job.Log.Split('\n').Where(l => l.Contains("kna-ai") || l.Contains("Command"))));
         Assert.Equal("24", count.StdOut.Trim());
     }
+
+    /// <summary>Real GPU-shader run: set KNA_TEST_VULKAN=1 (and KNA_VULKAN_DEVICE=llvmpipe without a GPU).</summary>
+    [Fact]
+    public async Task Anime4K_component_and_encode_end_to_end()
+    {
+        if (fx.Tools is null || Environment.GetEnvironmentVariable("KNA_TEST_VULKAN") != "1") return;
+        var src = Path.Combine(fx.Dir, "tiny.mkv");
+        await Processing.ProcessRunner.RunAsync(fx.Tools.Ffmpeg, ["-v", "error", "-y", "-f", "lavfi", "-i", "testsrc2=size=320x180:rate=24:duration=0.5",
+            "-c:v", "libx264", src]);
+        using var q = new QueueService(new SettingsStore(Path.Combine(fx.Dir, "data-a4k")), restoreQueue: false);
+        await q.Components.InstallAsync("anime4k");
+        Assert.True(File.Exists(Path.Combine(Upscalers.ShaderDir(q.Store.DataDirectory), "kna-anime4k-A.glsl")));
+        await q.DetectHardwareAsync();
+        Assert.True(q.Settings.Capabilities!.HasLibplacebo);
+        var job = Assert.Single(q.AddPaths([src], new JobSettings
+        {
+            Profile = ProfileKind.UniversalMkv, Codec = VideoCodec.H264, Quality = QualityLevel.Draft, Resolution = 720, Subtitles = SubtitleMode.None,
+            Upscale = new UpscaleSettings { Method = UpscaleMethod.Anime4K, Model = "A" },
+        }));
+        var done = new TaskCompletionSource();
+        q.QueueChanged += () => { if (!q.IsRunning) done.TrySetResult(); };
+        q.Start();
+        await done.Task.WaitAsync(TimeSpan.FromMinutes(10));
+        Assert.True(job.Status is JobStatus.Done or JobStatus.Warning, job.Message + "\n" + job.Log);
+        var m = await new MediaProber(fx.Tools.Ffprobe).ProbeAsync(job.OutputPath!);
+        Assert.Equal(1280, m.PrimaryVideo!.Width);
+        Assert.Contains("custom_shader_path", job.CommandLine);
+    }
 }

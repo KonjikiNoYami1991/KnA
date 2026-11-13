@@ -144,7 +144,7 @@ public static class HardwareDetector
         {
             // Compiled in is not enough: it needs a working Vulkan device.
             log?.Report("Testing libplacebo (Vulkan)…");
-            var r = await ProcessRunner.RunAsync(ffmpeg, ["-hide_banner", "-v", "error", "-f", "lavfi", "-i", "testsrc2=size=320x240:duration=0.2",
+            var r = await ProcessRunner.RunAsync(ffmpeg, ["-hide_banner", "-v", "error", .. Ai.Upscalers.VulkanDeviceArgs(), "-f", "lavfi", "-i", "testsrc2=size=320x240:duration=0.2",
                 "-vf", "libplacebo=format=yuv420p", "-frames:v", "2", "-f", "null", "-"], timeout: TimeSpan.FromSeconds(30), ct: ct);
             placebo = r.ExitCode == 0;
         }

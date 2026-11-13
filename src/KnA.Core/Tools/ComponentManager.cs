@@ -90,6 +90,22 @@ public sealed class ComponentManager(string dataDirectory)
                 installed, path, managed, latest, latest is not null && path is null, FdkaacAssetName() is not null, note));
         }
 
+        // ---------------------------------------------------------------- upscaling shaders and the AI runtime
+        var shaders = Ai.Upscalers.ShaderDir(dataDirectory);
+        bool a4k = File.Exists(Path.Combine(shaders, "kna-anime4k-A.glsl"));
+        list.Add(new ComponentStatus("anime4k", "Anime4K shaders", L.T("CNN upscaling shaders for anime (bloc97/Anime4K, MIT). Run on the GPU through libplacebo."),
+            a4k && state.TryGetValue("anime4k", out var av) ? av.Version : null, a4k ? shaders : null, a4k, null, false, true, null));
+        bool fsr = File.Exists(Path.Combine(shaders, Ai.Upscalers.FsrcnnxShader));
+        list.Add(new ComponentStatus("fsrcnnx", "FSRCNNX shader", L.T("Neural ×2 upscaling shader (igv/FSRCNN-TensorFlow). Runs on the GPU through libplacebo."),
+            fsr && state.TryGetValue("fsrcnnx", out var fv) ? fv.Version : null, fsr ? shaders : null, fsr, null, false, true, null));
+        var venvPy = Path.Combine(dataDirectory, "ai", "venv", OperatingSystem.IsWindows() ? "Scripts" : "bin", FfmpegLocator.ExeName("python"));
+        bool venv = File.Exists(venvPy);
+        var sysPy = FfmpegLocator.LocateTool(["python3", "python"], dataDirectory);
+        list.Add(new ComponentStatus("ai-runtime", L.T("AI upscaler (Python + PyTorch)"),
+            L.T("Private Python environment with PyTorch ({0}) and spandrel for the neural models. Several GB.", TorchFlavor().Label),
+            venv && state.TryGetValue("ai-runtime", out var rv) ? rv.Version : null, venv ? venvPy : null, venv, null, false, sysPy is not null || venv,
+            sysPy is null && !venv ? L.T("Install Python 3.10+ first (python.org, your package manager, or the Docker image).") : null));
+
         // ---------------------------------------------------------------- quietvoid tools
         foreach (var (id, name, desc, path) in new[]
         {
@@ -120,6 +136,9 @@ public sealed class ComponentManager(string dataDirectory)
         {
             if (id == "ffmpeg") await InstallFfmpegAsync(temp, progress, log, ct);
             else if (id == "fdkaac") await InstallFdkaacAsync(temp, progress, log, ct);
+            else if (id == "anime4k") await InstallAnime4KAsync(temp, progress, log, ct);
+            else if (id == "fsrcnnx") await InstallFsrcnnxAsync(progress, log, ct);
+            else if (id == "ai-runtime") await InstallAiRuntimeAsync(log, ct);
             else if (id is "dovi_tool" or "hdr10plus_tool") await InstallQuietvoidAsync(id, temp, progress, log, ct);
             else throw new ArgumentException("Unknown component " + id);
         }
@@ -254,6 +273,85 @@ public sealed class ComponentManager(string dataDirectory)
         ReplaceFile(found, target);
         await VerifyAsync(target, ["--version"], ct);
         SaveState(id, rel.Tag);
+    }
+
+    // ---------------------------------------------------------------- upscaling
+
+    private async Task InstallAnime4KAsync(string temp, IProgress<double>? progress, IProgress<string>? log, CancellationToken ct)
+    {
+        // The API may be unreachable (rate limits, proxies): fall back to the known v4.0.1 download.
+        ReleaseInfo? rel = null;
+        try { rel = await GitHubReleases.LatestAsync("bloc97/Anime4K", ct); }
+        catch (Exception ex) when (ex is HttpRequestException or System.Text.Json.JsonException or InvalidOperationException) { log?.Report(ex.Message); }
+        var asset = rel?.Assets.FirstOrDefault(a => a.Name.StartsWith("Anime4K_v", StringComparison.OrdinalIgnoreCase) && a.Name.EndsWith(".zip", StringComparison.OrdinalIgnoreCase))
+                    ?? new ReleaseAsset("Anime4K_v4.0.zip", "https://github.com/bloc97/Anime4K/releases/download/v4.0.1/Anime4K_v4.0.zip", 0);
+        rel ??= new ReleaseInfo("v4.0.1", "Anime4K", null, "", DateTimeOffset.Now, [asset]);
+        var archive = Path.Combine(temp, asset.Name);
+        log?.Report(L.T("Downloading {0}…", asset.Name));
+        await GitHubReleases.DownloadAsync(asset.Url, archive, progress, ct);
+        var dir = Ai.Upscalers.ShaderDir(dataDirectory);
+        var extracted = Path.Combine(temp, "x");
+        await ExtractAsync(archive, extracted, ct);
+        Directory.CreateDirectory(dir);
+        foreach (var f in Directory.EnumerateFiles(extracted, "Anime4K_*.glsl", SearchOption.AllDirectories))
+            File.Copy(f, Path.Combine(dir, Path.GetFileName(f)), overwrite: true);
+        Ai.Upscalers.BuildAnime4KChains(dir);
+        if (!File.Exists(Path.Combine(dir, "kna-anime4k-A.glsl"))) throw new InvalidDataException(L.T("The archive did not contain {0}.", "Anime4K mode A"));
+        SaveState("anime4k", rel.Tag);
+    }
+
+    private async Task InstallFsrcnnxAsync(IProgress<double>? progress, IProgress<string>? log, CancellationToken ct)
+    {
+        ReleaseInfo? rel = null;
+        try { rel = await GitHubReleases.LatestAsync("igv/FSRCNN-TensorFlow", ct); }
+        catch (Exception ex) when (ex is HttpRequestException or System.Text.Json.JsonException or InvalidOperationException) { log?.Report(ex.Message); }
+        var asset = rel?.Assets.FirstOrDefault(a => a.Name == Ai.Upscalers.FsrcnnxShader)
+                    ?? new ReleaseAsset(Ai.Upscalers.FsrcnnxShader, "https://github.com/igv/FSRCNN-TensorFlow/releases/latest/download/" + Ai.Upscalers.FsrcnnxShader, 0);
+        rel ??= new ReleaseInfo("latest", "FSRCNNX", null, "", DateTimeOffset.Now, [asset]);
+        var dir = Ai.Upscalers.ShaderDir(dataDirectory);
+        Directory.CreateDirectory(dir);
+        log?.Report(L.T("Downloading {0}…", asset.Name));
+        await GitHubReleases.DownloadAsync(asset.Url, Path.Combine(dir, Ai.Upscalers.FsrcnnxShader), progress, ct);
+        SaveState("fsrcnnx", rel.Tag);
+    }
+
+    /// <summary>Which PyTorch build fits this machine: CUDA (NVIDIA, incl. RTX 50 / Blackwell), ROCm (AMD, Linux), default (Apple MPS / CPU).</summary>
+    public static (string Label, string? IndexUrl) TorchFlavor()
+    {
+        if (OperatingSystem.IsMacOS()) return ("Apple MPS", null);
+        bool nvidia = FfmpegLocator.LocateTool(["nvidia-smi"], Path.GetTempPath()) is not null || File.Exists("/proc/driver/nvidia/version");
+        if (nvidia) return ("CUDA 12.8", "https://download.pytorch.org/whl/cu128");
+        if (OperatingSystem.IsLinux() && (Directory.Exists("/opt/rocm") || File.Exists("/dev/kfd"))) return ("ROCm 6.4", "https://download.pytorch.org/whl/rocm6.4");
+        return ("CPU", OperatingSystem.IsLinux() || OperatingSystem.IsWindows() ? "https://download.pytorch.org/whl/cpu" : null);
+    }
+
+    private async Task InstallAiRuntimeAsync(IProgress<string>? log, CancellationToken ct)
+    {
+        var py = FfmpegLocator.LocateTool(["python3", "python"], dataDirectory)
+                 ?? throw new InvalidOperationException(L.T("Install Python 3.10+ first (python.org, your package manager, or the Docker image)."));
+        var venv = Path.Combine(dataDirectory, "ai", "venv");
+        var vpy = Path.Combine(venv, OperatingSystem.IsWindows() ? "Scripts" : "bin", FfmpegLocator.ExeName("python"));
+        async Task Run(string exe, string[] args, int minutes)
+        {
+            log?.Report("> " + Path.GetFileName(exe) + " " + string.Join(' ', args));
+            var r = await ProcessRunner.RunAsync(exe, args, timeout: TimeSpan.FromMinutes(minutes), ct: ct);
+            foreach (var line in (r.StdOut + r.StdErr).Split('\n').Where(l => l.Trim().Length > 0).TakeLast(5)) log?.Report(line.Trim());
+            if (r.ExitCode != 0) throw new InvalidOperationException(L.T("{0} failed: {1}", Path.GetFileName(exe), (r.StdErr + r.StdOut).Trim().Split('\n').LastOrDefault()));
+        }
+        if (!File.Exists(vpy)) await Run(py, ["-m", "venv", venv], 5);
+        await Run(vpy, ["-m", "pip", "install", "--upgrade", "pip"], 10);
+        var (label, index) = TorchFlavor();
+        log?.Report(L.T("Installing PyTorch ({0}): this can take a while…", label));
+        try { await Run(vpy, index is null ? ["-m", "pip", "install", "torch"] : ["-m", "pip", "install", "torch", "--index-url", index], 60); }
+        catch (InvalidOperationException) when (index is not null)
+        {
+            log?.Report(L.T("The PyTorch index is not reachable: trying PyPI."));
+            await Run(vpy, ["-m", "pip", "install", "torch"], 60);
+        }
+        await Run(vpy, ["-m", "pip", "install", "spandrel", "numpy"], 20);
+        var check = await ProcessRunner.RunAsync(vpy, ["-c", "import torch, spandrel; print(torch.__version__)"], timeout: TimeSpan.FromMinutes(2), ct: ct);
+        if (check.ExitCode != 0) throw new InvalidOperationException(check.StdErr.Trim());
+        SaveState("ai-runtime", "torch " + check.StdOut.Trim() + " · " + label);
     }
 
     private static string FfmpegVersionLabel(string asset, DateTimeOffset date)

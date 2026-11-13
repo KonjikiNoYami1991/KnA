@@ -33,6 +33,13 @@ public static class Upscalers
 
     public const string FsrcnnxShader = "FSRCNNX_x2_16-0-4-1.glsl";
 
+    /// <summary>
+    /// Explicit Vulkan device for the libplacebo filter (more reliable than its own device search, which also
+    /// skips software devices). $KNA_VULKAN_DEVICE picks one: an index ("1") or a name part ("NVIDIA", "llvmpipe").
+    /// </summary>
+    public static List<string> VulkanDeviceArgs() =>
+        ["-init_hw_device", "vulkan=vk" + (Settings.AppEnv.Get("VULKAN_DEVICE") is { } d ? ":" + d : ""), "-filter_hw_device", "vk"];
+
     public static string ShaderDir(string dataDirectory) => Path.Combine(dataDirectory, "tools", "shaders");
 
     /// <summary>Methods that run in FFmpeg's libplacebo filter.</summary>
