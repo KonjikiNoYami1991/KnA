@@ -6,10 +6,10 @@
     <ResourceDictionary>
       <ResourceDictionary.ThemeDictionaries>
         <ResourceDictionary x:Key="Dark">
-          <SolidColorBrush x:Key="AppBackground" Color="#0D0F15" />
-          <SolidColorBrush x:Key="CardBackground" Color="#171B25" />
-          <SolidColorBrush x:Key="CardBackground2" Color="#1E2330" />
-          <SolidColorBrush x:Key="CardBorder" Color="#2A3040" />
+          <SolidColorBrush x:Key="AppBackground" Color="#0C0A11" />
+          <SolidColorBrush x:Key="CardBackground" Color="#181521" />
+          <SolidColorBrush x:Key="CardBackground2" Color="#201C2B" />
+          <SolidColorBrush x:Key="CardBorder" Color="#2F2A3C" />
           <SolidColorBrush x:Key="MutedText" Color="#8D95A8" />
         </ResourceDictionary>
         <ResourceDictionary x:Key="Light">
@@ -21,8 +21,8 @@
         </ResourceDictionary>
       </ResourceDictionary.ThemeDictionaries>
       <LinearGradientBrush x:Key="AccentGradient" StartPoint="0%,0%" EndPoint="100%,100%">
-        <GradientStop Offset="0" Color="#FF4D8D" />
-        <GradientStop Offset="1" Color="#7C5CFF" />
+        <GradientStop Offset="0" Color="#F5C242" />
+        <GradientStop Offset="1" Color="#D98A2B" />
       </LinearGradientBrush>
       <SolidColorBrush x:Key="OkBrush" Color="#34D399" />
       <SolidColorBrush x:Key="WarnBrush" Color="#FBBF24" />
@@ -52,8 +52,8 @@
   <Application.Styles>
     <FluentTheme>
       <FluentTheme.Palettes>
-        <ColorPaletteResources x:Key="Light" Accent="#7C5CFF" />
-        <ColorPaletteResources x:Key="Dark" Accent="#9B7CFF" />
+        <ColorPaletteResources x:Key="Light" Accent="#B07A12" />
+        <ColorPaletteResources x:Key="Dark" Accent="#F5C242" />
       </FluentTheme.Palettes>
     </FluentTheme>
 
@@ -71,7 +71,7 @@
       <Setter Property="BorderBrush" Value="{StaticResource OkBrush}" />
     </Style>
     <Style Selector="Border.job.selected">
-      <Setter Property="BorderBrush" Value="#9B7CFF" />
+      <Setter Property="BorderBrush" Value="#F5C242" />
     </Style>
     <Style Selector="TextBlock.muted">
       <Setter Property="Foreground" Value="{DynamicResource MutedText}" />
@@ -100,18 +100,18 @@
       <Setter Property="Foreground" Value="{DynamicResource MutedText}" />
     </Style>
     <Style Selector="Border.chip.hw TextBlock">
-      <Setter Property="Foreground" Value="#9B7CFF" />
+      <Setter Property="Foreground" Value="#E0A53A" />
     </Style>
     <Style Selector="Border.chip.bit TextBlock">
-      <Setter Property="Foreground" Value="#FF4D8D" />
+      <Setter Property="Foreground" Value="#F5C242" />
     </Style>
     <Style Selector="Button.primary">
       <Setter Property="Background" Value="{StaticResource AccentGradient}" />
-      <Setter Property="Foreground" Value="White" />
+      <Setter Property="Foreground" Value="#1D1305" />
     </Style>
     <Style Selector="Button.primary:pointerover /template/ ContentPresenter">
       <Setter Property="Background" Value="{StaticResource AccentGradient}" />
-      <Setter Property="Foreground" Value="White" />
+      <Setter Property="Foreground" Value="#1D1305" />
       <Setter Property="Opacity" Value="0.9" />
     </Style>
     <Style Selector="Button.danger">

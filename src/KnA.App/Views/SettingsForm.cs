@@ -1,5 +1,6 @@
 using Avalonia.Controls;
 using Avalonia.Threading;
+using KnA.Core.Ai;
 using KnA.Core.Encoding;
 using KnA.Core.Localization;
 using KnA.Core.Tools;
@@ -19,8 +20,9 @@ public sealed class SettingsForm : StackPanel
 
     public event Action<JobSettings>? Changed;
 
-    public SettingsForm(JobSettings settings, Func<FfmpegCapabilities?> caps, bool full)
+    public SettingsForm(JobSettings settings, Func<FfmpegCapabilities?> caps, bool full, Func<bool>? fdkaac = null)
     {
+        FdkaacAvailable = fdkaac;
         _s = settings;
         _caps = caps;
         _full = full;
@@ -48,13 +50,28 @@ public sealed class SettingsForm : StackPanel
         Changed?.Invoke(s);
     }
 
+    /// <summary>Which AAC encoder will be used (same text as the web UI).</summary>
+    private string AacNote()
+    {
+        var builds = _caps()?.Builds ?? [];
+        if (builds.Any(b => b.Has("libfdk_aac"))) return L.T("AAC: libfdk_aac (Fraunhofer, best quality).");
+        if (builds.Any(b => b.Has("aac_at"))) return L.T("AAC: Apple AudioToolbox (excellent quality).");
+        if (FdkaacAvailable?.Invoke() == true) return L.T("AAC: fdkaac program (Fraunhofer, best quality).");
+        return L.T("AAC: FFmpeg's own encoder. Install fdkaac in Settings → Components for better quality.");
+    }
+
+    /// <summary>Whether the standalone fdkaac was found (given by the window).</summary>
+    private readonly Func<bool>? FdkaacAvailable;
+
     public void Rebuild()
     {
         Children.Clear();
         var s = _s;
         var p = s.ProfileDefinition;
         var codec = p.Kind == ProfileKind.RemuxMp4 ? VideoCodec.H264 : s.EffectiveCodec;
-        bool tenBitPossible = VideoEncoders.Supports10Bit(codec, EncoderBackend.Software) && p.Kind is ProfileKind.UniversalMkv or ProfileKind.Streaming;
+        bool tenBitPossible = VideoEncoders.Supports10Bit(codec, EncoderBackend.Software) && !codec.IsProfessional()
+                              && p.Kind is ProfileKind.UniversalMkv or ProfileKind.Streaming;
+        bool pro = p.Kind == ProfileKind.Professional;
 
         Children.Add(Ui.Field("Profile",
             Ui.Combo(Profiles.All.Select(x => (x.Kind, x.Name)), s.Profile, v => Set(s with { Profile = v, Container = null })),
@@ -92,8 +109,20 @@ public sealed class SettingsForm : StackPanel
             Children.Add(Ui.Field("Encoder", combo, hint));
         }
 
-        if (p.EncodesVideo)
-            Children.Add(Ui.Toggle(L.T("10-bit output") + " (HEVC / AV1)", s.TenBit && tenBitPossible, v => Set(s with { TenBit = v }), tenBitPossible));
+        if (p.EncodesVideo && !pro)
+            Children.Add(Ui.Toggle(L.T("10-bit output") + " (HEVC / AV1 / VP9 / VVC)", s.TenBit && tenBitPossible, v => Set(s with { TenBit = v }), tenBitPossible));
+        if (pro)
+        {
+            var proCtl = new List<Control>();
+            if (codec == VideoCodec.ProRes)
+                proCtl.Add(Ui.Field("ProRes", Ui.Combo(Enum.GetValues<ProResProfile>().Select(x => (x, x.Display())), s.Pro.ProRes, v => Set(s with { Pro = s.Pro with { ProRes = v } }))));
+            if (codec == VideoCodec.DNxHR)
+                proCtl.Add(Ui.Field("DNxHR", Ui.Combo(Enum.GetValues<DnxhrProfile>().Select(x => (x, x.Display())), s.Pro.Dnxhr, v => Set(s with { Pro = s.Pro with { Dnxhr = v } }))));
+            proCtl.Add(Ui.Field("Chroma", Ui.Combo(Enum.GetValues<ChromaFormat>().Select(x => (x, x.Display())), s.Pro.Chroma, v => Set(s with { Pro = s.Pro with { Chroma = v } }))));
+            if (codec is VideoCodec.FFV1 or VideoCodec.FFVHuff or VideoCodec.JPEG2000)
+                proCtl.Add(Ui.Field("Bit depth", Ui.Combo(new[] { 0, 8, 10, 12, 16 }.Select(d => (d, d == 0 ? L.T("Same as the source") : $"{d}-bit")), s.Pro.BitDepth, v => Set(s with { Pro = s.Pro with { BitDepth = v } }))));
+            Children.Add(Ui.Columns([.. proCtl]));
+        }
 
         var resQ = new List<Control>();
         if (p.UsesResolution)
@@ -117,6 +146,50 @@ public sealed class SettingsForm : StackPanel
 
         if (_full && p.UsesVideoFilters)
             Children.Add(Ui.Field("HDR", Ui.Combo(Enum.GetValues<HdrMode>().Select(m => (m, m.Display())), s.Hdr, v => Set(s with { Hdr = v }))));
+
+        if (p.UsesAudio)
+        {
+            bool lossless = s.AudioCodec is AudioCodec.Copy or AudioCodec.Flac or AudioCodec.Alac or AudioCodec.WavPack or AudioCodec.TrueHd
+                or AudioCodec.Pcm16 or AudioCodec.Pcm24 or AudioCodec.Pcm32Float;
+            var audio = new List<Control>
+            {
+                Ui.Field("Audio", Ui.Combo(Enum.GetValues<AudioCodec>().Select(a => (a, a.Display())), s.AudioCodec, v => Set(s with { AudioCodec = v }))),
+            };
+            if (!lossless)
+                audio.Add(Ui.Field("Bitrate (kb/s)", Ui.Number(s.AudioBitrate ?? 0, 0, 1536, 8, v => Set(_s with { AudioBitrate = v > 0 ? (int)v : null }, false), "0"),
+                    L.T("0 = automatic")));
+            Children.Add(Ui.Columns([.. audio]));
+            if (s.AudioCodec is AudioCodec.Auto or AudioCodec.Aac or AudioCodec.HeAac) Children.Add(Ui.Muted(AacNote()));
+        }
+
+        if (p.UsesVideoFilters && p.UsesResolution)
+        {
+            var up = s.Upscale;
+            var exp = new Expander { Header = L.T("Upscaling / AI"), IsExpanded = up.Method != UpscaleMethod.Standard, HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Stretch };
+            var box = new StackPanel { Spacing = 10 };
+            var caps2 = _caps();
+            box.Children.Add(Ui.Field("Method",
+                Ui.Combo(Enum.GetValues<UpscaleMethod>().Select(m => (m, UpscaleText.Display(m) + (Upscalers.UsesLibplacebo(m) && caps2 is { HasLibplacebo: false } ? " — " + L.T("needs libplacebo") : ""))),
+                    up.Method, v => Set(s with { Upscale = up with { Method = v, Model = null } })),
+                UpscaleText.Description(up.Method)));
+            if (up.Method == UpscaleMethod.Anime4K)
+                box.Children.Add(Ui.Field("Anime4K", Ui.Combo(Upscalers.Anime4KModes.Select(m => (m.Id, $"{m.Label} — {m.Description}")), up.Model ?? "A", v => Set(s with { Upscale = up with { Model = v } }))));
+            if (up.Method == UpscaleMethod.Neural)
+            {
+                var models = UpscaleModels.All.Select(m => (m.Id, m.Name)).ToList();
+                var cur = up.Model ?? UpscaleModels.All[0].Id;
+                if (models.All(m => m.Id != cur)) models.Add((cur, Path.GetFileName(cur)));
+                box.Children.Add(Ui.Field("Model", Ui.Combo(models, cur, v => Set(s with { Upscale = up with { Model = v } })),
+                    UpscaleModels.All.FirstOrDefault(m => m.Id == cur)?.Description ?? L.T("Local model file")));
+            }
+            if (up.Method != UpscaleMethod.Standard)
+            {
+                box.Children.Add(Ui.Toggle(L.T("Also at the same size (restoration only)"), up.AlwaysApply, v => Set(_s with { Upscale = _s.Upscale with { AlwaysApply = v } }, false)));
+                box.Children.Add(Ui.Muted(L.T("Used when the chosen resolution is above the source.")));
+            }
+            exp.Content = box;
+            Children.Add(exp);
+        }
 
         if (p.EncodesVideo)
         {

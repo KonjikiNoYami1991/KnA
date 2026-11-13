@@ -590,13 +590,12 @@ public sealed class JobEditorWindow : Window
     private Control OutputTab()
     {
         var p = _settings.ProfileDefinition;
-        var form = new SettingsForm(_settings, () => _queue.Settings.Capabilities, full: true) { AllowedContainers = _a!.AllowedContainers };
+        var form = new SettingsForm(_settings, () => _queue.Settings.Capabilities, full: true, () => _queue.Tools?.Fdkaac is not null) { AllowedContainers = _a!.AllowedContainers };
         form.Changed += s => { _settings = s; Save(true); };
 
         var right = new StackPanel { Spacing = 14 };
-        if (p.IsImages || p.IsDemux)
         {
-            var folder = Ui.Text(_edit.OutputFolder, x => { _edit = _edit with { OutputFolder = string.IsNullOrWhiteSpace(x) ? null : x.Trim() }; Save(); }, L.T("Next to the source file"));
+            var folder = Ui.Text(_edit.OutputFolder, x => { _edit = _edit with { OutputFolder = string.IsNullOrWhiteSpace(x) ? null : x.Trim() }; Save(); }, L.T("Same as the general setting"));
             var browse = Ui.Button("…", async () =>
             {
                 var r = await StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions());
@@ -608,6 +607,21 @@ public sealed class JobEditorWindow : Window
             dp.Children.Add(browse); dp.Children.Add(folder);
             right.Children.Add(Ui.Field("Destination folder", dp));
         }
+        var aiAnalyse = Ui.Button(L.T("Analyse frames with AI"), async () =>
+        {
+            var w = new AiAssistantWindow(_queue, _settings, _job, analyse: true) { Icon = Icon };
+            await w.ShowDialog(this);
+            if (w.Accepted is { } accepted) { _settings = accepted with { PresetName = null }; Save(true); }
+        });
+        right.Children.Add(Ui.Card(new StackPanel
+        {
+            Spacing = 8,
+            Children =
+            {
+                Ui.H2(L.T("AI assistant")), aiAnalyse,
+                Ui.Muted(L.T("A vision model looks at a few frames and proposes filters and the upscaler. Nothing changes until you apply it.")),
+            },
+        }));
         if (p.IsDemux)
         {
             var streams = _a.Source.AllStreams.Where(s => s.Kind != "attachment").ToList();

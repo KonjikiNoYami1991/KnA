@@ -28,6 +28,8 @@ public sealed partial class MainViewModel : ObservableObject
     private readonly Dictionary<Guid, JobViewModel> _byId = [];
 
     public QueueService Queue { get; }
+    /// <summary>Watch folders run in the desktop app too (same settings as the web edition).</summary>
+    public WatchFolderService Watch { get; }
     public IDialogService? Dialogs { get; set; }
     public ObservableCollection<JobViewModel> Jobs { get; } = [];
     public ObservableCollection<HardwareRow> Hardware { get; } = [];
@@ -67,8 +69,9 @@ public sealed partial class MainViewModel : ObservableObject
         Jobs.CollectionChanged += (_, _) => OnPropertyChanged(nameof(IsEmpty));
 
         FormSettings = queue.Settings.Defaults;
+        Watch = new WatchFolderService(queue);
         RefreshHardware();
-        if (queue.Tools is not null && queue.Settings.Capabilities is null)
+        if (queue.Tools is not null && queue.Settings.Capabilities is not { IsCurrent: true })
             _ = DetectHardwareAsync();
     }
 
@@ -127,6 +130,34 @@ public sealed partial class MainViewModel : ObservableObject
     {
         var settings = preset is not null && Queue.Presets.Get(preset) is { } p ? p.Settings with { PresetName = p.Name } : CurrentSettings();
         Queue.AddPaths(paths, settings, Queue.Settings.FolderExtensions);
+    }
+
+    /// <summary>
+    /// Smart drop: videos, discs and folders are queued, subtitles/audio/fonts join the job they were dropped on
+    /// (or the video with the same name), presets are imported. Rejects, duplicates and big folders are confirmed first.
+    /// </summary>
+    public async Task DropAsync(IReadOnlyList<string> paths, Guid? targetJob = null)
+    {
+        var plan = DropClassifier.Classify(paths, Queue, targetJob);
+        if (Dialogs is not null && (plan.NeedsConfirmation || !plan.HasWork))
+        {
+            string Describe(DropItem i) => i.Kind switch
+            {
+                DropKind.Video => L.T("queued"),
+                DropKind.Disc => L.T("disc: every title is queued"),
+                DropKind.Folder => L.T("folder: {0} video(s), {1} disc(s)", i.Videos, i.Discs),
+                DropKind.External => L.T("attached to its video"),
+                DropKind.Preset => L.T("preset imported"),
+                _ => i.Reason ?? i.Kind.ToString(),
+            };
+            var lines = string.Join("\n", plan.Items.Take(30).Select(i => $"• {Path.GetFileName(i.Path.TrimEnd('/', '\\'))} — {Describe(i)}"));
+            if (plan.Items.Count > 30) lines += "\n…";
+            if (!plan.HasWork) { await Dialogs.ShowTextAsync(L.T("Nothing to do."), lines); return; }
+            if (!await Dialogs.ConfirmAsync("KnA", L.T("KnA will do this:") + "\n\n" + lines + "\n\n" + L.T("Continue?"))) return;
+        }
+        var r = await DropClassifier.ApplyAsync(plan, Queue, CurrentSettings());
+        if (r.Presets > 0) { OnPropertyChanged(nameof(Presets)); FormReloaded?.Invoke(); }
+        if (r.Messages.Count > 0 && Dialogs is not null) await Dialogs.ShowTextAsync("KnA", string.Join("\n", r.Messages));
     }
 
     public async Task OpenEditorAsync(JobViewModel j, string tab = "tracks")
@@ -301,12 +332,22 @@ public sealed partial class MainViewModel : ObservableObject
         }
         foreach (var b in VideoEncoders.AllBackends)
         {
+            if (b == EncoderBackend.Vulkan && !caps.Encoders.Any(e => e.Backend == b && e.Compiled)) continue;
             if (b == EncoderBackend.VideoToolbox && !OperatingSystem.IsMacOS()) continue;
             if (b == EncoderBackend.Vaapi && !OperatingSystem.IsLinux()) continue;
             if (b == EncoderBackend.Amf && OperatingSystem.IsMacOS()) continue;
             Hardware.Add(new HardwareRow { Name = b.Short(), H264 = Cell(VideoCodec.H264, b), Hevc = Cell(VideoCodec.HEVC, b), Av1 = Cell(VideoCodec.AV1, b) });
         }
-        HardwareInfo = $"{caps.Version.Replace("ffmpeg version ", "FFmpeg ").Split(" Copyright")[0]} · libass {(caps.HasLibass ? "✓" : "✕")}";
+        // The table shows H.264/HEVC/AV1; the other codecs that work are listed with their backends.
+        var others = caps.Encoders.Where(e => e.Usable && e.Codec is not (VideoCodec.H264 or VideoCodec.HEVC or VideoCodec.AV1))
+            .GroupBy(e => e.Codec).Select(g => $"{g.Key.Short()} ({string.Join("/", g.Select(e => e.Backend.Short()).Distinct())})");
+        var main = caps.Main;
+        string aac = caps.Builds.Any(b => b.Has("libfdk_aac")) ? "libfdk_aac" : caps.Builds.Any(b => b.Has("aac_at")) ? "AudioToolbox" : Queue.Tools?.Fdkaac is not null ? "fdkaac" : "FFmpeg";
+        HardwareInfo = $"{caps.Version.Replace("ffmpeg version ", "FFmpeg ").Split(" Copyright")[0]}"
+                       + (caps.Builds.Count > 1 ? " + " + L.T("{0} custom build(s)", caps.Builds.Count - 1) : "")
+                       + $" · libass {(caps.HasLibass ? "✓" : "✕")} · libplacebo {(caps.HasLibplacebo ? "✓" : "✕")}"
+                       + $" · Blu-ray {(main?.HasBluray == true ? "✓" : "✕")} · DVD {(main?.HasDvdVideo == true ? "✓" : "✕")} · AAC {aac}"
+                       + "\n" + L.T("Also: {0}", string.Join(", ", others));
     }
 
     [RelayCommand]

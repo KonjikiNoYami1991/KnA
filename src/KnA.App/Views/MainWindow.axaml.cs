@@ -16,14 +16,21 @@ public partial class MainWindow : Window, IDialogService
     public MainWindow()
     {
         InitializeComponent();
+        // Smart drag & drop: overlay while dragging, a job under the pointer receives subtitles/audio/fonts.
+        AddHandler(DragDrop.DragEnterEvent, (_, e) => DropOverlay.IsVisible = e.Data.Contains(DataFormats.Files));
+        AddHandler(DragDrop.DragLeaveEvent, (_, _) => DropOverlay.IsVisible = false);
         AddHandler(DragDrop.DragOverEvent, (_, e) =>
         {
             e.DragEffects = e.Data.Contains(DataFormats.Files) ? DragDropEffects.Copy : DragDropEffects.None;
+            DropHint.Text = JobUnder(e.Source) is { } j
+                ? L.T("Drop on \"{0}\": subtitles, audio and fonts are attached to it.", j.FileName)
+                : L.T("Videos, discs and folders are queued, subtitles / audio / fonts join their video, presets are imported.");
         });
-        AddHandler(DragDrop.DropEvent, (_, e) =>
+        AddHandler(DragDrop.DropEvent, async (_, e) =>
         {
+            DropOverlay.IsVisible = false;
             var paths = e.Data.GetFiles()?.Select(f => f.TryGetLocalPath()).OfType<string>().ToList();
-            if (paths is { Count: > 0 } && DataContext is MainViewModel vm) vm.AddPaths(paths);
+            if (paths is { Count: > 0 } && DataContext is MainViewModel vm) await vm.DropAsync(paths, JobUnder(e.Source)?.Id);
         });
         KeyDown += async (_, e) =>
         {
@@ -64,6 +71,13 @@ public partial class MainWindow : Window, IDialogService
 
     private bool _closeConfirmed;
 
+    private static JobViewModel? JobUnder(object? source)
+    {
+        for (var c = source as Control; c is not null; c = c.Parent as Control)
+            if (c.DataContext is JobViewModel j) return j;
+        return null;
+    }
+
     /// <summary>Side panel: preset picker + wizard, then the shared settings form.</summary>
     private void BuildQuickPanel(MainViewModel vm)
     {
@@ -77,6 +91,15 @@ public partial class MainWindow : Window, IDialogService
         var wizard = IconButton("IconWand");
         ToolTip.SetTip(wizard, L.T("Preset wizard"));
         wizard.Click += async (_, _) => await vm.RunWizardAsync();
+        var aiButton = IconButton("IconWand");
+        aiButton.Content = new TextBlock { Text = "AI", FontWeight = Avalonia.Media.FontWeight.Bold, FontSize = 12 };
+        ToolTip.SetTip(aiButton, L.T("Ask the AI assistant"));
+        aiButton.Click += async (_, _) =>
+        {
+            var w = new AiAssistantWindow(vm.Queue, vm.FormSettings) { Icon = Icon };
+            await w.ShowDialog(this);
+            if (w.Accepted is { } s) { vm.FormSettings = s with { PresetName = null }; BuildQuickPanel(vm); }
+        };
         var saveAs = IconButton("IconSave");
         ToolTip.SetTip(saveAs, L.T("Save as preset"));
         saveAs.Click += async (_, _) =>
@@ -94,13 +117,13 @@ public partial class MainWindow : Window, IDialogService
         delete.Click += async (_, _) => { if (current is not null) await vm.DeletePresetAsync(current); };
 
         var row = new DockPanel();
-        var buttons = Ui.Row(4, wizard, saveAs, delete);
+        var buttons = Ui.Row(4, wizard, aiButton, saveAs, delete);
         buttons.Margin = new Thickness(6, 0, 0, 0);
         DockPanel.SetDock(buttons, Dock.Right);
         row.Children.Add(buttons);
         row.Children.Add(combo);
 
-        var form = new SettingsForm(vm.FormSettings, () => vm.Queue.Settings.Capabilities, full: false);
+        var form = new SettingsForm(vm.FormSettings, () => vm.Queue.Settings.Capabilities, full: false, () => vm.Queue.Tools?.Fdkaac is not null);
         form.Changed += s =>
         {
             // Any manual change detaches the form from its preset.
@@ -150,7 +173,7 @@ public partial class MainWindow : Window, IDialogService
         else if (await Clipboard.GetTextAsync() is { } text)
             paths.AddRange(text.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries));
 #pragma warning restore CS0618
-        if (paths.Count > 0) vm.AddPaths(paths);
+        if (paths.Count > 0) await vm.DropAsync(paths);
     }
 
     // ------------------------------------------------------------------ IDialogService
@@ -203,7 +226,7 @@ public partial class MainWindow : Window, IDialogService
         return result;
     }
 
-    public Task ShowSettingsAsync(MainViewModel vm, string tab = "general") => new SettingsWindow(vm.Queue, tab) { Icon = Icon }.ShowDialog(this);
+    public Task ShowSettingsAsync(MainViewModel vm, string tab = "general") => new SettingsWindow(vm.Queue, tab, vm.Watch) { Icon = Icon }.ShowDialog(this);
 
     public Task ShowEditorAsync(MainViewModel vm, QueueJob job, string tab) => new JobEditorWindow(vm.Queue, job, tab) { Icon = Icon }.ShowDialog(this);
 
