@@ -94,6 +94,14 @@ public static class JobRunner
                 sideFiles = await ExtractHdrMetadataAsync(job, check.Hdr, workDir, ctx, ct);
             }
 
+            if (baseCtx.Upscale is { ModelPath: { } model, ModelKnown: true } && !File.Exists(model))
+            {
+                job.Stage = L.T("Downloading the AI model");
+                ctx.Changed(job);
+                job.AppendLog("AI model: downloading " + Path.GetFileName(model));
+                await Ai.UpscaleModels.EnsureAsync(job.Settings.Upscale.Model, ctx.Store.DataDirectory, null, ct);
+            }
+
             var scriptAudio = await RenderScriptAudioAsync(check.Tracks, workDir, ctx, job, ct);
             baseCtx = baseCtx with { ScriptAudio = scriptAudio };
             var preEncoded = await PreEncodeExternalAudioAsync(job, baseCtx, check, workDir, ctx, ct);
@@ -159,9 +167,9 @@ public static class JobRunner
         }
     }
 
-    public static CompileContext BuildContext(QueueJob job, RunnerContext ctx) => BuildContext(job, ctx.Settings, ctx.Tools);
+    public static CompileContext BuildContext(QueueJob job, RunnerContext ctx) => BuildContext(job, ctx.Settings, ctx.Tools, ctx.Store.DataDirectory);
 
-    public static CompileContext BuildContext(QueueJob job, AppSettings settings, FfmpegTools? tools)
+    public static CompileContext BuildContext(QueueJob job, AppSettings settings, FfmpegTools? tools, string? dataDirectory = null)
     {
         var media = new Dictionary<string, MediaInfo>(job.ExternalMedia) { [job.SourcePath] = job.Media! };
         var caps = settings.Capabilities;
@@ -185,6 +193,25 @@ public static class JobRunner
                 AudioEncoders = AudioEncodersFor(caps, tools),
             },
             Hdr = new HdrEnvironment(caps?.HasZscale ?? true, caps?.HasLibplacebo ?? false, tools?.DoviTool is not null, tools?.Hdr10PlusTool is not null),
+            Upscale = dataDirectory is null ? null : UpscaleEnvironmentFor(job.Settings, settings, tools, dataDirectory),
+        };
+    }
+
+    /// <summary>Shader file, Python, sidecar script and model of the job's upscaling method (null when not used).</summary>
+    public static UpscaleEnvironment? UpscaleEnvironmentFor(JobSettings s, AppSettings settings, FfmpegTools? tools, string dataDirectory)
+    {
+        if (s.Upscale.Method == UpscaleMethod.Standard) return null;
+        var env = new UpscaleEnvironment
+        {
+            Ffmpeg = tools?.Ffmpeg ?? "ffmpeg", Ai = settings.Ai,
+            ShaderFile = Ai.Upscalers.ShaderFile(s.Upscale, dataDirectory),
+        };
+        if (s.Upscale.Method != UpscaleMethod.Neural) return env;
+        var (path, scale, known) = Ai.UpscaleModels.Resolve(s.Upscale.Model, dataDirectory);
+        return env with
+        {
+            Python = Ai.UpscaleSidecar.Python(settings.Ai, dataDirectory), Script = Ai.UpscaleSidecar.Script(),
+            ModelPath = path, ModelScale = scale, ModelKnown = known is not null,
         };
     }
 
@@ -529,9 +556,17 @@ public static class JobRunner
         Process? vs = null;
         if (pipe is not null)
         {
-            if (vspipe is null) throw new InvalidOperationException(L.T("vspipe was not found: install VapourSynth (or set KNA_VSPIPE)."));
-            vs = new Process { StartInfo = ProcessRunner.CreateStartInfo(vspipe, Frameserver.VsPipeVideoArgs(pipe.Script, pipe.StartFrame, pipe.EndFrame), workDir) };
-            vs.ErrorDataReceived += (_, e) => { if (e.Data is not null && !e.Data.StartsWith("Output ", StringComparison.Ordinal)) onStderr?.Invoke("[vspipe] " + e.Data); };
+            if (pipe.Command is { Count: > 0 } cmd)
+            {
+                vs = new Process { StartInfo = ProcessRunner.CreateStartInfo(cmd[0], cmd.Skip(1), workDir) };
+                vs.ErrorDataReceived += (_, e) => { if (e.Data is not null) onStderr?.Invoke(e.Data.StartsWith("[kna-ai]", StringComparison.Ordinal) ? e.Data : "[kna-ai] " + e.Data); };
+            }
+            else
+            {
+                if (vspipe is null) throw new InvalidOperationException(L.T("vspipe was not found: install VapourSynth (or set KNA_VSPIPE)."));
+                vs = new Process { StartInfo = ProcessRunner.CreateStartInfo(vspipe, Frameserver.VsPipeVideoArgs(pipe.Script, pipe.StartFrame, pipe.EndFrame), workDir) };
+                vs.ErrorDataReceived += (_, e) => { if (e.Data is not null && !e.Data.StartsWith("Output ", StringComparison.Ordinal)) onStderr?.Invoke("[vspipe] " + e.Data); };
+            }
             vs.Start();
             SetPriority(vs, priority);
             group.Add(vs);

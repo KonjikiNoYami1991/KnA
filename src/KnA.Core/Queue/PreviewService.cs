@@ -38,10 +38,10 @@ public sealed class PreviewService(QueueService queue)
         {
             var media = await EnsureMedia(job, ct);
             var settings = final ? job.Settings : job.Settings with { VideoFilters = new(), Resolution = 0, Profile = ProfileKind.UniversalMkv };
-            var planned = JobRunner.BuildContext(job, queue.Settings, queue.Tools).Edit;
+            var planned = JobRunner.BuildContext(job, queue.Settings, queue.Tools, queue.Store.DataDirectory).Edit;
             var edit = final ? planned : planned with { Tracks = (planned.Tracks ?? TrackPlanner.Default(media, job.Settings)).Select(t => t with { Burn = false }).ToList() };
             PreparedSubtitles? subs = final ? await PrepareBurnAsync(job, dir, ct) : null;
-            var ctx = JobRunner.BuildContext(job, queue.Settings, queue.Tools) with
+            var ctx = JobRunner.BuildContext(job, queue.Settings, queue.Tools, queue.Store.DataDirectory) with
             {
                 Settings = settings with { Profile = settings.ProfileDefinition.UsesVideoFilters ? settings.Profile : ProfileKind.UniversalMkv },
                 Edit = edit with { TrimStart = null, TrimEnd = null },
@@ -117,7 +117,7 @@ public sealed class PreviewService(QueueService queue)
         {
             await EnsureMedia(job, ct);
             var subs = await PrepareBurnAsync(job, dir, ct);
-            var baseCtx = JobRunner.BuildContext(job, queue.Settings, queue.Tools);
+            var baseCtx = JobRunner.BuildContext(job, queue.Settings, queue.Tools, queue.Store.DataDirectory);
             var ctx = baseCtx with
             {
                 Edit = baseCtx.Edit with { TrimStart = null, TrimEnd = null },
@@ -211,7 +211,7 @@ public sealed class PreviewService(QueueService queue)
     private async Task<PreparedSubtitles?> PrepareBurnAsync(QueueJob job, string dir, CancellationToken ct)
     {
         var media = await EnsureMedia(job, ct);
-        var tracks = JobRunner.BuildContext(job, queue.Settings, queue.Tools).Edit.Tracks ?? TrackPlanner.Default(media, job.Settings);
+        var tracks = JobRunner.BuildContext(job, queue.Settings, queue.Tools, queue.Store.DataDirectory).Edit.Tracks ?? TrackPlanner.Default(media, job.Settings);
         if (!job.Settings.ProfileDefinition.UsesVideoFilters || tracks.FirstOrDefault(t => t.Burn && t.Kind == "subtitle") is not { } burn) return null;
         var subDir = Path.Combine(dir, "subs-" + Hash($"{burn.File}|{burn.Stream}|{burn.DelayMs}|{string.Join(',', job.Edit.ExternalFiles)}"));
         Directory.CreateDirectory(subDir);
@@ -258,7 +258,7 @@ public sealed class PreviewService(QueueService queue)
     /// <summary>Script audio for clip previews, rendered once per job.</summary>
     private async Task<IReadOnlyDictionary<string, string>> ScriptAudioAsync(QueueJob job, string dir, CancellationToken ct)
     {
-        var tracks = JobRunner.BuildContext(job, queue.Settings, queue.Tools).Edit.Tracks
+        var tracks = JobRunner.BuildContext(job, queue.Settings, queue.Tools, queue.Store.DataDirectory).Edit.Tracks
                      ?? TrackPlanner.Default(job.Media!, job.Settings, frameserver: JobRunner.FrameserverMedia(job));
         if (!tracks.Any(t => t.Include && t.Kind == "audio" && Frameserver.IsVapourSynth(t.File))) return new Dictionary<string, string>();
         var ctx = new RunnerContext(queue.Tools!, queue.Settings, queue.Store, new ProcessGroup(), _ => { });

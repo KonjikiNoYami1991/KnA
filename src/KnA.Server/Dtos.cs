@@ -1,3 +1,4 @@
+using KnA.Core.Ai;
 using KnA.Core.Encoding;
 using KnA.Core.Localization;
 using KnA.Core.Media;
@@ -39,6 +40,23 @@ public sealed record OptionsDto(
     IReadOnlyList<OptionDto> HdrModes, IReadOnlyList<OptionDto> Strengths, IReadOnlyList<OptionDto> Deinterlace,
     IReadOnlyList<OptionDto> ImageFormats, IReadOnlyList<OptionDto> ImageModes)
 {
+    public IReadOnlyList<OptionDto> AudioCodecs { get; init; } = Enum.GetValues<AudioCodec>().Select(a => new OptionDto(a.ToString(), a.Display())).ToList();
+    public IReadOnlyList<OptionDto> ProResProfiles { get; init; } = Enum.GetValues<ProResProfile>().Select(a => new OptionDto(a.ToString(), a.Display())).ToList();
+    public IReadOnlyList<OptionDto> DnxhrProfiles { get; init; } = Enum.GetValues<DnxhrProfile>().Select(a => new OptionDto(a.ToString(), a.Display())).ToList();
+    public IReadOnlyList<OptionDto> ChromaFormats { get; init; } = Enum.GetValues<ChromaFormat>().Select(a => new OptionDto(a.ToString(), a.Display())).ToList();
+    public IReadOnlyList<OptionDto> UpscaleMethods { get; init; } = Enum.GetValues<UpscaleMethod>().Select(a => new OptionDto(a.ToString(), a.Display(), a.Description())).ToList();
+    public IReadOnlyList<OptionDto> Anime4KModes { get; init; } = KnA.Core.Ai.Upscalers.Anime4KModes.Select(m => new OptionDto(m.Id, m.Label, m.Description)).ToList();
+    public IReadOnlyList<OptionDto> NeuralModels { get; init; } = KnA.Core.Ai.UpscaleModels.All.Select(m => new OptionDto(m.Id, m.Name, m.Description)).ToList();
+    public IReadOnlyList<OptionDto> LlmProviders { get; init; } = KnA.Core.Ai.AiSettings.Providers.Select(p => new OptionDto(p.Id, p.Name, p.DefaultUrl + (p.Notes.Length > 0 ? " · " + p.Notes : ""))).ToList();
+    public IReadOnlyList<OptionDto> WatchActions { get; init; } =
+    [
+        new("Keep", L.T("Leave the source where it is")),
+        new("MoveToDoneFolder", L.T("Move the source into \"_done\"")),
+        new("Delete", L.T("Delete the source")),
+    ];
+    /// <summary>Which codecs allow a 10-bit switch, per codec (the UI greys it out otherwise).</summary>
+    public IReadOnlyList<string> TenBitCodecs { get; init; } = Enum.GetValues<VideoCodec>().Where(c => VideoEncoders.Supports10Bit(c, EncoderBackend.Software) && !c.IsProfessional()).Select(c => c.ToString()).ToList();
+
     public static OptionsDto Create() => new(
         Core.Encoding.Profiles.All.Select(p => new ProfileDto(p.Kind.ToString(), p.Name, p.Description, p.Codecs, p.AllowsHardware,
             p.UsesQuality, p.UsesResolution, p.UsesSubtitleMode, p.Container, p.Containers,
@@ -58,9 +76,9 @@ public sealed record OptionsDto(
         Enum.GetValues<ImageMode>().Select(m => new OptionDto(m.ToString(), m.Display())).ToList());
 }
 
-public sealed record ToolsDto(string? Ffmpeg, string? Ffprobe, string? Scxvid, string? DoviTool, string? Hdr10PlusTool, string Instructions, string? VsPipe = null);
+public sealed record ToolsDto(string? Ffmpeg, string? Ffprobe, string? Scxvid, string? DoviTool, string? Hdr10PlusTool, string Instructions, string? VsPipe = null, string? Fdkaac = null);
 
-public sealed record StateDto(string Version, string Platform, string Language, AppSettings Settings, OptionsDto Options, ToolsDto Tools,
+public sealed record StateDto(string Version, string Platform, string Language, System.Text.Json.Nodes.JsonNode? Settings, OptionsDto Options, ToolsDto Tools,
     QueueStateDto Queue, IReadOnlyList<JobDto> Jobs, bool PowerActionsAllowed, IReadOnlyList<Preset> Presets);
 
 public sealed record StreamDto(int Index, string Kind, string Codec, string? Language, string? Title, string? Details, bool Default, bool Forced);
@@ -103,10 +121,14 @@ public sealed record SettingsUpdate(
     string? FfmpegPath, string? VaapiDevice, string? OutputDirectory, JobSettings? Defaults,
     PostQueueAction? PostAction, string? ExtraArguments, List<string>? FolderExtensions, string? Theme, bool? CheckUpdatesOnStart,
     string? Language = null, bool? RestoreQueue = null, string? OutputNameTemplate = null, ProcessPriority? Priority = null,
-    int? StallTimeoutMinutes = null, int? KeepLogs = null, string? TempDirectory = null);
+    int? StallTimeoutMinutes = null, int? KeepLogs = null, string? TempDirectory = null,
+    List<string>? CustomFfmpegBuilds = null, Dictionary<string, string>? ToolPaths = null, string? FfmpegChannel = null,
+    bool? DiscAllTitles = null, int? DiscMinMinutes = null, KnA.Core.Ai.AiSettings? Ai = null);
 
-public sealed record BrowseEntry(string Name, string Path, bool IsDirectory, long Size);
-public sealed record BrowseResult(string? Path, string? Parent, IReadOnlyList<BrowseEntry> Entries, IReadOnlyList<string> Roots);
+public sealed record UploadCreate(string Name, long Size, string? Folder);
+public sealed record UploadComplete(bool Enqueue, JobSettings? Settings, string? Preset, Guid? AttachTo);
+public sealed record DropRequest(List<string> Paths, Guid? TargetJob, JobSettings? Settings);
+public sealed record FolderRequest(string Path);
 
 public static class Mapping
 {
@@ -121,5 +143,17 @@ public static class Mapping
 
     public static ToolsDto Tools(QueueService q) => new(q.Tools?.Ffmpeg, q.Tools?.Ffprobe, q.Tools?.Scxvid, q.Tools?.DoviTool, q.Tools?.Hdr10PlusTool,
         OperatingSystem.IsMacOS() ? L.T("On macOS update FFmpeg with Homebrew: brew upgrade ffmpeg")
-        : L.T("Install FFmpeg from Settings → Components, or with your package manager."), q.Tools?.VsPipe);
+        : L.T("Install FFmpeg from Settings → Components, or with your package manager."), q.Tools?.VsPipe, q.Tools?.Fdkaac);
+
+    /// <summary>Settings as sent to browsers: the LLM API key never leaves the server.</summary>
+    public static System.Text.Json.Nodes.JsonNode? PublicSettings(AppSettings s, System.Text.Json.JsonSerializerOptions o)
+    {
+        var node = System.Text.Json.JsonSerializer.SerializeToNode(s, o);
+        if (node?["ai"] is System.Text.Json.Nodes.JsonObject ai)
+        {
+            ai.Remove("apiKey");
+            ai["hasApiKey"] = s.Ai.HasApiKey;
+        }
+        return node;
+    }
 }

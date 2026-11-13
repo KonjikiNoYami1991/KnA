@@ -15,7 +15,7 @@ public static class KeyframeGenerator
     public static async Task<string> RunAsync(QueueJob job, RunnerContext ctx, CancellationToken ct)
     {
         var media = job.Media!;
-        var dir = string.IsNullOrWhiteSpace(ctx.Settings.OutputDirectory) ? job.Folder : ctx.Settings.OutputDirectory!;
+        var dir = job.Edit.OutputFolder ?? (string.IsNullOrWhiteSpace(ctx.Settings.OutputDirectory) ? job.Folder : ctx.Settings.OutputDirectory!);
         var output = Path.Combine(dir, KnA.Core.Media.Discs.DiscSource.DisplayName(job.SourcePath) + " - Keyframes.txt");
         for (int i = 2; File.Exists(output); i++)
             output = Path.Combine(dir, $"{KnA.Core.Media.Discs.DiscSource.DisplayName(job.SourcePath)} - Keyframes ({i}).txt");

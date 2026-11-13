@@ -226,7 +226,7 @@ public sealed record JobEdit
     /// <summary>Explicit output tracks in order; null = automatic (based on the subtitle mode).</summary>
     public List<TrackPlan>? Tracks { get; init; }
     public bool KeepChapters { get; init; } = true;
-    /// <summary>Destination folder for demux / image export, null = next to the source.</summary>
+    /// <summary>Destination folder of this job (watch folders, editor), null = the global output folder or next to the source.</summary>
     public string? OutputFolder { get; init; }
 
     [JsonIgnore] public bool IsTrimmed => TrimStart is > 0 || TrimEnd is > 0;

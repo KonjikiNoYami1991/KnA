@@ -43,11 +43,13 @@ public static class FilterBuilder
         return chain;
     }
 
-    public static List<string> VideoPost(VideoStream croppedVideo, JobSettings s, string? burnTextFilter)
+    /// <param name="scaleOverride">Replaces the resize step (GPU / AI upscaling).</param>
+    public static List<string> VideoPost(VideoStream croppedVideo, JobSettings s, string? burnTextFilter, string? scaleOverride = null)
     {
         var f = s.VideoFilters;
         var chain = new List<string>();
-        if (ScaleCalculator.Compute(croppedVideo, s.ProfileDefinition.UsesResolution ? s.Resolution : 0) is { } scale)
+        if (scaleOverride is not null) chain.Add(scaleOverride);
+        else if (ScaleCalculator.Compute(croppedVideo, s.ProfileDefinition.UsesResolution ? s.Resolution : 0) is { } scale)
             chain.Add(ScaleCalculator.ToFilter(scale));
         switch (f.Sharpen)
         {

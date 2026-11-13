@@ -108,7 +108,11 @@ public sealed class QueueService : IDisposable
 
     // ---------------------------------------------------------------- adding / editing
 
-    public IReadOnlyList<QueueJob> AddPaths(IEnumerable<string> paths, JobSettings settings, IEnumerable<string>? folderExtensions = null)
+    public IReadOnlyList<QueueJob> AddPaths(IEnumerable<string> paths, JobSettings settings, IEnumerable<string>? folderExtensions = null) =>
+        AddPaths(paths, settings, folderExtensions, null);
+
+    /// <summary>Adds files, folders (recursive) and discs; <paramref name="edit"/> is the starting edit of every new job (e.g. its output folder).</summary>
+    public IReadOnlyList<QueueJob> AddPaths(IEnumerable<string> paths, JobSettings settings, IEnumerable<string>? folderExtensions, JobEdit? edit)
     {
         var exts = (folderExtensions ?? Settings.FolderExtensions).Select(e => e.ToLowerInvariant()).ToHashSet();
         var files = new List<string>();
@@ -151,6 +155,7 @@ public sealed class QueueService : IDisposable
             foreach (var f in files)
             {
                 var job = new QueueJob { SourcePath = Media.Discs.DiscSource.IsTitlePath(f) ? f : Path.GetFullPath(f), Settings = settings };
+                if (edit is not null) job.Edit = edit;
                 _jobs.Add(job);
                 added.Add(job);
             }
@@ -169,7 +174,7 @@ public sealed class QueueService : IDisposable
         Task.Run(() => Media.Discs.DiscSource.TitlePathsAsync(disc, Tools?.Ffprobe, Settings.DiscAllTitles)).GetAwaiter().GetResult();
 
     /// <summary>Files written by KnA itself ("Name [Profile …].ext") are skipped when importing folders.</summary>
-    private static bool IsOwnOutput(string file)
+    public static bool IsOwnOutput(string file)
     {
         var n = Path.GetFileNameWithoutExtension(file);
         return n.EndsWith(']') && n.Contains(" [", StringComparison.Ordinal)
@@ -240,6 +245,28 @@ public sealed class QueueService : IDisposable
         return analysis;
     }
 
+    /// <summary>
+    /// Adds external files to a job and switches them on: audio and fonts are included, a subtitle is burned
+    /// when the job burns subtitles (replacing the automatic choice), kept as a track otherwise.
+    /// </summary>
+    public async Task<JobAnalysis> AttachExternalsAsync(Guid id, IReadOnlyList<string> files, CancellationToken ct = default)
+    {
+        var j = Find(id) ?? throw new KeyNotFoundException();
+        var newFiles = files.Where(f => f != j.SourcePath && !j.Edit.ExternalFiles.Contains(f)).ToList();
+        if (newFiles.Count == 0) return await AnalyzeAsync(j, ct);
+        var withFiles = j.Edit with { ExternalFiles = [.. j.Edit.ExternalFiles, .. newFiles] };
+        var a = await SetEditAsync(id, withFiles, ct);
+        bool burn = j.Settings.EffectiveSubtitles == SubtitleMode.Hardsub && j.Settings.ProfileDefinition.UsesVideoFilters;
+        var newSub = burn ? a.Tracks.FirstOrDefault(t => newFiles.Contains(t.File) && t.Kind == "subtitle") : null;
+        var tracks = a.Tracks.Select(t =>
+        {
+            if (newSub is not null && t.Kind == "subtitle") t = t with { Burn = t == newSub, Include = t != newSub && t.Include };
+            if (!newFiles.Contains(t.File) || t == newSub) return t;
+            return t.Kind is "audio" or "attachment" or "subtitle" ? t with { Include = true } : t;
+        }).ToList();
+        return await SetEditAsync(id, withFiles with { Tracks = tracks }, ct);
+    }
+
     /// <summary>Probes the files (when needed) and returns the effective plan, validation and command.</summary>
     public async Task<JobAnalysis> AnalyzeAsync(QueueJob j, CancellationToken ct = default)
     {
@@ -260,7 +287,7 @@ public sealed class QueueService : IDisposable
         tracks = [.. tracks, .. extra];
 
         var p = j.Settings.ProfileDefinition;
-        var ctx = JobRunner.BuildContext(j, Settings, tools) with { Edit = edit with { Tracks = tracks } };
+        var ctx = JobRunner.BuildContext(j, Settings, tools, Store.DataDirectory) with { Edit = edit with { Tracks = tracks } };
         if (p.IsDemux)
         {
             var d = DemuxBuilder.Build(j.Media, j.Settings, edit, ctx.Options, forcedFolder: Path.Combine(j.Folder, "(demux)"));

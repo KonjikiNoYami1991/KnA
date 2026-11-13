@@ -112,6 +112,14 @@ public sealed class InputTable
     /// <summary>Last frame to request from vspipe, computed from the seek position (previews/segments).</summary>
     public Func<double, long?>? PipeEnd { get; set; }
 
+    /// <summary>Pseudo input name of the AI upscaler's video (raw RGB48 on stdin).</summary>
+    public const string AiInput = "\u0001kna-ai";
+    /// <summary>Builds the upscaler command for a start / end (seconds on the source timeline).</summary>
+    public Func<double, double?, IReadOnlyList<string>>? AiCommand { get; set; }
+    public (int Width, int Height, string Fps)? AiFormat { get; set; }
+    /// <summary>End (seconds) of what the upscaler must render, from the seek position (previews/segments).</summary>
+    public Func<double, double?>? AiEnd { get; set; }
+
     /// <summary>Extra options placed right before "-i" of an input (e.g. display rotation).</summary>
     public void AddOptions(int input, IEnumerable<string> args)
     {
@@ -142,6 +150,16 @@ public sealed class InputTable
         for (int i = 0; i < _inputs.Count; i++)
         {
             var (file, delay) = _inputs[i];
+            if (file == AiInput && AiCommand is not null && AiFormat is { } fmt)
+            {
+                if (Pipe is not null) throw new InvalidOperationException(Localization.L.T("Only one VapourSynth video can be used per job."));
+                double start = Math.Max(0, seek?.Invoke(delay) ?? 0);
+                Pipe = new PipeSource("", 0, null) { Command = AiCommand(start, AiEnd?.Invoke(delay)) };
+                double offset = delay + start;
+                if (Math.Abs(offset) >= 0.0005) a.AddRange(["-itsoffset", offset.ToString("0.######", System.Globalization.CultureInfo.InvariantCulture)]);
+                a.AddRange(["-f", "rawvideo", "-pixel_format", "rgb48le", "-video_size", $"{fmt.Width}x{fmt.Height}", "-framerate", fmt.Fps, "-i", "pipe:0"]);
+                continue;
+            }
             if (Frameserver.IsVapourSynth(file))
             {
                 if (Pipe is not null) throw new InvalidOperationException(Localization.L.T("Only one VapourSynth video can be used per job."));
@@ -169,5 +187,9 @@ public sealed class InputTable
     }
 }
 
-/// <summary>vspipe invocation feeding FFmpeg's stdin.</summary>
-public sealed record PipeSource(string Script, long StartFrame, long? EndFrame);
+/// <summary>vspipe invocation (or, with <see cref="Command"/>, any program) feeding FFmpeg's stdin.</summary>
+public sealed record PipeSource(string Script, long StartFrame, long? EndFrame)
+{
+    /// <summary>Executable followed by its arguments (AI upscaler); null = vspipe on <see cref="Script"/>.</summary>
+    public IReadOnlyList<string>? Command { get; init; }
+}

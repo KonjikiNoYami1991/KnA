@@ -24,15 +24,23 @@ builder.Services.ConfigureHttpJsonOptions(o =>
     o.SerializerOptions.PropertyNamingPolicy = SettingsStore.Json.PropertyNamingPolicy;
     foreach (var c in SettingsStore.Json.Converters) o.SerializerOptions.Converters.Add(c);
 });
-builder.Services.AddSingleton(new SettingsStore());
+var store = new SettingsStore();
+var uploadsService = new UploadService(store);
+builder.Services.AddSingleton(store);
+builder.Services.AddSingleton(uploadsService);
 builder.Services.AddSingleton<QueueService>();
 builder.Services.AddSingleton<EventHub>();
-builder.Services.AddSingleton<FileBrowser>();
+builder.Services.AddSingleton(_ => new FileBrowser(AppEnv.Get("MEDIA_ROOTS"), AppEnv.Get("READONLY_ROOTS"), [uploadsService.DefaultFolder]));
+builder.Services.AddSingleton<WatchFolderService>();
 
 var app = builder.Build();
 var queue = app.Services.GetRequiredService<QueueService>();
 var hub = app.Services.GetRequiredService<EventHub>();
 var browser = app.Services.GetRequiredService<FileBrowser>();
+var uploads = app.Services.GetRequiredService<UploadService>();
+var watch = app.Services.GetRequiredService<WatchFolderService>();
+watch.StatusChanged += st => hub.Broadcast("watch", st);
+watch.JobsQueued += jobs => hub.Broadcast("toast", new { text = L.T("Watch folder: {0} file(s) queued", jobs.Count) });
 var log = app.Logger;
 
 AppDomain.CurrentDomain.UnhandledException += (_, e) =>
@@ -95,7 +103,7 @@ app.UseDefaultFiles();
 app.UseStaticFiles();
 
 // ---------------------------------------------------------------- state, i18n & events
-app.MapGet("/api/state", () => new StateDto(AppInfo.Version, Platform(), L.Language, queue.Settings, OptionsDto.Create(),
+app.MapGet("/api/state", () => new StateDto(AppInfo.Version, Platform(), L.Language, Mapping.PublicSettings(queue.Settings, SettingsStore.Json), OptionsDto.Create(),
     Mapping.Tools(queue), Mapping.QueueState(queue), queue.Jobs.Select(JobDto.From).ToList(), powerActionsAllowed, queue.Presets.All));
 
 app.MapGet("/api/i18n", () => new { lang = L.Language, table = L.IsItalian() ? L.ItalianTable : new Dictionary<string, string>() });
@@ -105,17 +113,98 @@ app.MapGet("/api/events", (HttpContext ctx, CancellationToken ct) => hub.StreamA
 app.MapGet("/api/frameserver/templates", () => KnA.Core.Media.Frameserver.Templates.Select(t => new { t.Name, Kind = t.Kind.ToString(), t.Body }));
 app.MapGet("/api/info", () => new
 {
-    advancedAllowed, powerActionsAllowed, componentsLocked, roots = browser.Roots, vspipe = queue.Tools?.VsPipe,
+    advancedAllowed, powerActionsAllowed, componentsLocked, roots = browser.Roots, writableRoots = browser.WritableRoots,
+    uploadDir = uploads.DefaultFolder, maxUploadBytes = uploads.MaxFileBytes == long.MaxValue ? (long?)null : uploads.MaxFileBytes,
+    vspipe = queue.Tools?.VsPipe, fdkaac = queue.Tools?.Fdkaac,
     dataDirectory = queue.Store.DataDirectory, version = AppInfo.Version, platform = Platform(),
 });
 
 // ---------------------------------------------------------------- files
-app.MapGet("/api/browse", (string? path, bool? external) =>
+app.MapGet("/api/browse", (string? path, bool? external, string? mode, bool? hidden) =>
 {
-    try { return Results.Ok(browser.Browse(path, external ?? false)); }
+    try { return Results.Ok(browser.Browse(path, mode ?? (external == true ? "external" : "video"), hidden ?? false)); }
     catch (UnauthorizedAccessException ex) { return Results.Problem(ex.Message, statusCode: 403); }
     catch (IOException ex) { return Results.Problem(ex.Message, statusCode: 400); }
 });
+
+// Downloads: a file (resumable, range requests) or a whole folder as a ZIP streamed on the fly.
+app.MapGet("/api/files/download", (string path, HttpContext ctx, CancellationToken ct) => Download(path, ctx, ct));
+app.MapGet("/api/jobs/{id:guid}/download", (Guid id, HttpContext ctx, CancellationToken ct) =>
+    queue.Find(id)?.OutputPath is { } o ? Download(o, ctx, ct) : Task.FromResult(Results.NotFound()));
+
+app.MapPost("/api/files/mkdir", (FolderRequest req) =>
+{
+    if (!browser.IsWritable(req.Path)) return Results.Problem(L.T("This folder is read-only for KnA."), statusCode: 403);
+    Directory.CreateDirectory(req.Path);
+    return Results.Ok(new { path = Path.GetFullPath(req.Path) });
+});
+
+// ---------------------------------------------------------------- uploads (chunked, resumable)
+app.MapPost("/api/uploads", (UploadCreate req) =>
+{
+    var folder = string.IsNullOrWhiteSpace(req.Folder) ? uploads.DefaultFolder : req.Folder;
+    if (!browser.IsWritable(folder)) return Results.Problem(L.T("This folder is read-only for KnA."), statusCode: 403);
+    var u = uploads.Create(req.Name, req.Size, folder);
+    return Results.Ok(new { u.Id, u.Offset, u.Name, chunk = 16 << 20 });
+});
+app.MapGet("/api/uploads/{id}", (string id) => uploads.Get(id) is { } u ? Results.Ok(new { u.Id, u.Offset, u.Size }) : Results.NotFound());
+app.MapPut("/api/uploads/{id}", async (string id, long offset, HttpContext ctx, CancellationToken ct) =>
+{
+    if (ctx.Features.Get<Microsoft.AspNetCore.Http.Features.IHttpMaxRequestBodySizeFeature>() is { IsReadOnly: false } f)
+        f.MaxRequestBodySize = UploadService.MaxChunk;
+    var (ok, current) = await uploads.AppendAsync(id, offset, ctx.Request.Body, ct);
+    return ok ? Results.Ok(new { offset = current }) : Results.Json(new { offset = current }, statusCode: 409);
+});
+app.MapDelete("/api/uploads/{id}", (string id) => { uploads.Cancel(id); return Results.Ok(); });
+app.MapPost("/api/uploads/{id}/complete", async (string id, UploadComplete req, CancellationToken ct) =>
+{
+    var path = uploads.Complete(id);
+    int added = 0;
+    if (req.AttachTo is { } job)
+    {
+        await queue.AttachExternalsAsync(job, [path], ct);
+    }
+    else if (req.Enqueue && (MediaExtensions.IsVideo(path) || path.EndsWith(".iso", StringComparison.OrdinalIgnoreCase)))
+    {
+        var settings = req.Preset is { Length: > 0 } pn && queue.Presets.All.FirstOrDefault(p => p.Name == pn) is { } preset
+            ? preset.Settings with { PresetName = preset.Name } : req.Settings ?? queue.Settings.Defaults;
+        added = queue.AddPaths([path], settings).Count;
+    }
+    return Results.Ok(new { path, added });
+});
+
+// ---------------------------------------------------------------- smart drag & drop (server paths)
+app.MapPost("/api/drop/classify", (DropRequest req) =>
+{
+    if (req.Paths.FirstOrDefault(p => !browser.IsAllowed(p)) is { } bad)
+        return Results.Problem(L.T("Outside the allowed media roots: {0}", bad), statusCode: 403);
+    return Results.Ok(DropClassifier.Classify(req.Paths, queue, req.TargetJob));
+});
+app.MapPost("/api/drop/apply", async (DropRequest req, CancellationToken ct) =>
+{
+    if (req.Paths.FirstOrDefault(p => !browser.IsAllowed(p)) is { } bad)
+        return Results.Problem(L.T("Outside the allowed media roots: {0}", bad), statusCode: 403);
+    var plan = DropClassifier.Classify(req.Paths, queue, req.TargetJob);
+    var r = await DropClassifier.ApplyAsync(plan, queue, req.Settings ?? queue.Settings.Defaults, ct);
+    if (r.Presets > 0) hub.Broadcast("presets", queue.Presets.All);
+    return Results.Ok(r);
+});
+
+// ---------------------------------------------------------------- watch folders
+app.MapGet("/api/watch", () => new { folders = watch.Folders, status = watch.Status, doneFolder = WatchFolderService.DoneFolderName });
+app.MapPut("/api/watch", (List<WatchFolder> folders) =>
+{
+    foreach (var f in folders)
+    {
+        if (!browser.IsAllowed(f.Path)) return Results.Problem(L.T("Outside the allowed media roots: {0}", f.Path), statusCode: 403);
+        if (f.OutputFolder is { Length: > 0 } o && !browser.IsWritable(o)) return Results.Problem(L.T("This folder is read-only for KnA."), statusCode: 403);
+        if (f.AfterSuccess != WatchAfterSuccess.Keep && !browser.IsWritable(f.Path))
+            return Results.Problem(L.T("Moving or deleting sources needs a writable folder: {0}", f.Path), statusCode: 403);
+    }
+    watch.Save(folders);
+    return Results.Ok(new { folders = watch.Folders, status = watch.Status });
+});
+app.MapPost("/api/watch/{id}/scan", (string id) => { watch.ScanNow(id); return Results.Ok(); });
 
 // ---------------------------------------------------------------- jobs
 app.MapPost("/api/jobs", (AddJobsRequest req) =>
@@ -150,7 +239,7 @@ app.MapPut("/api/jobs/{id:guid}/edit", async (Guid id, EditRequest req, Cancella
     var files = req.Edit.ExternalFiles.Concat(req.Edit.Tracks?.Select(t => t.File) ?? []).Distinct().Where(f => f != j.SourcePath);
     if (files.FirstOrDefault(f => !browser.IsAllowed(f)) is { } bad)
         return Results.Problem(L.T("Outside the allowed media roots: {0}", bad), statusCode: 403);
-    if (req.Edit.OutputFolder is { Length: > 0 } of && !browser.IsAllowed(of))
+    if (req.Edit.OutputFolder is { Length: > 0 } of && !browser.IsWritable(of))
         return Results.Problem(L.T("Outside the allowed media roots: {0}", of), statusCode: 403);
     var a = await queue.SetEditAsync(id, req.Edit, ct, req.Settings);
     return Results.Ok(AnalysisDto.From(a, j.SourcePath));
@@ -204,7 +293,7 @@ app.MapPut("/api/settings", (SettingsUpdate u) =>
     var s = queue.Settings;
     if (u.OutputDirectory is not null)
     {
-        if (u.OutputDirectory.Length > 0 && !browser.IsAllowed(u.OutputDirectory))
+        if (u.OutputDirectory.Length > 0 && !browser.IsWritable(u.OutputDirectory))
             return Results.Problem(L.T("Output folder outside the allowed media roots."), statusCode: 403);
         s.OutputDirectory = u.OutputDirectory.Length == 0 ? null : u.OutputDirectory;
     }
@@ -225,14 +314,27 @@ app.MapPut("/api/settings", (SettingsUpdate u) =>
         s.TempDirectory = u.TempDirectory.Length == 0 ? null : u.TempDirectory;
     }
     if (u.VaapiDevice is not null) s.VaapiDevice = u.VaapiDevice.Length == 0 ? null : u.VaapiDevice;
+    if (u.FfmpegChannel is { } ch) s.FfmpegChannel = ch == "master" ? "master" : "release";
+    if (u.DiscAllTitles is { } dat) s.DiscAllTitles = dat;
+    if (u.DiscMinMinutes is { } dmm) s.DiscMinMinutes = Math.Clamp(dmm, 0, 600);
+    if (u.Ai is { } ai)
+    {
+        // The browser never receives the key: an empty value keeps the stored one, "-" clears it.
+        var key = ai.ApiKey switch { null or "" => s.Ai.ApiKey, "-" => null, var k => k };
+        // Python and model paths run programs on the server: advanced only.
+        s.Ai = ai with { ApiKey = key, Python = advancedAllowed ? ai.Python : s.Ai.Python };
+    }
     if (advancedAllowed)
     {
         if (u.FfmpegPath is not null) s.FfmpegPath = u.FfmpegPath.Length == 0 ? null : u.FfmpegPath;
         if (u.ExtraArguments is not null) s.ExtraArguments = u.ExtraArguments;
+        if (u.CustomFfmpegBuilds is not null) s.CustomFfmpegBuilds = u.CustomFfmpegBuilds.Where(x => !string.IsNullOrWhiteSpace(x)).Select(x => x.Trim()).Distinct().ToList();
+        if (u.ToolPaths is not null)
+            s.ToolPaths = u.ToolPaths.Where(kv => ToolIds.All.Contains(kv.Key) && !string.IsNullOrWhiteSpace(kv.Value)).ToDictionary(kv => kv.Key, kv => kv.Value.Trim());
     }
     queue.SaveSettings();
     queue.RefreshTools();
-    return Results.Ok(new { settings = s, tools = Mapping.Tools(queue), advancedAllowed });
+    return Results.Ok(new { settings = Mapping.PublicSettings(s, SettingsStore.Json), tools = Mapping.Tools(queue), advancedAllowed });
 });
 
 // ---------------------------------------------------------------- hardware, updates, components
@@ -307,7 +409,9 @@ app.Lifetime.ApplicationStarted.Register(async () =>
     log.LogInformation("Data directory: {Dir}", queue.Store.DataDirectory);
     log.LogInformation("Media roots: {Roots}", string.Join(", ", browser.Roots));
     log.LogInformation("FFmpeg: {Ffmpeg}", queue.Tools?.Ffmpeg ?? "NOT FOUND");
-    if (queue.Tools is not null && queue.Settings.Capabilities is null)
+    if (string.IsNullOrEmpty(password) && browser.Roots.Any(r => r == Path.GetPathRoot(r)))
+        log.LogWarning("The whole file system is reachable from the browser and no password is set: set KNA_PASSWORD or KNA_MEDIA_ROOTS.");
+    if (queue.Tools is not null && queue.Settings.Capabilities is not { IsCurrent: true })
     {
         log.LogInformation("First start: detecting hardware encoders…");
         try { await queue.DetectHardwareAsync(new Progress<string>(l => log.LogInformation("{Line}", l))); }
@@ -328,6 +432,33 @@ app.Lifetime.ApplicationStopping.Register(() =>
 app.Run();
 
 static bool Env(string name) => AppEnv.Flag(name.StartsWith("KNA_") ? name[4..] : name);
+
+async Task<IResult> Download(string path, HttpContext ctx, CancellationToken ct)
+{
+    if (!browser.IsAllowed(path)) return Results.Problem(L.T("Outside the allowed media roots: {0}", path), statusCode: 403);
+    if (File.Exists(path))
+        return Results.File(path, "application/octet-stream", Path.GetFileName(path), enableRangeProcessing: true);
+    if (!Directory.Exists(path)) return Results.NotFound();
+    var name = Path.GetFileName(path.TrimEnd(Path.DirectorySeparatorChar)) + ".zip";
+    ctx.Response.ContentType = "application/zip";
+    ctx.Response.Headers.ContentDisposition = new System.Net.Http.Headers.ContentDispositionHeaderValue("attachment") { FileNameStar = name }.ToString();
+    // Videos don't compress: store them, deflate the small text files.
+    using (var zip = new System.IO.Compression.ZipArchive(ctx.Response.BodyWriter.AsStream(), System.IO.Compression.ZipArchiveMode.Create, leaveOpen: true))
+    {
+        foreach (var f in Directory.EnumerateFiles(path, "*", new EnumerationOptions { RecurseSubdirectories = true, IgnoreInaccessible = true }))
+        {
+            ct.ThrowIfCancellationRequested();
+            if (!browser.IsAllowed(f)) continue;
+            var kind = FileBrowser.KindOf(f, false);
+            var entry = zip.CreateEntry(Path.GetRelativePath(path, f).Replace('\\', '/'),
+                kind is "text" or "subtitle" or "other" ? System.IO.Compression.CompressionLevel.Fastest : System.IO.Compression.CompressionLevel.NoCompression);
+            await using var es = entry.Open();
+            await using var fs = File.OpenRead(f);
+            await fs.CopyToAsync(es, ct);
+        }
+    }
+    return Results.Empty;
+}
 
 static bool IsContainer() => File.Exists("/.dockerenv") || Environment.GetEnvironmentVariable("DOTNET_RUNNING_IN_CONTAINER") == "true";
 

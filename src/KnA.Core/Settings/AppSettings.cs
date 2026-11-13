@@ -45,6 +45,10 @@ public sealed class AppSettings
     public List<string> FolderExtensions { get; set; } = [.. MediaExtensions.Video];
     /// <summary>Blu-ray / DVD: queue every title longer than <see cref="DiscMinMinutes"/> (episodes) instead of the main one only.</summary>
     public bool DiscAllTitles { get; set; } = true;
+    /// <summary>Folders whose new files are queued automatically, each with its preset.</summary>
+    public List<Queue.WatchFolder> WatchFolders { get; set; } = [];
+    /// <summary>LLM assistant (Ollama, LM Studio, Unsloth Studio, llama.cpp…) and the neural upscaler.</summary>
+    public Ai.AiSettings Ai { get; set; } = new();
     public int DiscMinMinutes { get; set; } = 3;
     /// <summary>Extra FFmpeg arguments, space separated (advanced).</summary>
     public string ExtraArguments { get; set; } = "";

@@ -62,12 +62,22 @@ public sealed record CompileContext
     public IReadOnlyDictionary<string, string> ScriptAudio { get; init; } = new Dictionary<string, string>();
     /// <summary>Audio tracks already encoded by an external encoder (fdkaac): key "file|stream" → .m4a, copied as is.</summary>
     public IReadOnlyDictionary<string, string> PreEncodedAudio { get; init; } = new Dictionary<string, string>();
-    /// <summary>Video produced by the AI upscaler (Y4M pipe) instead of the source decoder.</summary>
-    public UpscalePipe? AiUpscale { get; init; }
+    /// <summary>What the upscaling methods need (paths found by the runner); null = not available.</summary>
+    public UpscaleEnvironment? Upscale { get; init; }
 }
 
-/// <summary>The neural upscaler sidecar feeding FFmpeg's stdin (see <see cref="Ai.UpscaleSidecar"/>).</summary>
-public sealed record UpscalePipe(string Executable, IReadOnlyList<string> Arguments, int Width, int Height, double FrameRate);
+/// <summary>Files and programs for GPU shaders and the neural sidecar (see <see cref="Ai.UpscaleSidecar"/>).</summary>
+public sealed record UpscaleEnvironment
+{
+    public string Ffmpeg { get; init; } = "ffmpeg";
+    public string? Python { get; init; }
+    public string? Script { get; init; }
+    public string? ModelPath { get; init; }
+    public int ModelScale { get; init; } = 4;
+    public bool ModelKnown { get; init; }
+    public string? ShaderFile { get; init; }
+    public Ai.AiSettings Ai { get; init; } = new();
+}
 
 public enum PreviewKind { Frame, Clip }
 public sealed record ChunkRequest(double Start, double End);
@@ -192,12 +202,66 @@ public static class CommandBuilder
             if (chunk is not null) inputs.PipeEnd = d => (long)Math.Ceiling((chunk.End - d) * vfps) + 2;
             else if (preview is not null) inputs.PipeEnd = d => (long)Math.Ceiling((preview.Time - d + preview.ClipSeconds + 1) * vfps);
         }
+        var oriented = FilterBuilder.Oriented(video, s.VideoFilters);
+
+        // ------------------------------------------------------------ upscaling (GPU shaders / AI model)
+        var up = s.Upscale;
+        var croppedSource = FilterBuilder.AfterCrop(oriented, s.VideoFilters.Crop);
+        var enlarge = p.UsesResolution ? Ai.Upscalers.Enlarge(croppedSource, s.Resolution) : null;
+        bool wantUpscale = up.Method != UpscaleMethod.Standard && p.UsesVideoFilters && !copyVideo && concat is null && !ctx.RestOnly
+                           && (enlarge is not null || up.AlwaysApply);
+        bool placebo = wantUpscale && Ai.Upscalers.UsesLibplacebo(up.Method);
+        bool neural = wantUpscale && up.Method == UpscaleMethod.Neural;
+        var env = ctx.Upscale;
+        if (placebo)
+        {
+            if (ctx.Options.Capabilities is { IsCurrent: true, HasLibplacebo: false })
+            {
+                issues.Add(Containers.Error("{0} needs an FFmpeg with libplacebo and a working Vulkan GPU.", Ai.UpscaleText.Display(up.Method)));
+                placebo = false;
+            }
+            else if (up.Method != UpscaleMethod.Placebo && (env?.ShaderFile is not { } sh || !File.Exists(sh)))
+            {
+                issues.Add(Containers.Error("The {0} shaders are missing: install them in Settings → Components.", up.Method == UpscaleMethod.Anime4K ? "Anime4K" : "FSRCNNX"));
+                placebo = false;
+            }
+        }
+        if (neural)
+        {
+            string? problem = Frameserver.IsVapourSynth(videoTrack.File) ? L.T("AI upscaling cannot read VapourSynth scripts (add the model to the script instead).")
+                : env?.Python is null ? L.T("Python was not found: install the AI upscaler in Settings → Components.")
+                : env.Script is null ? L.T("The AI upscaler script (ai/kna_upscale.py) is missing from this installation.")
+                : env.ModelPath is null || (!env.ModelKnown && !File.Exists(env.ModelPath)) ? L.T("Model file not found: {0}", env.ModelPath ?? up.Model ?? "?")
+                : null;
+            if (problem is not null) { issues.Add(new ValidationIssue(true, problem)); neural = false; }
+            else if (preview is null) issues.Add(Containers.Warning("AI upscaling runs the model on every frame: expect a slow encode (seconds per frame without a GPU)."));
+        }
+        int aiScale = env?.ModelScale ?? 4;
+        if (neural)
+        {
+            // The sidecar decodes the source itself (disc protocols, rotation and the pre-filters included) and
+            // writes RGB48 frames enlarged by the model; FFmpeg reads them on stdin.
+            var inArgs = new List<string>(MediaProber.RobustInputArgs(videoTrack.File));
+            inArgs.AddRange(FilterBuilder.OrientationInputArgs(video, s.VideoFilters));
+            inArgs.AddRange(Media.Discs.DiscSource.InputArgs(videoTrack.File));
+            var preChain = string.Join(',', FilterBuilder.VideoPre(oriented, s.VideoFilters, hdr));
+            int w = croppedSource.Width, h = croppedSource.Height;
+            string fps = video.FrameRateRational is { Length: > 0 } r && r != "0/0" ? r : (video.FrameRate > 0 ? video.FrameRate : 25).ToString("0.###", CultureInfo.InvariantCulture);
+            string matrix = Ai.UpscaleSidecar.Matrix(video, hdr.Action);
+            string file = videoTrack.File, model = env!.ModelPath!, python = env.Python!, script = env.Script!, ffmpeg = env.Ffmpeg;
+            var aiSettings = env.Ai;
+            inputs.AiFormat = (w * aiScale, h * aiScale, fps);
+            inputs.AiCommand = (start, end) => [python, .. Ai.UpscaleSidecar.Arguments(script, ffmpeg, file, inArgs, preChain, w, h, fps, matrix, model, aiScale, aiSettings, start, end)];
+            if (chunk is not null) inputs.AiEnd = d => chunk.End - d + 1;
+            else if (preview is not null) inputs.AiEnd = d => preview.Time - d + preview.ClipSeconds + 1;
+        }
+
         // The audio/subtitle assembly step never reads the video (and must not open a VapourSynth pipe).
-        int vin = ctx.RestOnly ? -1 : inputs.Get(videoTrack.File, videoTrack.DelaySeconds);
+        int vin = ctx.RestOnly ? -1 : inputs.Get(neural ? InputTable.AiInput : videoTrack.File, videoTrack.DelaySeconds);
+        int vIndex = neural ? 0 : video.Index;
         // Orientation: FFmpeg rotates the frames itself (autorotate) from the display matrix we set here;
         // with stream copy only the matrix changes (lossless fix of wrong rotation flags).
-        if (vin >= 0) inputs.AddOptions(vin, FilterBuilder.OrientationInputArgs(video, s.VideoFilters));
-        var oriented = FilterBuilder.Oriented(video, s.VideoFilters);
+        if (vin >= 0 && !neural) inputs.AddOptions(vin, FilterBuilder.OrientationInputArgs(video, s.VideoFilters));
         var backend = preview is null ? (p.Kind == ProfileKind.RemuxMp4 ? s.EffectiveBackend : s.EffectiveBackend) : EncoderBackend.Software;
         bool tenBit = preview is null && s.EffectiveTenBit && hdr.Action != HdrAction.ToneMap;
 
@@ -228,7 +292,7 @@ public static class CommandBuilder
         }
         else
         {
-            var pre = FilterBuilder.VideoPre(oriented, s.VideoFilters, hdr);
+            var pre = neural ? [] : FilterBuilder.VideoPre(oriented, s.VideoFilters, hdr);
             var burn = ctx.Burn;
             if (burnTrack is not null && burn is null)
             {
@@ -244,8 +308,15 @@ public static class CommandBuilder
                 textFilter = $"subtitles=filename={subFile}";
                 if (burn.RelativeFontsDir is { } fonts) textFilter += $":fontsdir={fonts}";
             }
-            var cropped = FilterBuilder.AfterCrop(oriented, s.VideoFilters.Crop);
-            var post = FilterBuilder.VideoPost(cropped, s, textFilter);
+            var cropped = neural ? Enlarged(croppedSource, aiScale) : croppedSource;
+            string? scaleOverride = null;
+            if (placebo)
+                scaleOverride = Ai.Upscalers.PlaceboFilter(up, enlarge ?? new ScaleResult(croppedSource.Width & ~1, croppedSource.Height & ~1, false),
+                    env?.ShaderFile, tenBit || hdr.Action == HdrAction.Preserve);
+            else if (neural && enlarge is null)
+                scaleOverride = $"scale={croppedSource.Width & ~1}:{croppedSource.Height & ~1}:flags=lanczos"; // restoration only: back to the source size
+            var post = FilterBuilder.VideoPost(cropped, s, textFilter, scaleOverride);
+            if (neural) post.Insert(0, $"scale=out_color_matrix={Ai.UpscaleSidecar.Matrix(video, hdr.Action)}:out_range=tv,format=yuv444p16le");
             if (preview is not null && preview.MaxWidth > 0)
                 post.Add($"scale='min({preview.MaxWidth},iw)':-2");
             if (p.IsImages && preview is null && ImageSelectFilter(s.Images, ctx, trimmed) is { } sel) post.Add(sel);
@@ -260,13 +331,16 @@ public static class CommandBuilder
             {
                 int bin = inputs.Get(burn.BitmapFile ?? burnTrack.File, burn.BitmapFile is null ? burnTrack.DelaySeconds : burn.BitmapDelaySeconds);
                 var preChain = pre.Count > 0 ? string.Join(',', pre) : "null";
-                graph = $"[{vin}:{video.Index}]{preChain}[base];[base][{bin}:{bIdx}]overlay=eof_action=pass:repeatlast=0"
+                // With the AI upscaler the picture is already enlarged: enlarge the subtitle bitmaps by the same factor.
+                string subIn = neural ? "[ksub]" : $"[{bin}:{bIdx}]";
+                string subScale = neural ? $"[{bin}:{bIdx}]scale=iw*{aiScale}:ih*{aiScale}[ksub];" : "";
+                graph = $"{subScale}[{vin}:{vIndex}]{preChain}[base];[base]{subIn}overlay=eof_action=pass:repeatlast=0"
                         + (post.Count > 0 ? "," + string.Join(',', post) : "") + "[vout]";
             }
             else
             {
                 var all = pre.Concat(post).ToList();
-                graph = $"[{vin}:{video.Index}]" + (all.Count > 0 ? string.Join(',', all) : "null") + "[vout]";
+                graph = $"[{vin}:{vIndex}]" + (all.Count > 0 ? string.Join(',', all) : "null") + "[vout]";
             }
             body.AddRange(["-filter_complex", graph, "-map", "[vout]"]);
 
@@ -457,11 +531,18 @@ public static class CommandBuilder
         }
         else
         {
-            output = ctx.ForcedOutputPath ?? OutputNaming.Build(ctx.Source.Path, s, container, ctx.Options.OutputDirectory, ctx.Options.NameTemplate);
+            output = ctx.ForcedOutputPath ?? OutputNaming.Build(ctx.Source.Path, s, container, ctx.Edit.OutputFolder ?? ctx.Options.OutputDirectory, ctx.Options.NameTemplate);
             a2.Add(output);
         }
         return new CompiledJob(new EncodePlan(a2, output), issues, hdr, tracks, container, duration) { Pipe = inputs.Pipe };
     }
+
+    private static VideoStream Enlarged(VideoStream v, int k) => new()
+    {
+        Index = 0, CodecName = "rawvideo", Kind = "video", Width = v.Width * k, Height = v.Height * k,
+        SampleAspectRatio = v.SampleAspectRatio, FrameRate = v.FrameRate, FrameRateRational = v.FrameRateRational, FrameCount = v.FrameCount,
+        PixelFormat = "rgb48le", BitDepth = 16, Hdr = v.Hdr, ColorTransfer = v.ColorTransfer, ColorPrimaries = v.ColorPrimaries,
+    };
 
     /// <summary>Output-side trim (after every filter and import). Returns null when not trimmed.</summary>
     public static (List<string> Args, TimeSpan Duration)? TrimArgs(JobEdit edit, TimeSpan sourceDuration, List<ValidationIssue> issues)
