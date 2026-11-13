@@ -4,9 +4,23 @@ name: Release
 # Builds self-contained packages named as the in-app updater expects (KnA-{desktop|server}-{rid}.zip),
 # bundles the standalone fdkaac encoder (best AAC, redistributable on its own), adds a macOS KnA.app
 # with its icon, and attaches everything to a *draft* release, published by hand after a check.
+# It can also be started by hand with a version number (the tag is then created by GitHub).
 on:
   push:
     tags: ["v*"]
+  # Manual run (Actions → Release → Run workflow): GitHub creates the tag on the chosen commit itself.
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version without the v (e.g. 3.0.0)"
+        required: true
+      draft:
+        description: "Leave the release as a draft"
+        type: boolean
+        default: true
+
+env:
+  TAG: ${{ github.event_name == 'workflow_dispatch' && format('v{0}', inputs.version) || github.ref_name }}
 
 permissions:
   contents: write
@@ -66,7 +80,7 @@ jobs:
           dotnet-version: 10.0.x
       - name: Version from tag
         shell: bash
-        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> "$GITHUB_ENV"
+        run: echo "VERSION=${TAG#v}" >> "$GITHUB_ENV"
       - name: Publish
         shell: bash
         run: |
@@ -166,4 +180,6 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           shopt -s nullglob
-          gh release create "$GITHUB_REF_NAME" dist/*.zip dist/*.tar.gz --repo "$GITHUB_REPOSITORY" --draft --generate-notes --title "KnA $GITHUB_REF_NAME"
+          draft=--draft
+          if [[ "${{ github.event_name }}" == workflow_dispatch && "${{ inputs.draft }}" == false ]]; then draft=; fi
+          gh release create "$TAG" dist/*.zip dist/*.tar.gz --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" $draft --generate-notes --title "KnA $TAG"
