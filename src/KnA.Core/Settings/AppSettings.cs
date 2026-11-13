@@ -26,6 +26,13 @@ public sealed class AppSettings
     public int KeepLogs { get; set; } = 300;
 
     public string? FfmpegPath { get; set; }
+    /// <summary>
+    /// Extra FFmpeg builds (e.g. one compiled with libfdk_aac, or a newer one with Vulkan encoders). They are
+    /// tested at detection time and each job uses the build that has its encoders (custom builds first).
+    /// </summary>
+    public List<string> CustomFfmpegBuilds { get; set; } = [];
+    /// <summary>User-chosen companion programs: ffprobe, fdkaac, dovi_tool, hdr10plus_tool, vspipe, scxvid, python.</summary>
+    public Dictionary<string, string> ToolPaths { get; set; } = [];
     public string? VaapiDevice { get; set; }
     /// <summary>null = write next to the source file.</summary>
     public string? OutputDirectory { get; set; }

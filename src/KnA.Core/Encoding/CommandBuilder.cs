@@ -23,7 +23,11 @@ public sealed record BuildOptions
     public string? VaapiDevice { get; init; }
     /// <summary>Extra arguments appended before the output (power users).</summary>
     public IReadOnlyList<string> ExtraArguments { get; init; } = [];
-    public string AppVersion { get; init; } = "2.0";
+    public string AppVersion { get; init; } = "3.0";
+    /// <summary>Detected encoders (which candidate to use, GPU checks); null = not detected yet.</summary>
+    public Tools.FfmpegCapabilities? Capabilities { get; init; }
+    /// <summary>Audio encoders of the FFmpeg build that runs the job.</summary>
+    public AudioEncoderSet AudioEncoders { get; init; } = AudioEncoderSet.Default;
 }
 
 /// <summary>Subtitles ready to be burned (prepared by the runner in the job working directory).</summary>
@@ -56,7 +60,14 @@ public sealed record CompileContext
     public bool RestOnly { get; init; }
     /// <summary>Script audio (VapourSynth output N) rendered to files: key "script|stream".</summary>
     public IReadOnlyDictionary<string, string> ScriptAudio { get; init; } = new Dictionary<string, string>();
+    /// <summary>Audio tracks already encoded by an external encoder (fdkaac): key "file|stream" → .m4a, copied as is.</summary>
+    public IReadOnlyDictionary<string, string> PreEncodedAudio { get; init; } = new Dictionary<string, string>();
+    /// <summary>Video produced by the AI upscaler (Y4M pipe) instead of the source decoder.</summary>
+    public UpscalePipe? AiUpscale { get; init; }
 }
+
+/// <summary>The neural upscaler sidecar feeding FFmpeg's stdin (see <see cref="Ai.UpscaleSidecar"/>).</summary>
+public sealed record UpscalePipe(string Executable, IReadOnlyList<string> Arguments, int Width, int Height, double FrameRate);
 
 public enum PreviewKind { Frame, Clip }
 public sealed record ChunkRequest(double Start, double End);
@@ -135,6 +146,28 @@ public static class CommandBuilder
         if ((!copyVideo || concat is not null) && p.EncodesVideo && preview is null && chunk is null && !Containers.AcceptsVideo(container, Containers.OutputVideoCodec(encodeCodec)))
             issues.Add(Containers.Error("{0} video cannot be stored in {1}. Choose another container or codec.",
                 encodeCodec.Short(), container.ToUpperInvariant()));
+
+        // The chosen GPU must really have this encoder (detected with a test encode), otherwise stop here
+        // instead of failing halfway through the job.
+        string? encoderName = null;
+        if (!copyVideo && p.EncodesVideo && preview is null)
+        {
+            var wantedBackend = p.AllowsHardware ? s.Backend : EncoderBackend.Software;
+            if (s.BackendUnavailable)
+            {
+                var others = VideoEncoders.BackendsFor(encodeCodec).Select(b => b.Display());
+                issues.Add(Containers.Error("{0} has no {1} encoder. Available: {2}.", encodeCodec.Display(), s.Backend.Display(), string.Join(", ", others)));
+            }
+            else if (ctx.Options.Capabilities is { } caps && caps.IsCurrent)
+            {
+                bool tb = s.EffectiveTenBit;
+                if (caps.Resolve(encodeCodec, wantedBackend, tb) is { } cap) encoderName = cap.Encoder;
+                else if (caps.Find(encodeCodec, wantedBackend) is { } failed)
+                    issues.Add(Containers.Error("{0}{1} did not pass the test on this machine ({2}). Pick another encoder or re-run the hardware detection.",
+                        failed.Encoder, tb && !encodeCodec.IsProfessional() ? " (10-bit)" : "",
+                        failed.Compiled ? failed.Error ?? "?" : "not in this FFmpeg build"));
+            }
+        }
 
         bool trimmed = ctx.Edit.IsTrimmed;
         var hdrSettings = preview?.Kind == PreviewKind.Clip ? s with { Hdr = HdrMode.ToneMapSdr } : s;
@@ -252,7 +285,10 @@ public static class CommandBuilder
             else
             {
                 var venc = VideoEncoders.BuildArgs(new VideoEncodeRequest(encodeCodec, backend, s.Quality, tenBit,
-                    p.Kind, s.VideoFilters.Fps ?? video.FrameRate, container is "mp4" or "mov"));
+                    p.Kind, s.VideoFilters.Fps ?? video.FrameRate, container is "mp4" or "mov")
+                {
+                    Encoder = encoderName, Pro = s.Pro, SourceBitDepth = Math.Max(8, video.BitDepth),
+                });
                 ApplyHdrToEncoder(venc, hdr, ctx.HdrFiles);
                 body.AddRange(venc);
             }
@@ -280,8 +316,19 @@ public static class CommandBuilder
                     issues.Add(Containers.Warning("Audio track {0} of {1} not found: skipped.", t.Stream, Path.GetFileName(t.File)));
                     continue;
                 }
-                body.AddRange(["-map", AudioInput(t, ast, inputs, ctx)]);
-                body.AddRange(AudioPlanner.BuildArgs(ast, audioOut, s.Profile, s.Quality, container, s.AudioFilters));
+                var aplan = AudioPlanner.Plan(ast, s, restOnly ? "mkv" : container, ctx.Options.AudioEncoders);
+                if (aplan.Issue is { } ai) issues.Add(ai);
+                if (ctx.PreEncodedAudio.GetValueOrDefault($"{t.File}|{t.Stream}") is { } pre)
+                {
+                    // Already encoded (fdkaac) with filters applied: copy it with the track's delay.
+                    body.AddRange(["-map", $"{inputs.Get(pre, t.DelaySeconds)}:0", $"-c:a:{audioOut.ToString(CultureInfo.InvariantCulture)}", "copy"]);
+                }
+                else
+                {
+                    body.AddRange(["-map", AudioInput(t, ast, inputs, ctx)]);
+                    body.AddRange(AudioPlanner.BuildArgs(aplan, audioOut, s.AudioFilters));
+                }
+                if (container == "mxf" && !aplan.IsCopy) body.AddRange([$"-ar:a:{audioOut.ToString(CultureInfo.InvariantCulture)}", "48000"]); // MXF: 48 kHz only
                 body.AddRange(StreamMetadata(outIndex, t));
                 audioOut++;
                 outIndex++;
@@ -393,6 +440,7 @@ public static class CommandBuilder
             case "avi": a2.AddRange(["-f", "avi"]); break;
             case "ts": a2.AddRange(["-f", "mpegts"]); break;
             case "webm": a2.AddRange(["-f", "webm"]); break;
+            case "mxf": a2.AddRange(["-f", "mxf"]); break;
         }
         a2.AddRange(ctx.Options.ExtraArguments);
         a2.AddRange(ProgressArgs);

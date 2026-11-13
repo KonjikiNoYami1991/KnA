@@ -46,7 +46,7 @@ public static class JobRunner
 
             var s = job.Settings;
             var p = s.ProfileDefinition;
-            CheckEncoderAvailability(s, ctx.Settings.Capabilities);
+            ctx = WithBestBuild(ctx, s, job);
 
             if (p.IsKeyframes)
             {
@@ -96,6 +96,8 @@ public static class JobRunner
 
             var scriptAudio = await RenderScriptAudioAsync(check.Tracks, workDir, ctx, job, ct);
             baseCtx = baseCtx with { ScriptAudio = scriptAudio };
+            var preEncoded = await PreEncodeExternalAudioAsync(job, baseCtx, check, workDir, ctx, ct);
+            baseCtx = baseCtx with { PreEncodedAudio = preEncoded };
             var compiled = CommandBuilder.Compile(baseCtx with { Burn = subs, HdrFiles = sideFiles });
             if (compiled.HasErrors) throw new InvalidOperationException(compiled.Issues.First(i => i.IsError).Message);
             job.OutputPath = compiled.Plan.OutputPath;
@@ -179,9 +181,89 @@ public static class JobRunner
                 VaapiDevice = settings.VaapiDevice,
                 ExtraArguments = SplitArgs(settings.ExtraArguments),
                 AppVersion = AppInfo.Version,
+                Capabilities = caps,
+                AudioEncoders = AudioEncodersFor(caps, tools),
             },
             Hdr = new HdrEnvironment(caps?.HasZscale ?? true, caps?.HasLibplacebo ?? false, tools?.DoviTool is not null, tools?.Hdr10PlusTool is not null),
         };
+    }
+
+    /// <summary>Audio encoders of the FFmpeg build in <paramref name="tools"/> (+ the external fdkaac program).</summary>
+    public static AudioEncoderSet AudioEncodersFor(FfmpegCapabilities? caps, FfmpegTools? tools)
+    {
+        var build = caps?.Builds.FirstOrDefault(b => b.Path == tools?.Ffmpeg) ?? caps?.Main;
+        bool fdk = tools?.Fdkaac is not null;
+        return build is { Encoders.Count: > 0 } ? new AudioEncoderSet(build.Encoders, fdk) : AudioEncoderSet.Default with { ExternalFdkaac = fdk };
+    }
+
+    /// <summary>
+    /// Picks the FFmpeg build for a job: the one whose encoder passed the test (custom builds first);
+    /// with several candidates, the one with the best AAC encoder (libfdk_aac) wins.
+    /// </summary>
+    internal static RunnerContext WithBestBuild(RunnerContext ctx, JobSettings s, QueueJob job)
+    {
+        if (ctx.Settings.Capabilities is not { IsCurrent: true } caps || caps.Builds.Count < 2) return ctx;
+        var p = s.ProfileDefinition;
+        IEnumerable<FfmpegBuild> candidates = caps.Builds;
+        if (p.EncodesVideo)
+        {
+            var paths = caps.Encoders.Where(e => e.Codec == s.EffectiveCodec && e.Backend == s.EffectiveBackend
+                                                 && (s.EffectiveTenBit ? e.Works10Bit : e.Works8Bit))
+                .Select(e => e.Ffmpeg ?? caps.Main?.Path).ToHashSet();
+            candidates = candidates.Where(b => paths.Contains(b.Path));
+        }
+        var best = candidates
+            .OrderByDescending(b => (b.Has("libfdk_aac") ? 2 : 0) + (b.IsCustom ? 1 : 0))
+            .FirstOrDefault();
+        if (best is null || best.Path == ctx.Tools.Ffmpeg) return ctx;
+        job.AppendLog($"FFmpeg build: {best.Path} ({best.Version})");
+        var probe = Path.Combine(Path.GetDirectoryName(best.Path)!, FfmpegLocator.ExeName("ffprobe"));
+        return ctx with { Tools = ctx.Tools with { Ffmpeg = best.Path, Ffprobe = File.Exists(probe) ? probe : ctx.Tools.Ffprobe } };
+    }
+
+    /// <summary>
+    /// AAC tracks assigned to the standalone fdkaac encoder: ffmpeg decodes (with the audio filters and the
+    /// channel count) to a WAV pipe, fdkaac writes an .m4a that the final command copies.
+    /// </summary>
+    internal static async Task<Dictionary<string, string>> PreEncodeExternalAudioAsync(QueueJob job, CompileContext cc, CompiledJob check,
+        string workDir, RunnerContext ctx, CancellationToken ct)
+    {
+        var result = new Dictionary<string, string>();
+        if (ctx.Tools.Fdkaac is not { } fdkaac) return result;
+        var media = new Dictionary<string, MediaInfo>(job.ExternalMedia) { [job.SourcePath] = job.Media! };
+        int n = 0;
+        foreach (var t in check.Tracks.Where(t => t.Include && t.Kind == "audio"))
+        {
+            if (TrackPlanner.Lookup(t, media) is not AudioStream ast) continue;
+            var plan = AudioPlanner.Plan(ast, cc.Settings, check.Container, cc.Options.AudioEncoders);
+            if (!plan.IsExternal) continue;
+            job.Stage = L.T("Encoding audio (fdkaac)");
+            ctx.Changed(job);
+            string input = t.File;
+            int index = ast.Index;
+            if (Frameserver.IsVapourSynth(t.File) && cc.ScriptAudio.GetValueOrDefault($"{t.File}|{t.Stream}") is { } w64) { input = w64; index = 0; }
+            var output = Path.Combine(workDir, $"fdk{n++}.m4a");
+            var ff = new List<string> { "-hide_banner", "-nostdin", "-v", "error" };
+            ff.AddRange(MediaProber.RobustInputArgs(input));
+            ff.AddRange(["-i", input, "-map", $"0:{index}", "-vn", "-ac", plan.Channels.ToString(System.Globalization.CultureInfo.InvariantCulture)]);
+            if (FilterBuilder.Audio(cc.Settings.AudioFilters, "fdkaac", plan.Channels) is { } af) ff.AddRange(["-af", af]);
+            ff.AddRange(["-c:a", "pcm_s16le", "-f", "wav", "-"]);
+            var args = AudioPlanner.FdkaacArgs(plan, output);
+            job.AppendLog($"fdkaac: {Path.GetFileName(input)} #{index} → AAC{(plan.HeAac ? " HE" : "")} {plan.Kbps}k {plan.Channels}ch");
+            job.AppendLog("  " + new EncodePlan(ff, "-").CommandLine(ctx.Tools.Ffmpeg) + " | " + new EncodePlan(args, output).CommandLine(fdkaac));
+            try { await PipeAsync(ctx, ff, fdkaac, args, ct); }
+            catch (InvalidOperationException ex) when (plan.HeAac && ex.Message.Contains("unsupported profile", StringComparison.OrdinalIgnoreCase))
+            {
+                // Some fdk-aac builds (e.g. distribution packages) leave HE-AAC out: fall back to AAC-LC.
+                var lc = plan with { HeAac = false, Kbps = Math.Max(96, (plan.Kbps ?? 64) * 2) };
+                job.AppendLog("Warning: this fdkaac has no HE-AAC, AAC-LC is used.");
+                job.Issues = [.. job.Issues, Containers.Warning("This fdkaac has no HE-AAC: AAC-LC was used.")];
+                await PipeAsync(ctx, ff, fdkaac, AudioPlanner.FdkaacArgs(lc, output), ct);
+            }
+            if (!File.Exists(output) || new FileInfo(output).Length == 0) throw new InvalidOperationException("fdkaac produced no output.");
+            result[$"{t.File}|{t.Stream}"] = output;
+        }
+        return result;
     }
 
     /// <summary>Writes the job's VapourSynth/AviSynth script (Frameserver settings) and remembers its path.</summary>
@@ -309,19 +391,6 @@ public static class JobRunner
         }
     }
 
-    private static void CheckEncoderAvailability(JobSettings s, FfmpegCapabilities? caps)
-    {
-        var p = s.ProfileDefinition;
-        if (!p.EncodesVideo && p.Kind != ProfileKind.RemuxMp4) return;
-        if (caps is null) return; // not detected yet: let FFmpeg decide.
-        var codec = p.Kind == ProfileKind.RemuxMp4 ? VideoCodec.H264 : s.EffectiveCodec;
-        bool tenBit = p.Kind != ProfileKind.RemuxMp4 && s.EffectiveTenBit;
-        if (caps.Find(codec, s.EffectiveBackend) is { } cap && !(tenBit ? cap.Works10Bit : cap.Works8Bit))
-            throw new InvalidOperationException(L.T(
-                "{0}{1} did not pass the hardware test on this machine. Pick another encoder or re-run the hardware detection.",
-                cap.Encoder, tenBit ? " (10-bit)" : ""));
-    }
-
     /// <summary>
     /// Burned subtitles are extracted with their delay already applied (-itsoffset) and fonts are collected
     /// from every file of the plan (MKV attachments + standalone font files).
@@ -391,11 +460,17 @@ public static class JobRunner
     }
 
     /// <summary>ffmpeg (HEVC Annex B to stdout) | tool (stdin), both under pause/stop control.</summary>
-    private static async Task PipeAsync(RunnerContext ctx, string source, int videoIndex, string tool, string[] toolArgs, CancellationToken ct)
+    private static Task PipeAsync(RunnerContext ctx, string source, int videoIndex, string tool, string[] toolArgs, CancellationToken ct)
     {
         var ffArgs = new List<string> { "-hide_banner", "-nostdin", "-v", "error" };
         ffArgs.AddRange(MediaProber.RobustInputArgs(source));
         ffArgs.AddRange(["-i", source, "-map", $"0:{videoIndex}", "-c:v", "copy", "-bsf:v", "hevc_mp4toannexb", "-f", "hevc", "-"]);
+        return PipeAsync(ctx, ffArgs, tool, toolArgs, ct);
+    }
+
+    /// <summary>ffmpeg (stdout) | tool (stdin), both under pause/stop control.</summary>
+    internal static async Task PipeAsync(RunnerContext ctx, List<string> ffArgs, string tool, IReadOnlyList<string> toolArgs, CancellationToken ct)
+    {
         var toolPsi = ProcessRunner.CreateStartInfo(tool, toolArgs);
         toolPsi.RedirectStandardInput = true;
         using var ff = new Process { StartInfo = ProcessRunner.CreateStartInfo(ctx.Tools.Ffmpeg, ffArgs) };
@@ -414,8 +489,12 @@ public static class JobRunner
             ff.BeginErrorReadLine();
             using var reg = ct.Register(() => { ProcessControl.KillTree(ff); ProcessControl.KillTree(tp); });
             try { await ff.StandardOutput.BaseStream.CopyToAsync(tp.StandardInput.BaseStream, 1 << 20, CancellationToken.None); }
-            catch (IOException) { }
-            tp.StandardInput.Close();
+            catch (IOException)
+            {
+                // The tool stopped reading (it failed or finished early): nobody drains FFmpeg's stdout any more.
+                ProcessControl.KillTree(ff);
+            }
+            try { tp.StandardInput.Close(); } catch (IOException) { /* the tool already exited: its exit code tells why */ }
             await ff.WaitForExitAsync(CancellationToken.None);
             await tp.WaitForExitAsync(CancellationToken.None);
             ct.ThrowIfCancellationRequested();

@@ -78,7 +78,7 @@ public sealed class QueueService : IDisposable
 
     public FfmpegTools? RefreshTools()
     {
-        Tools = FfmpegLocator.Locate(Settings.FfmpegPath, Store.DataDirectory);
+        Tools = FfmpegLocator.Locate(Settings.FfmpegPath, Store.DataDirectory, Settings.ToolPaths);
         return Tools;
     }
 
@@ -91,11 +91,16 @@ public sealed class QueueService : IDisposable
     public async Task<FfmpegCapabilities?> DetectHardwareAsync(IProgress<string>? log = null, CancellationToken ct = default)
     {
         if (RefreshTools() is not { } tools) return null;
-        var caps = await HardwareDetector.DetectAsync(tools.Ffmpeg, Settings.VaapiDevice, log, ct);
+        var caps = await HardwareDetector.DetectAsync(tools.Ffmpeg, Settings.CustomFfmpegBuilds.Select(ResolveFfmpegExe).ToList(),
+            Settings.VaapiDevice, log, ct);
         Settings.Capabilities = caps;
         SaveSettings();
         return caps;
     }
+
+    /// <summary>A custom build may be given as the folder that contains ffmpeg.</summary>
+    public static string ResolveFfmpegExe(string path) =>
+        Directory.Exists(path) ? Path.Combine(path, FfmpegLocator.ExeName("ffmpeg")) : path;
 
     // ---------------------------------------------------------------- adding / editing
 

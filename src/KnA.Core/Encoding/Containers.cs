@@ -6,7 +6,7 @@ namespace KnA.Core.Encoding;
 /// <summary>What each output container can carry, and how to adapt streams that don't fit.</summary>
 public static class Containers
 {
-    public static IReadOnlyList<string> All { get; } = ["mkv", "mp4", "mov", "webm", "avi", "ts"];
+    public static IReadOnlyList<string> All { get; } = ["mkv", "mp4", "mov", "webm", "avi", "ts", "mxf"];
 
     public static string Display(string c) => c switch
     {
@@ -16,27 +16,30 @@ public static class Containers
         "webm" => "WebM (.webm)",
         "avi" => "AVI (.avi)",
         "ts" => "MPEG-TS (.ts)",
+        "mxf" => "MXF OP1a (.mxf)",
         _ => c,
     };
 
     private static readonly Dictionary<string, string[]> VideoCodecs = new()
     {
         ["mkv"] = ["*"],
-        ["mp4"] = ["h264", "hevc", "av1", "mpeg4", "mpeg2video", "vp9"],
-        ["mov"] = ["h264", "hevc", "av1", "mpeg4", "mpeg2video", "prores", "mjpeg"],
+        ["mp4"] = ["h264", "hevc", "av1", "mpeg4", "mpeg2video", "vp9", "vvc"],
+        ["mov"] = ["h264", "hevc", "av1", "mpeg4", "mpeg2video", "prores", "mjpeg", "dnxhd", "cfhd", "v210", "jpeg2000", "vp9"],
         ["webm"] = ["av1", "vp9", "vp8"],
-        ["avi"] = ["mpeg4", "msmpeg4v3", "mjpeg", "mpeg2video", "h264"],
-        ["ts"] = ["h264", "hevc", "mpeg2video", "av1"],
+        ["avi"] = ["mpeg4", "msmpeg4v3", "mjpeg", "mpeg2video", "h264", "ffv1", "utvideo", "ffvhuff", "cfhd", "v210", "dnxhd"],
+        ["ts"] = ["h264", "hevc", "mpeg2video", "av1", "vvc"],
+        ["mxf"] = ["dnxhd", "prores", "mpeg2video", "h264", "jpeg2000", "ffv1"],
     };
 
     private static readonly Dictionary<string, string[]> AudioCodecs = new()
     {
         ["mkv"] = ["*"],
         ["mp4"] = ["aac", "ac3", "eac3", "mp3", "alac", "opus", "flac", "mp2"],
-        ["mov"] = ["aac", "ac3", "eac3", "alac", "mp3", "pcm_s16le", "pcm_s24le", "pcm_s16be", "pcm_s24be", "flac"],
+        ["mov"] = ["aac", "ac3", "eac3", "alac", "mp3", "pcm_s16le", "pcm_s24le", "pcm_s16be", "pcm_s24be", "pcm_f32le", "flac", "opus"],
         ["webm"] = ["opus", "vorbis"],
-        ["avi"] = ["mp3", "ac3", "mp2", "pcm_s16le"],
-        ["ts"] = ["aac", "ac3", "eac3", "mp3", "mp2", "dts", "opus"],
+        ["avi"] = ["mp3", "ac3", "mp2", "pcm_s16le", "pcm_s24le"],
+        ["ts"] = ["aac", "ac3", "eac3", "mp3", "mp2", "dts", "opus", "truehd"],
+        ["mxf"] = ["pcm_s16le", "pcm_s24le"],
     };
 
     /// <summary>Default audio encoder used when a track must be (re-)encoded for this container.</summary>
@@ -47,6 +50,7 @@ public static class Containers
         "mkv" when lossless => "flac",
         "mov" when lossless => "alac",
         "mp4" when lossless => "alac",
+        "mxf" => "pcm_s24le",
         _ => "aac",
     };
 
@@ -80,6 +84,17 @@ public static class Containers
         VideoCodec.HEVC => "hevc",
         VideoCodec.AV1 => "av1",
         VideoCodec.Xvid => "mpeg4",
+        VideoCodec.VP9 => "vp9",
+        VideoCodec.VVC => "vvc",
+        VideoCodec.MPEG2 => "mpeg2video",
+        VideoCodec.ProRes => "prores",
+        VideoCodec.DNxHR => "dnxhd",
+        VideoCodec.CineForm => "cfhd",
+        VideoCodec.FFV1 => "ffv1",
+        VideoCodec.UtVideo => "utvideo",
+        VideoCodec.FFVHuff => "ffvhuff",
+        VideoCodec.JPEG2000 => "jpeg2000",
+        VideoCodec.Uncompressed => "v210",
         _ => "h264",
     };
 
@@ -96,6 +111,9 @@ public static class Containers
             _ => "png",
         };
         var c = s.Container is { } wanted && p.Containers.Contains(wanted) ? wanted : p.Container;
+        // No explicit choice: the profile default, or the first container that can hold the chosen codec.
+        if (s.Container is null && p.EncodesVideo && !AcceptsVideo(c, OutputVideoCodec(s.EffectiveCodec)))
+            c = p.Containers.FirstOrDefault(x => AcceptsVideo(x, OutputVideoCodec(s.EffectiveCodec))) ?? c;
         if (s.EffectiveSubtitles == SubtitleMode.Softsub && p.EncodesVideo && c is "avi" or "ts") c = "mkv";
         return c;
     }

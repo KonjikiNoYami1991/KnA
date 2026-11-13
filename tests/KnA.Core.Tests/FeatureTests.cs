@@ -250,7 +250,8 @@ public class FeatureTests(FeatureFixture fx) : IClassFixture<FeatureFixture>
         Assert.Equal(0, m.PrimaryVideo.Rotation);   // baked in, no leftover matrix
         Assert.Equal(12.5, m.PrimaryVideo.FrameRate, 1);
         Assert.Equal(44100, m.Audio[0].SampleRate);
-        Assert.Contains("volume=-3dB", job.CommandLine);
+        // With the fdkaac program installed the audio filters run in its decoding pass (see the log).
+        Assert.Contains("volume=-3dB", job.CommandLine + job.Log);
     }
 
     [Fact]

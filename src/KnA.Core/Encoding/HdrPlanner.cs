@@ -48,9 +48,10 @@ public static class HdrPlanner
         var codec = s.EffectiveCodec;
         var backend = s.EffectiveBackend;
         bool canCarry = !s.ProfileDefinition.IsImages
-                        && codec is VideoCodec.HEVC or VideoCodec.AV1
+                        && codec is VideoCodec.HEVC or VideoCodec.AV1 or VideoCodec.VP9 or VideoCodec.VVC
+                            or VideoCodec.ProRes or VideoCodec.FFV1 or VideoCodec.CineForm or VideoCodec.Uncompressed
                         && s.EffectiveTenBit
-                        && s.EffectiveContainer is "mkv" or "mp4" or "mov" or "ts" or "webm";
+                        && s.EffectiveContainer is "mkv" or "mp4" or "mov" or "ts" or "webm" or "mxf";
 
         var issues = new List<ValidationIssue>();
         bool preserve = s.Hdr switch

@@ -88,6 +88,16 @@ public sealed record DemuxSettings
     public List<int>? Streams { get; init; }
 }
 
+/// <summary>AI / GPU upscaling used when the target resolution is above the source.</summary>
+public sealed record UpscaleSettings
+{
+    public UpscaleMethod Method { get; init; } = UpscaleMethod.Standard;
+    /// <summary>Anime4K mode ("A", "B", "C", "A+A", "B+B", "C+A") or the neural model id (see <see cref="Ai.UpscaleModels"/>).</summary>
+    public string? Model { get; init; }
+    /// <summary>Also run the model when the size doesn't change (restoration / clean-up only).</summary>
+    public bool AlwaysApply { get; init; }
+}
+
 /// <summary>av1an-style segmented encoding: split at keyframes, encode segments in parallel, resume after a stop.</summary>
 public sealed record ChunkSettings
 {
@@ -109,6 +119,14 @@ public sealed record JobSettings
     public int Resolution { get; init; } = 1080;
     public SubtitleMode Subtitles { get; init; } = SubtitleMode.Hardsub;
     public bool TenBit { get; init; } = true;
+    /// <summary>Audio codec of the output tracks (Auto = profile default, copy when possible).</summary>
+    public AudioCodec AudioCodec { get; init; } = AudioCodec.Auto;
+    /// <summary>Audio bitrate in kb/s per stereo pair (scaled for multichannel); null = from the quality level.</summary>
+    public int? AudioBitrate { get; init; }
+    /// <summary>ProRes / DNxHR profile, chroma and bit depth for the professional codecs.</summary>
+    public ProSettings Pro { get; init; } = new();
+    /// <summary>How the picture is enlarged when the target resolution is above the source (AI upscaling).</summary>
+    public UpscaleSettings Upscale { get; init; } = new();
     /// <summary>Prefer a "same name.ass/.srt" file next to the video for hardsub.</summary>
     public bool UseSidecarSubtitles { get; init; } = true;
     /// <summary>Output container ("mkv", "mp4"…), null = profile default.</summary>
@@ -136,9 +154,15 @@ public sealed record JobSettings
         ProfileDefinition.AllowsHardware && VideoEncoders.EncoderName(EffectiveCodec, Backend) is not null
             ? Backend : EncoderBackend.Software;
 
+    /// <summary>A GPU backend was chosen that has no encoder for the codec (validation reports it as an error).</summary>
     [JsonIgnore]
-    public bool EffectiveTenBit => TenBit && VideoEncoders.Supports10Bit(EffectiveCodec, EffectiveBackend)
-                                   && Profile is ProfileKind.UniversalMkv or ProfileKind.Streaming;
+    public bool BackendUnavailable =>
+        ProfileDefinition.AllowsHardware && Backend != EncoderBackend.Software && VideoEncoders.EncoderName(EffectiveCodec, Backend) is null;
+
+    [JsonIgnore]
+    public bool EffectiveTenBit => VideoEncoders.Always10Bit(EffectiveCodec)
+                                   || (TenBit && VideoEncoders.Supports10Bit(EffectiveCodec, EffectiveBackend)
+                                       && Profile is ProfileKind.UniversalMkv or ProfileKind.Streaming or ProfileKind.Professional);
 
     [JsonIgnore]
     public SubtitleMode EffectiveSubtitles => ProfileDefinition.UsesSubtitleMode ? Subtitles : SubtitleMode.None;
@@ -157,7 +181,9 @@ public sealed record JobSettings
             var parts = new List<string> { p.Name };
             if (p.AllowsCodecChoice) parts.Add(EffectiveCodec.Short());
             if (EffectiveBackend != EncoderBackend.Software) parts.Add(EffectiveBackend.Short());
-            if (EffectiveTenBit) parts.Add("10bit");
+            if (EffectiveTenBit && !EffectiveCodec.IsProfessional()) parts.Add("10bit");
+            if (EffectiveCodec == VideoCodec.ProRes) parts.Add(VideoEncoders.ProResFor(new VideoEncodeRequest(EffectiveCodec, EffectiveBackend, Quality, true, Profile, 25, false) { Pro = Pro }).Display());
+            if (Upscale.Method != UpscaleMethod.Standard) parts.Add(Upscale.Method.ToString());
             parts.Add(Resolutions.Display(Resolution));
             parts.Add(Quality == QualityLevel.Draft ? L.T("Draft") : Quality.Display());
             return string.Join(" ", parts);

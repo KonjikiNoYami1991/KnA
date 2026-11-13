@@ -35,11 +35,16 @@ public static class Profiles
 {
     public static readonly ProfileDefinition UniversalMkv = new(ProfileKind.UniversalMkv, "Universal",
         "Modern H.264, HEVC or AV1 (10-bit capable). Audio is copied untouched when the container allows it.",
-        [VideoCodec.HEVC, VideoCodec.AV1, VideoCodec.H264], true, true, true, true, "mkv", ["mkv", "mp4", "mov", "webm", "ts"]);
+        [VideoCodec.HEVC, VideoCodec.AV1, VideoCodec.H264, VideoCodec.VP9, VideoCodec.VVC, VideoCodec.MPEG2], true, true, true, true, "mkv", ["mkv", "mp4", "mov", "webm", "ts"]);
 
     public static readonly ProfileDefinition Streaming = new(ProfileKind.Streaming, "Streaming / Web",
         "Fast start and a fixed 2 s GOP for HTML5 players. Stereo AAC (Opus in WebM).",
-        [VideoCodec.H264, VideoCodec.HEVC, VideoCodec.AV1], true, true, true, true, "mp4", ["mp4", "webm", "mkv"]);
+        [VideoCodec.H264, VideoCodec.HEVC, VideoCodec.AV1, VideoCodec.VP9], true, true, true, true, "mp4", ["mp4", "webm", "mkv"]);
+
+    public static readonly ProfileDefinition Professional = new(ProfileKind.Professional, "Professional / Lossless",
+        "Editing and mastering codecs (ProRes, DNxHR, CineForm) and lossless archives (FFV1, Ut Video…). PCM or FLAC audio.",
+        [VideoCodec.ProRes, VideoCodec.DNxHR, VideoCodec.FFV1, VideoCodec.CineForm, VideoCodec.UtVideo, VideoCodec.FFVHuff, VideoCodec.JPEG2000, VideoCodec.Uncompressed],
+        true, true, true, true, "mov", ["mov", "mkv", "mxf", "avi"]);
 
     public static readonly ProfileDefinition BlurayAac = new(ProfileKind.BlurayAac, "Blu-ray AAC",
         "H.264 High@4.1 8-bit, Blu-ray player friendly, AAC audio (copied when already AAC).",
@@ -78,7 +83,7 @@ public static class Profiles
         [], false, false, false, false, "txt", []);
 
     public static IReadOnlyList<ProfileDefinition> All { get; } =
-        [UniversalMkv, Streaming, BlurayAac, BlurayAc3, Workraw, XvidMp3, RemuxMp4, RemuxMkv, Images, Demux, Keyframes];
+        [UniversalMkv, Streaming, Professional, BlurayAac, BlurayAc3, Workraw, XvidMp3, RemuxMp4, RemuxMkv, Images, Demux, Keyframes];
 
     public static ProfileDefinition Get(ProfileKind kind) => All.First(p => p.Kind == kind);
 }
