@@ -9,6 +9,10 @@
     <Content Update="wwwroot/**" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
   <ItemGroup>
+    <None Include="../../ai/kna_upscale.py" Link="ai/kna_upscale.py" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="../../ai/requirements.txt" Link="ai/requirements.txt" CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
+  <ItemGroup>
     <ProjectReference Include="../KnA.Core/KnA.Core.csproj" />
   </ItemGroup>
 </Project>

@@ -160,9 +160,16 @@ app.MapPost("/api/uploads/{id}/complete", async (string id, UploadComplete req, 
 {
     var path = uploads.Complete(id);
     int added = 0;
-    if (req.AttachTo is { } job)
+    var target = req.AttachTo is { } jid ? queue.Find(jid)
+        : req.AttachToSource is { Length: > 0 } src ? queue.Jobs.LastOrDefault(j => j.SourcePath == src) : null;
+    if (target is not null)
     {
-        await queue.AttachExternalsAsync(job, [path], ct);
+        await queue.AttachExternalsAsync(target.Id, [path], ct);
+        return Results.Ok(new { path, added = 0, attached = target.Id });
+    }
+    if (req.AttachTo is not null || req.AttachToSource is not null)
+    {
+        return Results.Ok(new { path, added = 0, attached = (Guid?)null });
     }
     else if (req.Enqueue && (MediaExtensions.IsVideo(path) || path.EndsWith(".iso", StringComparison.OrdinalIgnoreCase)))
     {
@@ -188,6 +195,47 @@ app.MapPost("/api/drop/apply", async (DropRequest req, CancellationToken ct) =>
     var r = await DropClassifier.ApplyAsync(plan, queue, req.Settings ?? queue.Settings.Defaults, ct);
     if (r.Presets > 0) hub.Broadcast("presets", queue.Presets.All);
     return Results.Ok(r);
+});
+
+// ---------------------------------------------------------------- AI: LLM assistant and neural upscaler
+app.MapGet("/api/ai/models", async (CancellationToken ct) =>
+{
+    try { return Results.Ok(await new KnA.Core.Ai.LlmClient(queue.Settings.Ai).ListModelsAsync(ct)); }
+    catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or InvalidOperationException or System.Text.Json.JsonException)
+    {
+        return Results.Problem(L.T("Cannot reach the LLM server at {0}: {1}", queue.Settings.Ai.EffectiveUrl, ex.Message), statusCode: 502);
+    }
+});
+app.MapPost("/api/ai/suggest", async (AiSuggestRequest req, CancellationToken ct) =>
+{
+    var media = req.JobId is { } jid ? queue.Find(jid)?.Media : null;
+    try { return Results.Ok(await new KnA.Core.Ai.Assistant(queue.Settings.Ai, queue.Settings.Capabilities).SuggestAsync(req.Prompt, req.Settings, media, ct)); }
+    catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or InvalidOperationException)
+    {
+        return Results.Problem(ex.Message, statusCode: 502);
+    }
+});
+app.MapPost("/api/jobs/{id:guid}/ai/analyze", async (Guid id, CancellationToken ct) =>
+{
+    var j = queue.Find(id) ?? throw new KeyNotFoundException();
+    var a = await queue.AnalyzeAsync(j, ct);
+    var frames = new List<byte[]>();
+    foreach (var f in new[] { 0.12, 0.37, 0.62, 0.87 })
+        frames.Add(await File.ReadAllBytesAsync(await queue.Preview.ThumbnailAsync(id, a.Source.Duration.TotalSeconds * f, 768, ct), ct));
+    try { return Results.Ok(await new KnA.Core.Ai.Assistant(queue.Settings.Ai, queue.Settings.Capabilities).AnalyzeAsync(a.Source, j.Settings, frames, ct)); }
+    catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or InvalidOperationException)
+    {
+        return Results.Problem(ex.Message, statusCode: 502);
+    }
+});
+app.MapGet("/api/ai/runtime", async (CancellationToken ct) =>
+{
+    var py = KnA.Core.Ai.UpscaleSidecar.Python(queue.Settings.Ai, queue.Store.DataDirectory);
+    var script = KnA.Core.Ai.UpscaleSidecar.Script();
+    if (py is null || script is null) return Results.Ok(new { python = py, script, info = (object?)null });
+    var r = await KnA.Core.Processing.ProcessRunner.RunAsync(py, [script, "--check"], timeout: TimeSpan.FromMinutes(1), ct: ct);
+    object? info = KnA.Core.Ai.LlmClient.ExtractJson(r.StdOut);
+    return Results.Ok(new { python = py, script, info, error = r.ExitCode == 0 ? null : r.StdErr.Trim() });
 });
 
 // ---------------------------------------------------------------- watch folders

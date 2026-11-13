@@ -2,6 +2,8 @@
 import { $, $$, esc, state, t, api, post, toast, guard, fmtTime, fmtSize, label, profileOf, fillSelect, showText, capability, loadI18n, translatePage, lang } from "./core.js";
 import { renderSettingsForm, cloneSettings } from "./form.js";
 import { openEditor, editorJobChanged } from "./editor.js";
+import { openFiles, pickFiles } from "./files.js";
+import { openAssistant } from "./ai.js";
 
 // ---------------------------------------------------------------- theme
 function applyTheme(theme) {
@@ -53,6 +55,10 @@ $("#btn-delete-preset").onclick = guard(async () => {
   await api("DELETE", "/api/presets/" + encodeURIComponent(name));
   state.form.presetName = null;
 });
+
+$("#btn-files").onclick = () => openFiles();
+$("#btn-upload").onclick = () => pickFiles();
+$("#btn-ai").onclick = () => openAssistant(s => { state.form = { ...s, presetName: null }; renderForm(); });
 
 function renderForm() {
   renderSettingsForm($("#quick-form"), state.form, { onChange: () => { state.form.presetName = null; renderPresets(); } });
@@ -135,20 +141,33 @@ $("#wiz-next").onclick = guard(async () => {
 function renderHardware() {
   const caps = state.settings.capabilities, el = $("#hw-table");
   if (!caps) { el.innerHTML = ""; $("#hw-info").textContent = t("Not detected yet."); return; }
-  const codecs = ["H264", "HEVC", "AV1"];
-  let html = `<div></div>` + codecs.map(c => `<div class="h">${c === "H264" ? "H.264" : c}</div>`).join("");
-  for (const b of state.options.backends.map(x => x.value)) {
-    const rows = codecs.map(c => caps.encoders.find(x => x.codec === c && x.backend === b));
-    if (rows.every(r => !r?.compiled) && b !== "Software") continue;
-    html += `<div class="b">${esc(label(state.options.backends, b).replace(/\s*\(.*\)/, "").replace(/^(Apple|NVIDIA|Intel|AMD) /, ""))}</div>`;
-    for (const e of rows) {
+  const enc = caps.encoders;
+  const backends = state.options.backends.map(x => x.value).filter(b => b === "Software" || enc.some(e => e.backend === b && e.compiled));
+  const codecs = state.options.codecs.map(x => x.value).filter(c => ["H264", "HEVC", "AV1"].includes(c) || enc.some(e => e.codec === c && e.compiled));
+  const short = b => label(state.options.backends, b).replace(/\s*\(.*\)/, "").replace(/^(Apple|NVIDIA|Intel|AMD) /, "");
+  el.style.gridTemplateColumns = `minmax(64px,auto) repeat(${backends.length}, 1fr)`;
+  let html = `<div></div>` + backends.map(b => `<div class="h">${esc(short(b))}</div>`).join("");
+  for (const c of codecs) {
+    html += `<div class="b">${esc(label(state.options.codecs, c).split(" (")[0].split(" /")[0])}</div>`;
+    for (const b of backends) {
+      const list = enc.filter(x => x.codec === c && x.backend === b);
+      const e = list.find(x => x.works8Bit || x.works10Bit) ?? list[0];
       if (!e) { html += `<div class="hw-cell na">—</div>`; continue; }
-      const txt = e.works10Bit ? "10-bit" : e.works8Bit ? "8-bit" : "✕";
-      html += `<div class="hw-cell ${e.works8Bit || e.works10Bit ? "ok" : ""}" title="${esc(e.encoder + (e.error ? ": " + e.error : ""))}">${txt}</div>`;
+      const pro = ["ProRes", "DNxHR", "CineForm", "FFV1", "UtVideo", "FFVHuff", "JPEG2000", "Uncompressed"].includes(c);
+      const txt = e.works10Bit && !pro ? "10-bit" : e.works8Bit ? (pro ? "✓" : "8-bit") : "✕";
+      const tip = list.map(x => `${x.encoder}${x.ffmpeg ? " (" + x.ffmpeg + ")" : ""}: ${x.works8Bit || x.works10Bit ? "OK" : x.error ?? "no"}`).join("\n");
+      html += `<div class="hw-cell ${e.works8Bit || e.works10Bit ? "ok" : ""}" title="${esc(tip)}">${txt}</div>`;
     }
   }
   el.innerHTML = html;
-  $("#hw-info").textContent = `${caps.version.replace("ffmpeg version ", "FFmpeg ").split(" Copyright")[0]} · libass ${caps.hasLibass ? "✓" : "✕"} · zscale ${caps.hasZscale ? "✓" : "✕"} · libplacebo ${caps.hasLibplacebo ? "✓" : "✕"}`;
+  const main = caps.builds?.find(b => !b.isCustom);
+  const extra = (caps.builds ?? []).filter(b => b.isCustom).length;
+  $("#hw-info").textContent = `${caps.version.replace("ffmpeg version ", "FFmpeg ").split(" Copyright")[0]}${extra ? " + " + t("{0} custom build(s)", extra) : ""} · libass ${caps.hasLibass ? "✓" : "✕"} · zscale ${caps.hasZscale ? "✓" : "✕"} · libplacebo ${caps.hasLibplacebo ? "✓" : "✕"} · Blu-ray ${main?.hasBluray ? "✓" : "✕"} · DVD ${main?.hasDvdVideo ? "✓" : "✕"} · AAC ${aacName(caps)}`;
+}
+function aacName(caps) {
+  if (caps.builds?.some(b => b.encoders.includes("libfdk_aac"))) return "libfdk_aac";
+  if (caps.builds?.some(b => b.encoders.includes("aac_at"))) return "AudioToolbox";
+  return state.tools?.fdkaac ? "fdkaac" : "FFmpeg";
 }
 $("#btn-detect").onclick = guard(async () => {
   const b = $("#btn-detect"); b.disabled = true; b.textContent = t("Testing…");
@@ -203,6 +222,7 @@ function jobHtml(j) {
         <button class="btn ghost icon sm" data-a="edit" title="${esc(t("Edit tracks, trim, filters, preview"))}" ${running ? "disabled" : ""}><svg><use href="#i-edit"/></svg></button>
         <button class="btn ghost icon sm" data-a="up" title="${esc(t("Move up"))}" ${running ? "disabled" : ""}><svg><use href="#i-up"/></svg></button>
         <button class="btn ghost icon sm" data-a="down" title="${esc(t("Move down"))}" ${running ? "disabled" : ""}><svg><use href="#i-down"/></svg></button>
+        ${(j.status === "Done" || j.status === "Warning") && j.outputPath ? `<a class="btn ghost icon sm" href="/api/jobs/${j.id}/download" download title="${esc(t("Download the result"))}"><svg><use href="#i-download"/></svg></a>` : ""}
         <button class="btn ghost icon sm" data-a="cmd" title="${esc(t("FFmpeg command"))}"><svg><use href="#i-term"/></svg></button>
         <button class="btn ghost icon sm" data-a="log" title="${esc(t("Log"))}"><svg><use href="#i-log"/></svg></button>
         <button class="btn ghost icon sm" data-a="reset" title="${esc(t("Process again"))}" ${running || j.status === "Ready" ? "disabled" : ""}><svg><use href="#i-redo"/></svg></button>
@@ -324,8 +344,8 @@ async function browse(path) {
   $("#browse-list").innerHTML = r.entries.map(e => `
     <div class="entry ${e.isDirectory ? "dir" : "file"}" data-p="${esc(e.path)}" data-dir="${e.isDirectory}">
       <input type="checkbox" ${r.path === null || (ext && e.isDirectory) ? "disabled" : ""}>
-      <svg><use href="#${e.isDirectory ? "i-folder" : ext ? "i-file" : "i-film"}"/></svg>
-      <span class="name">${esc(e.name)}</span>
+      <svg><use href="#${e.kind === "disc" ? "i-disc" : e.isDirectory ? "i-folder" : ext ? "i-file" : "i-film"}"/></svg>
+      <span class="name">${esc(e.name)}${e.kind === "disc" ? ` <span class="chip">${esc(t("disc"))}</span>` : ""}</span>
       <span class="size">${e.isDirectory ? "" : fmtSize(e.size)}</span>
     </div>`).join("") || `<p class="muted" style="padding:16px">${esc(ext ? t("No audio, subtitle, font or video files here.") : t("No folders or video files here."))}</p>`;
   $("#btn-add-current").hidden = ext;
@@ -414,9 +434,115 @@ $("#btn-settings").onclick = guard(async () => {
   $("#s-adv-note").textContent = info.advancedAllowed ? "" : t("Locked: set KNA_ALLOW_ADVANCED=true on the server to edit these from the browser.");
   $("#s-ext").innerHTML = state.options.extensions.map(x =>
     `<label><input type="checkbox" value="${x}" ${s.folderExtensions.includes(x) ? "checked" : ""}>${x}</label>`).join("");
+  // Blu-ray / DVD
+  fillSelect($("#s-disc-all"), [{ value: "true", label: t("Every episode-length title") }, { value: "false", label: t("Only the main (longest) title") }], String(s.discAllTitles));
+  $("#s-disc-min").value = s.discMinMinutes;
+  const main = s.capabilities?.builds?.find(b => !b.isCustom);
+  $("#s-disc-note").textContent = main ? t("This FFmpeg: Blu-ray {0} (libbluray, also ISO) · DVD {1} (dvdvideo, also ISO). Without them KnA reads BDMV and VIDEO_TS folders itself.",
+    main.hasBluray ? "✓" : "✕", main.hasDvdVideo ? "✓" : "✕") : "";
+  // FFmpeg channel, custom builds, companion programs
+  fillSelect($("#s-channel"), [{ value: "release", label: t("Newest release branch") }, { value: "master", label: "master (nightly)" }], s.ffmpegChannel ?? "release");
+  $("#s-builds").value = (s.customFfmpegBuilds ?? []).join("\n");
+  $("#s-toolpaths").innerHTML = ["ffprobe", "fdkaac", "dovi_tool", "hdr10plus_tool", "vspipe", "scxvid"].map(id =>
+    `<label class="field"><span>${esc(id)}</span><input class="mono" data-tool="${id}" value="${esc(s.toolPaths?.[id] ?? "")}" placeholder="${esc(t("auto"))}" ${info.advancedAllowed ? "" : "disabled"}></label>`).join("");
+  $("#s-builds").disabled = !info.advancedAllowed;
+  // AI
+  const ai = s.ai ?? {};
+  fillSelect($("#s-ai-provider"), state.options.llmProviders.map(p => ({ value: p.value, label: p.label })), ai.provider ?? "ollama");
+  const provNote = () => $("#s-ai-provider-note").textContent = state.options.llmProviders.find(p => p.value === $("#s-ai-provider").value)?.description ?? "";
+  provNote(); $("#s-ai-provider").onchange = provNote;
+  $("#s-ai-url").value = ai.baseUrl ?? "";
+  $("#s-ai-model").value = ai.model ?? "";
+  $("#s-ai-vision").value = ai.visionModel ?? "";
+  $("#s-ai-key").value = "";
+  $("#s-ai-key-note").textContent = ai.hasApiKey ? t("A key is stored. Leave empty to keep it, \"-\" to delete it.") : t("Only for servers that need one (Unsloth Studio, cloud).");
+  $("#s-ai-timeout").value = ai.timeoutSeconds ?? 180;
+  fillSelect($("#s-ai-device"), ["auto", "cuda", "rocm", "mps", "xpu", "cpu"].map(d => ({ value: d, label: d === "auto" ? t("Automatic") : d.toUpperCase() })), ai.device ?? "auto");
+  $("#s-ai-tile").value = ai.tile ?? 0;
+  $("#s-ai-fp16").checked = ai.fp16 ?? true;
+  $("#s-ai-python").value = ai.python ?? "";
+  $("#s-ai-python").disabled = !info.advancedAllowed;
+  $("#s-ai-runtime").hidden = true;
+  await loadWatch();
   renderToolsBox(info);
   $("#dlg-settings").showModal();
 });
+
+// ---------------------------------------------------------------- watch folders
+let watch = { folders: [], status: [] };
+async function loadWatch() { watch = await api("GET", "/api/watch"); renderWatch(); }
+function renderWatch() {
+  const presets = [{ value: "", label: t("Default settings") }, ...state.presets.map(p => ({ value: p.name, label: "★ " + p.name }))];
+  $("#w-list").innerHTML = watch.folders.map((f, i) => {
+    const st = watch.status.find(x => x.id === f.id);
+    return `<div class="w-item" data-i="${i}">
+      <div class="row"><label class="toggle"><input type="checkbox" data-w="enabled" ${f.enabled ? "checked" : ""}><span class="switch"></span></label>
+        <input class="mono grow" data-w="path" value="${esc(f.path)}" placeholder="/media/incoming">
+        <button class="btn ghost icon sm" type="button" data-wa="scan" title="${esc(t("Scan now"))}"><svg><use href="#i-redo"/></svg></button>
+        <button class="btn ghost icon sm" type="button" data-wa="remove" title="${esc(t("Remove"))}"><svg><use href="#i-trash"/></svg></button></div>
+      <div class="grid2">
+        <label class="field"><span>${esc(t("Preset"))}</span><select data-w="preset">${presets.map(p => `<option value="${esc(p.value)}" ${p.value === (f.preset ?? "") ? "selected" : ""}>${esc(p.label)}</option>`).join("")}</select></label>
+        <label class="field"><span>${esc(t("Output folder"))}</span><input class="mono" data-w="outputFolder" value="${esc(f.outputFolder ?? "")}" placeholder="${esc(t("Same as the general setting"))}"></label>
+        <label class="field"><span>${esc(t("After success"))}</span><select data-w="afterSuccess">${state.options.watchActions.map(a => `<option value="${a.value}" ${a.value === f.afterSuccess ? "selected" : ""}>${esc(a.label)}</option>`).join("")}</select></label>
+        <div class="grid2"><label class="field"><span>${esc(t("Scan every (s)"))}</span><input type="number" min="5" data-w="intervalSeconds" value="${f.intervalSeconds}"></label>
+          <label class="field"><span>${esc(t("Stable for (s)"))}</span><input type="number" min="0" data-w="settleSeconds" value="${f.settleSeconds}"></label></div>
+      </div>
+      <div class="row small">
+        <label class="check"><input type="checkbox" data-w="recursive" ${f.recursive ? "checked" : ""}>${esc(t("Subfolders"))}</label>
+        <label class="check"><input type="checkbox" data-w="autoStart" ${f.autoStart ? "checked" : ""}>${esc(t("Start the queue"))}</label>
+        <label class="check"><input type="checkbox" data-w="importExisting" ${f.importExisting ? "checked" : ""}>${esc(t("Also the files already there"))}</label>
+        <span class="muted grow" style="text-align:right">${st?.lastScan ? esc(t("last scan {0} · {1} queued · {2} waiting", new Date(st.lastScan).toLocaleTimeString(), st.queued, st.waiting)) : ""}${st?.error ? ` <b style="color:var(--err)">${esc(st.error)}</b>` : ""}</span>
+      </div>
+    </div>`;
+  }).join("") || `<p class="muted small">${esc(t("No watch folders yet."))}</p>`;
+}
+$("#w-add").onclick = () => {
+  watch.folders.push({ id: Math.random().toString(16).slice(2, 12), path: "", enabled: true, preset: state.form.presetName ?? null, outputFolder: null,
+    recursive: true, autoStart: true, importExisting: false, afterSuccess: "Keep", intervalSeconds: 30, settleSeconds: 20 });
+  renderWatch();
+};
+$("#w-list").onchange = e => {
+  const item = e.target.closest(".w-item"); const k = e.target.dataset.w; if (!item || !k) return;
+  const f = watch.folders[Number(item.dataset.i)];
+  f[k] = e.target.type === "checkbox" ? e.target.checked : ["intervalSeconds", "settleSeconds"].includes(k) ? Number(e.target.value) : (e.target.value.trim() || (k === "path" ? "" : null));
+};
+$("#w-list").onclick = guard(async e => {
+  const a = e.target.closest("[data-wa]")?.dataset.wa; if (!a) return;
+  const i = Number(e.target.closest(".w-item").dataset.i);
+  if (a === "remove") { watch.folders.splice(i, 1); renderWatch(); }
+  if (a === "scan") { await saveWatch(); await post(`/api/watch/${watch.folders[i].id}/scan`); toast(t("Scanning…"), "ok"); }
+});
+async function saveWatch() {
+  watch = await api("PUT", "/api/watch", watch.folders.filter(f => f.path));
+  renderWatch();
+}
+
+// ---------------------------------------------------------------- AI settings helpers
+$("#s-ai-list").onclick = guard(async () => {
+  await saveAiOnly();
+  const models = await api("GET", "/api/ai/models");
+  $("#s-ai-models").innerHTML = models.map(m => `<option value="${esc(m)}">`).join("");
+  toast(t("{0} model(s) found", models.length), models.length ? "ok" : "err");
+});
+$("#s-ai-check").onclick = guard(async () => {
+  await saveAiOnly();
+  const r = await api("GET", "/api/ai/runtime");
+  const box = $("#s-ai-runtime");
+  box.hidden = false;
+  box.textContent = r.python ? JSON.stringify({ python: r.python, script: r.script, ...(r.info ?? {}), error: r.error ?? undefined }, null, 2)
+    : t("Python not found: install the AI upscaler in Updates & components.");
+});
+function aiBody() {
+  return {
+    provider: $("#s-ai-provider").value, baseUrl: $("#s-ai-url").value.trim() || null, model: $("#s-ai-model").value.trim() || null,
+    visionModel: $("#s-ai-vision").value.trim() || null, apiKey: $("#s-ai-key").value, timeoutSeconds: Number($("#s-ai-timeout").value) || 180,
+    device: $("#s-ai-device").value, tile: Number($("#s-ai-tile").value) || 0, fp16: $("#s-ai-fp16").checked, python: $("#s-ai-python").value.trim() || null,
+  };
+}
+async function saveAiOnly() {
+  const r = await api("PUT", "/api/settings", { ai: aiBody() });
+  state.settings = r.settings;
+}
 $("#btn-save-settings").onclick = guard(async () => {
   const body = {
     language: $("#s-lang").value, theme: $("#s-theme").value,
@@ -426,8 +552,15 @@ $("#btn-save-settings").onclick = guard(async () => {
     stallTimeoutMinutes: Number($("#s-stall").value) || 10, keepLogs: Number($("#s-keeplogs").value) || 300,
     vaapiDevice: $("#s-vaapi").value.trim(),
     folderExtensions: $$("#s-ext input:checked").map(i => i.value),
+    discAllTitles: $("#s-disc-all").value === "true", discMinMinutes: Number($("#s-disc-min").value) || 0,
+    ffmpegChannel: $("#s-channel").value, ai: aiBody(),
   };
-  if (state.advancedAllowed) Object.assign(body, { ffmpegPath: $("#s-ffmpeg").value.trim(), extraArguments: $("#s-extra").value, tempDirectory: $("#s-temp").value.trim() });
+  if (state.advancedAllowed) Object.assign(body, {
+    ffmpegPath: $("#s-ffmpeg").value.trim(), extraArguments: $("#s-extra").value, tempDirectory: $("#s-temp").value.trim(),
+    customFfmpegBuilds: $("#s-builds").value.split("\n").map(x => x.trim()).filter(Boolean),
+    toolPaths: Object.fromEntries($$("#s-toolpaths input").map(i => [i.dataset.tool, i.value.trim()]).filter(([, v]) => v)),
+  });
+  await saveWatch();
   const langChanged = body.language !== (state.settings.language ?? "Auto");
   const r = await api("PUT", "/api/settings", body);
   state.settings = r.settings; state.tools = r.tools;
@@ -498,6 +631,12 @@ function connect() {
     } else if (type === "component") {
       const b = $(`[data-install="${payload.id}"]`);
       if (b && payload.percent != null) b.textContent = `${t("Downloading…")} ${payload.percent}%`;
+    } else if (type === "watch") {
+      const i = watch.status.findIndex(x => x.id === payload.id);
+      if (i >= 0) watch.status[i] = payload; else watch.status.push(payload);
+      if ($("#dlg-settings").open && !$("[data-pane=watch]").hidden) renderWatch();
+    } else if (type === "toast") {
+      toast(payload.text, "ok");
     } else if (type === "detect") {
       $("#btn-detect").textContent = payload.line.trim().slice(0, 28);
     }

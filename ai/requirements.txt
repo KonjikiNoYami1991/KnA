@@ -1,0 +1,10 @@
+# KnA neural upscaler (ai/kna_upscale.py).
+# Install PyTorch for your GPU first (https://pytorch.org/get-started/locally/), e.g.
+#   NVIDIA (RTX 20…50):  pip install torch --index-url https://download.pytorch.org/whl/cu128
+#   AMD (Linux, ROCm):   pip install torch --index-url https://download.pytorch.org/whl/rocm6.4
+#   Apple Silicon / CPU: pip install torch
+# KnA does all of this itself: Settings → Components → "AI upscaler".
+spandrel>=0.4
+numpy>=1.26
+# optional, for .onnx models:
+# onnxruntime-gpu

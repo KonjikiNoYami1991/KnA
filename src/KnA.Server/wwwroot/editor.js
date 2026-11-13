@@ -2,6 +2,8 @@
 // Every change is saved to the job and re-validated by the server (debounced).
 import { $, $$, esc, state, t, api, post, toast, guard, fmtStamp, parseStamp, fmtTime, label, profileOf, fillSelect, debounce, showText } from "./core.js";
 import { renderSettingsForm, cloneSettings } from "./form.js";
+import { openAssistant, analyzeJob } from "./ai.js";
+import { pickFiles } from "./files.js";
 
 let ed = null;
 const kinds = ["video", "audio", "subtitle", "attachment"];
@@ -82,6 +84,7 @@ function renderTracks(body) {
   body.innerHTML = `
     <div class="row" style="margin-bottom:10px;flex-wrap:wrap">
       <button class="btn sm" data-a="add-ext"><svg><use href="#i-plus"/></svg><span>${esc(t("Add external files…"))}</span></button>
+      <button class="btn sm" data-a="upload-ext"><svg><use href="#i-upload"/></svg><span>${esc(t("Upload from this device…"))}</span></button>
       <button class="btn sm ghost" data-a="reset"><svg><use href="#i-redo"/></svg><span>${esc(t("Reset to automatic"))}</span></button>
       <span class="muted small">${esc(ed.edit.tracks ? t("Custom track plan.") : t("Automatic plan (from the subtitle mode). Any change makes it custom."))}</span>
     </div>
@@ -140,6 +143,7 @@ function renderTracks(body) {
     const b = e.target.closest("button[data-a]"); if (!b) return;
     const a = b.dataset.a;
     if (a === "add-ext") return pickExternal();
+    if (a === "upload-ext") { await saveNow(); return pickFiles(null, ed.id); }
     if (a === "reset") { ed.edit.tracks = null; return saveAndRender(); }
     if (a === "rm-ext") {
       const f = b.dataset.f;
@@ -401,7 +405,12 @@ function renderOutput(body) {
     <div class="two-col">
       <div><div id="out-form"></div></div>
       <div>
-        ${p.isImages || p.isDemux ? `<label class="field"><span>${esc(t("Destination folder"))}</span><input id="out-folder" value="${esc(ed.edit.outputFolder ?? "")}" placeholder="${esc(t("Next to the source file"))}"></label>` : ""}
+        <label class="field"><span>${esc(t("Destination folder"))}</span><input id="out-folder" class="mono" value="${esc(ed.edit.outputFolder ?? "")}" placeholder="${esc(t("Same as the general setting"))}"></label>
+        <div class="section"><h3>${esc(t("AI assistant"))}</h3>
+          <div class="row"><button class="btn sm" data-a="ai-analyze"><svg><use href="#i-spark"/></svg><span>${esc(t("Analyse frames with AI"))}</span></button>
+          <button class="btn sm" data-a="ai-ask"><svg><use href="#i-spark"/></svg><span>${esc(t("Ask"))}</span></button></div>
+          <p class="muted small">${esc(t("A vision model looks at a few frames and proposes filters and the upscaler. Nothing changes until you apply it."))}</p>
+        </div>
         ${p.isDemux ? `<div class="section"><h3>${esc(t("Streams to extract"))}</h3>
           ${src.streams.filter(s => s.kind !== "attachment").map(s => `<label class="check" style="display:flex;margin:4px 0"><input type="checkbox" data-ds="${s.index}" ${!ed.settings.demux.streams || ed.settings.demux.streams.includes(s.index) ? "checked" : ""}>
             <span class="kind ${s.kind}">${esc(kindLabel(s.kind))}</span> #${s.index} ${esc(s.codec)} ${esc(s.language ?? "")} ${esc(s.title ?? "")}</label>`).join("")}</div>` : ""}
@@ -432,6 +441,9 @@ function renderOutput(body) {
       toast(t("Preset \"{0}\" saved", name), "ok");
     }
     if (a === "cmd") { await saveNow(); showText(t("FFmpeg command"), await api("GET", `/api/jobs/${ed.id}/command`)); }
+    const applyAi = s => { ed.settings = { ...s, presetName: null }; saveAndRender(); };
+    if (a === "ai-analyze") { await saveNow(); await analyzeJob(ed.id, ed.settings, applyAi); }
+    if (a === "ai-ask") { await saveNow(); openAssistant(applyAi, ed.id); }
   });
 }
 

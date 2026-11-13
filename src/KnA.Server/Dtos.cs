@@ -126,9 +126,10 @@ public sealed record SettingsUpdate(
     bool? DiscAllTitles = null, int? DiscMinMinutes = null, KnA.Core.Ai.AiSettings? Ai = null);
 
 public sealed record UploadCreate(string Name, long Size, string? Folder);
-public sealed record UploadComplete(bool Enqueue, JobSettings? Settings, string? Preset, Guid? AttachTo);
+public sealed record UploadComplete(bool Enqueue, JobSettings? Settings, string? Preset, Guid? AttachTo, string? AttachToSource = null);
 public sealed record DropRequest(List<string> Paths, Guid? TargetJob, JobSettings? Settings);
 public sealed record FolderRequest(string Path);
+public sealed record AiSuggestRequest(string Prompt, JobSettings Settings, Guid? JobId);
 
 public static class Mapping
 {

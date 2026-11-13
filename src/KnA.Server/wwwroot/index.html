@@ -34,12 +34,17 @@
   <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12.5 4.5 4.5L19 7.5" stroke="currentColor" stroke-width="2.4" fill="none" stroke-linecap="round" stroke-linejoin="round"/></symbol>
   <symbol id="i-edit" viewBox="0 0 24 24"><path d="M4 17.2V20h2.8l9.4-9.4-2.8-2.8L4 17.2Zm15.7-9.5a1 1 0 0 0 0-1.4l-2-2a1 1 0 0 0-1.4 0l-1.6 1.6 2.8 2.8 2.2-1Z"/></symbol>
   <symbol id="i-wand" viewBox="0 0 24 24"><path d="m3 19 12-12 2 2L5 21l-2-2Zm13-15 .7 1.6L18.3 6l-1.6.7L16 8.3l-.7-1.6L13.7 6l1.6-.7L16 3.7ZM20 9l.5 1 1 .5-1 .5-.5 1-.5-1-1-.5 1-.5.5-1ZM9 2l.5 1 1 .5-1 .5L9 5l-.5-1-1-.5 1-.5L9 2Z"/></symbol>
+  <symbol id="i-upload" viewBox="0 0 24 24"><path d="M12 3 6.5 8.5l1.4 1.4L11 6.8V16h2V6.8l3.1 3.1 1.4-1.4L12 3ZM4 18v3h16v-3h-2v1H6v-1H4Z"/></symbol>
+  <symbol id="i-download" viewBox="0 0 24 24"><path d="M11 3v9.2L7.9 9.1 6.5 10.5 12 16l5.5-5.5-1.4-1.4-3.1 3.1V3h-2ZM4 18v3h16v-3h-2v1H6v-1H4Z"/></symbol>
+  <symbol id="i-disc" viewBox="0 0 24 24"><path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20Zm0 7a3 3 0 1 1 0 6 3 3 0 0 1 0-6Zm0 2a1 1 0 1 0 0 2 1 1 0 0 0 0-2Z"/></symbol>
+  <symbol id="i-eye" viewBox="0 0 24 24"><path d="M12 5c5 0 9 4.5 10 7-1 2.5-5 7-10 7S3 14.5 2 12c1-2.5 5-7 10-7Zm0 3a4 4 0 1 0 0 8 4 4 0 0 0 0-8Z"/></symbol>
+  <symbol id="i-spark" viewBox="0 0 24 24"><path d="M12 2l1.9 5.6L19.5 9.5l-5.6 1.9L12 17l-1.9-5.6L4.5 9.5l5.6-1.9L12 2Zm7 12 .9 2.6 2.6.9-2.6.9L19 21l-.9-2.6-2.6-.9 2.6-.9L19 14ZM5 15l.7 1.8 1.8.7-1.8.7L5 20l-.7-1.8-1.8-.7 1.8-.7L5 15Z"/></symbol>
   <symbol id="i-save" viewBox="0 0 24 24"><path d="M5 3h11l3 3v13a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2Zm2 2v5h8V5H7Zm5 9a2.5 2.5 0 1 0 0 5 2.5 2.5 0 0 0 0-5Z"/></symbol>
 </svg>
 
 <header class="topbar">
   <div class="brand">
-    <div class="logo">KnA</div>
+    <img class="logo" src="favicon.svg" alt="KnA" width="38" height="38">
     <div class="brand-text">
       <strong>Konjiki no Autoencoder</strong>
       <span id="platform" class="muted">…</span>
@@ -48,6 +53,9 @@
   <div class="status-pill" id="queue-pill"><span class="dot"></span><span id="queue-text" data-i18n>Idle</span></div>
   <div class="top-actions">
     <button class="btn" id="btn-add" data-i18n-title="Add files or folders"><svg><use href="#i-plus"/></svg><span data-i18n>Add</span></button>
+    <button class="btn" id="btn-files" data-i18n-title="Browse, download and upload files on the server"><svg><use href="#i-folder"/></svg><span data-i18n>Files</span></button>
+    <button class="btn" id="btn-upload" data-i18n-title="Upload files from this device"><svg><use href="#i-upload"/></svg><span data-i18n>Upload</span></button>
+    <input type="file" id="upload-input" multiple hidden>
     <button class="btn primary" id="btn-start"><svg><use href="#i-play"/></svg><span data-i18n>Start</span></button>
     <button class="btn" id="btn-pause" disabled><svg><use href="#i-pause"/></svg><span data-i18n>Pause</span></button>
     <button class="btn icon" id="btn-theme" data-i18n-title="Light / dark"><svg><use href="#i-moon"/></svg></button>
@@ -86,6 +94,7 @@
         <div class="row">
           <select id="f-preset"></select>
           <button class="btn icon sm" id="btn-wizard" data-i18n-title="Preset wizard"><svg><use href="#i-wand"/></svg></button>
+          <button class="btn icon sm" id="btn-ai" data-i18n-title="Ask the AI assistant"><svg><use href="#i-spark"/></svg></button>
           <button class="btn icon sm" id="btn-save-preset" data-i18n-title="Save as preset"><svg><use href="#i-save"/></svg></button>
           <button class="btn icon sm" id="btn-delete-preset" data-i18n-title="Delete preset"><svg><use href="#i-trash"/></svg></button>
         </div>
@@ -190,6 +199,8 @@
       <button type="button" data-tab="general" class="on" data-i18n>General</button>
       <button type="button" data-tab="output" data-i18n>Output</button>
       <button type="button" data-tab="processing" data-i18n>Processing</button>
+      <button type="button" data-tab="watch" data-i18n>Watch folders</button>
+      <button type="button" data-tab="ai" data-i18n>AI</button>
       <button type="button" data-tab="advanced" data-i18n>Advanced</button>
       <button type="button" data-tab="updates" data-i18n>Updates &amp; components</button>
     </nav>
@@ -225,12 +236,48 @@
           <label class="field"><span data-i18n>Logs to keep</span><input type="number" min="10" max="100000" id="s-keeplogs"></label>
           <label class="field"><span data-i18n>VA-API device</span><input id="s-vaapi" placeholder="/dev/dri/renderD128"></label>
         </div>
+        <h3 data-i18n>Blu-ray and DVD</h3>
+        <div class="grid2">
+          <label class="field"><span data-i18n>Titles to queue</span><select id="s-disc-all"></select></label>
+          <label class="field"><span data-i18n>Ignore titles shorter than (minutes)</span><input type="number" min="0" max="600" id="s-disc-min"></label>
+        </div>
+        <small class="muted" id="s-disc-note"></small>
+      </section>
+      <section data-pane="watch" hidden>
+        <p class="muted small" data-i18n>New files in these folders are queued automatically with their preset. Scans work on NAS shares and Docker bind mounts; a file is taken once it stops growing.</p>
+        <div id="w-list" class="w-list"></div>
+        <div class="row"><button class="btn sm" type="button" id="w-add"><svg><use href="#i-plus"/></svg><span data-i18n>Add a watch folder</span></button></div>
+      </section>
+      <section data-pane="ai" hidden>
+        <h3 data-i18n>LLM assistant</h3>
+        <div class="grid2">
+          <label class="field"><span data-i18n>Server</span><select id="s-ai-provider"></select><small class="muted" id="s-ai-provider-note"></small></label>
+          <label class="field"><span>URL</span><input id="s-ai-url" class="mono" placeholder="http://localhost:11434/v1"></label>
+          <label class="field"><span data-i18n>Model</span><div class="row"><input id="s-ai-model" list="s-ai-models" placeholder="qwen2.5:7b"><button class="btn sm" type="button" id="s-ai-list" data-i18n>Load list</button></div></label>
+          <label class="field"><span data-i18n>Vision model (frame analysis)</span><input id="s-ai-vision" list="s-ai-models" placeholder="qwen2.5vl:7b"></label>
+          <label class="field"><span data-i18n>API key</span><input id="s-ai-key" type="password" autocomplete="off"><small class="muted" id="s-ai-key-note"></small></label>
+          <label class="field"><span data-i18n>Timeout (s)</span><input id="s-ai-timeout" type="number" min="10" max="3600"></label>
+        </div>
+        <datalist id="s-ai-models"></datalist>
+        <h3 data-i18n>Neural upscaler</h3>
+        <div class="grid2">
+          <label class="field"><span data-i18n>Device</span><select id="s-ai-device"></select></label>
+          <label class="field"><span data-i18n>Tile size (0 = whole frame)</span><input id="s-ai-tile" type="number" min="0" max="4096" step="64"></label>
+          <label class="field"><span>Python</span><input id="s-ai-python" class="mono" data-i18n-ph="AI component, then python3 on the PATH"></label>
+        </div>
+        <label class="toggle"><input type="checkbox" id="s-ai-fp16"><span class="switch"></span><span data-i18n>Half precision on the GPU (faster)</span></label>
+        <div class="row"><button class="btn sm" type="button" id="s-ai-check" data-i18n>Check the AI runtime</button></div>
+        <pre class="mono small tools-box" id="s-ai-runtime" hidden></pre>
       </section>
       <section data-pane="advanced" hidden>
         <label class="field"><span data-i18n>FFmpeg path</span><input id="s-ffmpeg" data-i18n-ph="Auto-detect"></label>
         <label class="field"><span data-i18n>Extra FFmpeg arguments</span><input id="s-extra" class="mono" placeholder="-x265-params …"></label>
         <label class="field"><span data-i18n>Temporary folder</span><input id="s-temp" data-i18n-ph="Data folder">
           <small class="muted" data-i18n>Subtitles, fonts, HDR metadata and previews. A fast SSD helps.</small></label>
+        <label class="field"><span data-i18n>Custom FFmpeg builds (one per line)</span>
+          <textarea id="s-builds" class="mono" rows="3" placeholder="/opt/ffmpeg-fdk/bin/ffmpeg"></textarea>
+          <small class="muted" data-i18n>Tested by the hardware detection; each job runs on the build that has its encoders (custom builds first, libfdk_aac preferred).</small></label>
+        <div class="field"><span data-i18n>Companion programs</span><div class="grid2" id="s-toolpaths"></div></div>
         <small class="muted" id="s-adv-note"></small>
         <div class="tools-box" id="tools-box"></div>
       </section>
@@ -240,6 +287,8 @@
           <div class="update-box" id="upd-box"><span class="muted small" data-i18n>Not checked yet.</span></div>
           <div class="row"><button class="btn sm" type="button" id="btn-check-updates" data-i18n>Check for updates</button></div>
         </div>
+        <label class="field"><span data-i18n>FFmpeg channel</span><select id="s-channel"></select>
+          <small class="muted" data-i18n>Release = newest stable branch (recommended); master = nightly with the latest encoders.</small></label>
         <div class="field">
           <span data-i18n>Components</span>
           <div id="comp-list" class="comp-list"><span class="muted small" data-i18n>Loading…</span></div>
@@ -253,6 +302,82 @@
     </footer>
   </form>
 </dialog>
+
+<!-- File manager -->
+<dialog id="dlg-files" class="dialog xwide">
+  <div class="dialog-inner">
+    <header class="dialog-head">
+      <h2 data-i18n>Files on the server</h2>
+      <div class="grow"></div>
+      <label class="check small"><input type="checkbox" id="fm-hidden"><span data-i18n>Hidden files</span></label>
+      <button class="btn icon ghost" id="fm-close" data-i18n-title="Close"><svg><use href="#i-x"/></svg></button>
+    </header>
+    <nav class="crumbs" id="fm-crumbs"></nav>
+    <div class="browse-list fm-list" id="fm-list"></div>
+    <footer class="dialog-foot">
+      <span class="muted small" id="fm-sel"></span>
+      <div class="grow"></div>
+      <button class="btn sm" id="fm-mkdir" data-i18n>New folder</button>
+      <button class="btn sm" id="fm-upload"><svg><use href="#i-upload"/></svg><span data-i18n>Upload here</span></button>
+      <button class="btn sm" id="fm-download" disabled><svg><use href="#i-download"/></svg><span data-i18n>Download</span></button>
+      <button class="btn sm primary" id="fm-queue" disabled><svg><use href="#i-plus"/></svg><span data-i18n>Add to queue</span></button>
+    </footer>
+  </div>
+</dialog>
+
+<!-- Upload / drop plan -->
+<dialog id="dlg-upload" class="dialog wide">
+  <div class="dialog-inner">
+    <header class="dialog-head">
+      <h2 id="up-title" data-i18n>Upload</h2>
+      <div class="grow"></div>
+      <button class="btn icon ghost" id="up-close" data-i18n-title="Close"><svg><use href="#i-x"/></svg></button>
+    </header>
+    <div class="dialog-body">
+      <div class="grid2">
+        <label class="field"><span data-i18n>Destination folder</span>
+          <div class="row"><input id="up-folder" class="mono" readonly><button class="btn sm" id="up-pick" type="button" data-i18n>Change…</button></div></label>
+        <label class="field"><span data-i18n>Videos are queued with</span><select id="up-preset"></select></label>
+      </div>
+      <label class="toggle"><input type="checkbox" id="up-enqueue" checked><span class="switch"></span><span data-i18n>Add the videos to the queue when uploaded</span></label>
+      <div id="up-list" class="up-list"></div>
+      <p class="muted small" id="up-note"></p>
+    </div>
+    <footer class="dialog-foot">
+      <span class="muted small" id="up-total"></span>
+      <div class="grow"></div>
+      <button class="btn" id="up-cancel" data-i18n>Cancel</button>
+      <button class="btn primary" id="up-start" data-i18n>Upload</button>
+    </footer>
+  </div>
+</dialog>
+
+<!-- AI assistant -->
+<dialog id="dlg-ai" class="dialog wide">
+  <div class="dialog-inner">
+    <header class="dialog-head">
+      <h2><svg class="h-icon"><use href="#i-spark"/></svg><span data-i18n>AI assistant</span></h2>
+      <span class="muted small" id="ai-model"></span>
+      <div class="grow"></div>
+      <button class="btn icon ghost" id="ai-close" data-i18n-title="Close"><svg><use href="#i-x"/></svg></button>
+    </header>
+    <div class="dialog-body">
+      <label class="field"><span data-i18n>What do you need?</span>
+        <textarea id="ai-prompt" rows="3" data-i18n-ph="e.g. small MP4 for Telegram under 2 GB, 720p, burned Italian subtitles"></textarea></label>
+      <div class="row"><button class="btn primary" id="ai-ask"><svg><use href="#i-spark"/></svg><span data-i18n>Suggest settings</span></button>
+        <span class="muted small" id="ai-status"></span></div>
+      <div id="ai-result"></div>
+    </div>
+  </div>
+</dialog>
+
+<div id="drop-overlay" class="drop-overlay" hidden>
+  <div class="drop-box">
+    <svg><use href="#i-upload"/></svg>
+    <b data-i18n>Drop to upload</b>
+    <span class="muted" id="drop-hint" data-i18n>Videos are queued, subtitles / audio / fonts join their video, presets are imported.</span>
+  </div>
+</div>
 
 <div id="toasts" class="toasts" aria-live="polite"></div>
 <script src="app.js" type="module"></script>
