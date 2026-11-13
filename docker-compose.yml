@@ -1,7 +1,17 @@
 # KnA web edition — open http://<host>:8585
+#
+# Bind mounts only (no Docker volumes): every folder below is a real folder on the host,
+# so settings, presets, logs, AI models and outputs are plain files you can back up or edit.
+# Create the host folders first (Docker creates missing ones as root):
+#   mkdir -p ./config /mnt/anime/uploads /mnt/anime/incoming
+name: kna
 services:
   kna:
-    build: .
+    build:
+      context: .
+      args:
+        FFMPEG: btbn-release      # btbn-release (newest stable branch) · btbn-master (nightly) · distro
+        FDKAAC: "1"               # standalone Fraunhofer AAC encoder inside the image
     image: kna:latest
     container_name: kna
     restart: unless-stopped
@@ -9,25 +19,50 @@ services:
       - "8585:8585"
     environment:
       TZ: Europe/Rome
-      # Optional HTTP Basic password for the web UI (any user name).
+      # Optional HTTP Basic password for the web UI (any user name). Strongly recommended.
       # KNA_PASSWORD: "change-me"
-      # Several media roots: separate with ';'
+      # Read/write roots (browse, upload, outputs), ';' separated: the container side of the bind mounts below.
       KNA_MEDIA_ROOTS: /media
-      # Allow editing FFmpeg path / extra arguments from the browser.
+      # Read-only roots (browse, download, encode from; never written).
+      # KNA_READONLY_ROOTS: /archive
+      # Where browser uploads land by default (inside a root).
+      KNA_UPLOAD_DIR: /media/uploads
+      # Allow editing FFmpeg paths, custom builds and extra arguments from the browser.
       # KNA_ALLOW_ADVANCED: "true"
+      # Biggest accepted upload in GB (0 = no limit).
+      # KNA_MAX_UPLOAD_GB: "200"
+      # Vulkan device for libplacebo / Anime4K (index or name part); "llvmpipe" = CPU fallback.
+      # KNA_VULKAN_DEVICE: "0"
     volumes:
-      - ./config:/config
-      - /mnt/anime:/media          # <-- your videos (NAS share, local disk…)
-    # ---- Intel / AMD GPU (VA-API, Quick Sync): pass the render node
+      - type: bind
+        source: ./config                 # settings, presets, queue, logs, AI models and Python runtime
+        target: /config
+        bind:
+          create_host_path: true
+      - type: bind
+        source: /mnt/anime               # <-- your videos (NAS share, local disk…)
+        target: /media
+      # - type: bind                     # a read-only archive (also add it to KNA_READONLY_ROOTS)
+      #   source: /mnt/archive
+      #   target: /archive
+      #   read_only: true
+      # - type: bind                     # a custom FFmpeg build (Settings → Advanced → custom builds)
+      #   source: /opt/ffmpeg-custom
+      #   target: /opt/ffmpeg-custom
+      #   read_only: true
+    # LLMs on the host (Ollama, LM Studio, Unsloth Studio…): use http://host.docker.internal:<port>/v1
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    # ---- Intel / AMD GPU (VA-API, Quick Sync, Vulkan): pass the render node
     devices:
       - /dev/dri:/dev/dri
     group_add:
-      - "${RENDER_GID:-993}"       # gid of the "render" group on the host: getent group render
-    # ---- NVIDIA GPU (NVENC): needs nvidia-container-toolkit on the host, then uncomment
+      - "${RENDER_GID:-993}"             # gid of the "render" group on the host: getent group render
+    # ---- NVIDIA GPU (NVENC + CUDA for the AI upscaler): needs nvidia-container-toolkit on the host, then uncomment
     # deploy:
     #   resources:
     #     reservations:
     #       devices:
     #         - driver: nvidia
     #           count: all
-    #           capabilities: [gpu, video, compute, utility]
+    #           capabilities: [gpu, video, compute, utility, graphics]
