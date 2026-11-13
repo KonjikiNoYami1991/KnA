@@ -29,7 +29,7 @@ public static class JobRunner
 
         try
         {
-            if (!File.Exists(job.SourcePath)) throw new FileNotFoundException(L.T("Source file not found."), job.SourcePath);
+            if (!KnA.Core.Media.Discs.DiscSource.Exists(job.SourcePath)) throw new FileNotFoundException(L.T("Source file not found."), job.SourcePath);
 
             job.Stage = L.T("Analysing");
             ctx.Changed(job);
@@ -245,7 +245,7 @@ public static class JobRunner
             var output = Path.Combine(workDir, $"fdk{n++}.m4a");
             var ff = new List<string> { "-hide_banner", "-nostdin", "-v", "error" };
             ff.AddRange(MediaProber.RobustInputArgs(input));
-            ff.AddRange(["-i", input, "-map", $"0:{index}", "-vn", "-ac", plan.Channels.ToString(System.Globalization.CultureInfo.InvariantCulture)]);
+            ff.AddRange([.. KnA.Core.Media.Discs.DiscSource.InputArgs(input), "-map", $"0:{index}", "-vn", "-ac", plan.Channels.ToString(System.Globalization.CultureInfo.InvariantCulture)]);
             if (FilterBuilder.Audio(cc.Settings.AudioFilters, "fdkaac", plan.Channels) is { } af) ff.AddRange(["-af", af]);
             ff.AddRange(["-c:a", "pcm_s16le", "-f", "wav", "-"]);
             var args = AudioPlanner.FdkaacArgs(plan, output);
@@ -409,7 +409,7 @@ public static class JobRunner
         var args = new List<string> { "-hide_banner", "-nostdin", "-y" };
         args.AddRange(MediaProber.RobustInputArgs(burn.File));
         if (Math.Abs(burn.DelayMs) >= 0.5) args.AddRange(["-itsoffset", CommandBuilder.Sec(burn.DelaySeconds)]);
-        args.AddRange(["-i", burn.File, "-map", $"0:{burn.Stream}", "-c:s", stream?.IsAss == true ? "copy" : "ass", subFile]);
+        args.AddRange([.. KnA.Core.Media.Discs.DiscSource.InputArgs(burn.File), "-map", $"0:{burn.Stream}", "-c:s", stream?.IsAss == true ? "copy" : "ass", subFile]);
         var r = await ProcessRunner.RunAsync(ctx.Tools.Ffmpeg, args, workingDirectory: workDir, timeout: TimeSpan.FromMinutes(5), ct: ct);
         if (r.ExitCode != 0 || !File.Exists(Path.Combine(workDir, subFile)))
             throw new InvalidOperationException(L.T("Could not extract the subtitle track: {0}", LastError(r.StdErr) ?? r.StdErr.Trim()));
@@ -425,7 +425,7 @@ public static class JobRunner
             if (!m.Attachments.Any(a => a.IsFont)) continue;
             Directory.CreateDirectory(fonts);
             await ProcessRunner.RunAsync(ctx.Tools.Ffmpeg,
-                ["-hide_banner", "-nostdin", "-y", "-dump_attachment:t", "", "-i", path, "-t", "0", "-f", "null", "-"],
+                ["-hide_banner", "-nostdin", "-y", "-dump_attachment:t", "", .. KnA.Core.Media.Discs.DiscSource.InputArgs(path), "-t", "0", "-f", "null", "-"],
                 workingDirectory: fonts, timeout: TimeSpan.FromMinutes(2), ct: ct);
         }
         foreach (var f in tracks.Where(t => t.Kind == "attachment" && t.Stream < 0 && File.Exists(t.File)).Select(t => t.File)
@@ -464,7 +464,7 @@ public static class JobRunner
     {
         var ffArgs = new List<string> { "-hide_banner", "-nostdin", "-v", "error" };
         ffArgs.AddRange(MediaProber.RobustInputArgs(source));
-        ffArgs.AddRange(["-i", source, "-map", $"0:{videoIndex}", "-c:v", "copy", "-bsf:v", "hevc_mp4toannexb", "-f", "hevc", "-"]);
+        ffArgs.AddRange([.. KnA.Core.Media.Discs.DiscSource.InputArgs(source), "-map", $"0:{videoIndex}", "-c:v", "copy", "-bsf:v", "hevc_mp4toannexb", "-f", "hevc", "-"]);
         return PipeAsync(ctx, ffArgs, tool, toolArgs, ct);
     }
 
@@ -654,7 +654,7 @@ public static class JobRunner
     {
         try
         {
-            var name = $"{DateTime.Now:yyyyMMdd-HHmmss} {Path.GetFileNameWithoutExtension(job.SourcePath)}.log";
+            var name = $"{DateTime.Now:yyyyMMdd-HHmmss} {KnA.Core.Media.Discs.DiscSource.DisplayName(job.SourcePath)}.log";
             name = string.Concat(name.Select(c => Path.GetInvalidFileNameChars().Contains(c) ? '_' : c));
             File.WriteAllText(Path.Combine(store.LogsDirectory, name), job.Log);
             store.RotateLogs(store.KeepLogs);

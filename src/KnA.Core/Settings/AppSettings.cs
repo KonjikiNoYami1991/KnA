@@ -31,6 +31,8 @@ public sealed class AppSettings
     /// tested at detection time and each job uses the build that has its encoders (custom builds first).
     /// </summary>
     public List<string> CustomFfmpegBuilds { get; set; } = [];
+    /// <summary>FFmpeg downloaded by the component manager: "release" (newest release branch) or "master" (nightly).</summary>
+    public string FfmpegChannel { get; set; } = "release";
     /// <summary>User-chosen companion programs: ffprobe, fdkaac, dovi_tool, hdr10plus_tool, vspipe, scxvid, python.</summary>
     public Dictionary<string, string> ToolPaths { get; set; } = [];
     public string? VaapiDevice { get; set; }
@@ -41,6 +43,9 @@ public sealed class AppSettings
     /// <summary>"System", "Light" or "Dark".</summary>
     public string Theme { get; set; } = "System";
     public List<string> FolderExtensions { get; set; } = [.. MediaExtensions.Video];
+    /// <summary>Blu-ray / DVD: queue every title longer than <see cref="DiscMinMinutes"/> (episodes) instead of the main one only.</summary>
+    public bool DiscAllTitles { get; set; } = true;
+    public int DiscMinMinutes { get; set; } = 3;
     /// <summary>Extra FFmpeg arguments, space separated (advanced).</summary>
     public string ExtraArguments { get; set; } = "";
     public FfmpegCapabilities? Capabilities { get; set; }
@@ -55,7 +60,8 @@ public sealed class AppSettings
 public static class MediaExtensions
 {
     public static readonly string[] Video =
-        [".mkv", ".mp4", ".m2ts", ".ts", ".avi", ".mov", ".webm", ".rmvb", ".ogm", ".flv", ".vob", ".mpg", ".mpeg", ".3gp", ".m4v", ".wmv", ".vpy", ".avs"];
+        [".mkv", ".mp4", ".m2ts", ".ts", ".avi", ".mov", ".webm", ".rmvb", ".ogm", ".flv", ".vob", ".mpg", ".mpeg", ".3gp", ".m4v", ".wmv", ".vpy", ".avs",
+         ".mxf", ".mts", ".m2t", ".mpv", ".y4m", ".nut", ".dv", ".wtv", ".dvr-ms", ".asf", ".f4v", ".ogv", ".divx", ".evo", ".iso"];
 
     public static bool IsVideo(string path) => Video.Contains(Path.GetExtension(path).ToLowerInvariant());
 }
@@ -85,6 +91,8 @@ public sealed class SettingsStore
         _tempOverride = string.IsNullOrWhiteSpace(s.TempDirectory) ? null : Path.Combine(s.TempDirectory, "KnA-temp");
         Directory.CreateDirectory(TempDirectory);
         L.Override = s.Language is "it" or "en" ? s.Language : null;
+        Media.Discs.DiscSource.MinTitleLength = TimeSpan.FromMinutes(Math.Clamp(s.DiscMinMinutes, 0, 600));
+        Media.Discs.DiscSource.WorkDirectory = Path.Combine(TempDirectory, "discs");
     }
 
     public SettingsStore(string? dataDirectory = null)

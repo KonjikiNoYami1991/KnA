@@ -28,7 +28,7 @@ public static class DemuxBuilder
         bool dumpAttachments = d.Attachments && media.Attachments.Count > 0 && (selected is null || media.Attachments.Any(x => selected.Contains(x.Index)));
         if (dumpAttachments) a.AddRange(["-dump_attachment:t", ""]);
         a.AddRange(MediaProber.RobustInputArgs(media.Path));
-        a.AddRange(["-i", media.Path]);
+        a.AddRange(KnA.Core.Media.Discs.DiscSource.InputArgs(media.Path));
 
         var trim = CommandBuilder.TrimArgs(edit, media.Duration, issues);
         var outputs = new List<DemuxOutput>();

@@ -163,7 +163,7 @@ public sealed class InputTable
                 a.AddRange(["-ss", ss.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture)]);
             if (Math.Abs(delay) >= 0.0005)
                 a.AddRange(["-itsoffset", delay.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture)]);
-            a.AddRange(["-i", file]);
+            a.AddRange(KnA.Core.Media.Discs.DiscSource.InputArgs(file));
         }
         return a;
     }

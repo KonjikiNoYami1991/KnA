@@ -449,7 +449,7 @@ public static class CommandBuilder
         if (p.IsImages)
         {
             var folder = ctx.ForcedOutputPath ?? OutputNaming.ImageFolder(ctx.Source.Path, ctx.Edit.OutputFolder ?? ctx.Options.OutputDirectory);
-            output = Path.Combine(folder, Path.GetFileNameWithoutExtension(ctx.Source.Path).Replace("%", "%%") + "_%06d." + container);
+            output = Path.Combine(folder, KnA.Core.Media.Discs.DiscSource.DisplayName(ctx.Source.Path).Replace("%", "%%") + "_%06d." + container);
             a2.AddRange(["-f", "image2"]);
             if (s.Images.Mode is ImageMode.SceneChanges or ImageMode.Interval or ImageMode.Count) a2.AddRange(["-fps_mode", "vfr"]);
             a2.Add(output);
@@ -575,7 +575,7 @@ public static class OutputNaming
     {
         var t = string.IsNullOrWhiteSpace(template) ? DefaultTemplate : template;
         if (!t.Contains("{name}", StringComparison.Ordinal)) t = "{name} " + t; // never lose the episode name
-        var name = t.Replace("{name}", Path.GetFileNameWithoutExtension(source))
+        var name = t.Replace("{name}", KnA.Core.Media.Discs.DiscSource.DisplayName(source))
             .Replace("{label}", Safe(s.Label))
             .Replace("{profile}", Safe(s.ProfileDefinition.Name))
             .Replace("{codec}", s.ProfileDefinition.EncodesVideo ? s.EffectiveCodec.Short() : "copy")
@@ -583,7 +583,7 @@ public static class OutputNaming
             .Replace("{quality}", Safe(s.Quality.Display()))
             .Replace("{date}", DateTime.Now.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture));
         name = Safe(name);
-        var dir = string.IsNullOrWhiteSpace(outputDirectory) ? Path.GetDirectoryName(source)! : outputDirectory;
+        var dir = string.IsNullOrWhiteSpace(outputDirectory) ? KnA.Core.Media.Discs.DiscSource.ContainingFolder(source)! : outputDirectory;
         var candidate = Path.Combine(dir, $"{name}.{extension}");
         if (candidate.Equals(source, StringComparison.OrdinalIgnoreCase)) candidate = Path.Combine(dir, $"{name} (KnA).{extension}");
         for (int i = 2; File.Exists(candidate); i++)
@@ -594,8 +594,8 @@ public static class OutputNaming
     /// <summary>"Name [Label].ext" next to the source (or in a chosen folder), never overwriting an existing file.</summary>
     public static string Build(string source, string label, string extension, string? outputDirectory)
     {
-        var dir = string.IsNullOrWhiteSpace(outputDirectory) ? Path.GetDirectoryName(source)! : outputDirectory;
-        var name = Path.GetFileNameWithoutExtension(source);
+        var dir = string.IsNullOrWhiteSpace(outputDirectory) ? KnA.Core.Media.Discs.DiscSource.ContainingFolder(source)! : outputDirectory;
+        var name = KnA.Core.Media.Discs.DiscSource.DisplayName(source);
         var safeLabel = Safe(label);
         var candidate = Path.Combine(dir, $"{name} [{safeLabel}].{extension}");
         for (int i = 2; File.Exists(candidate); i++)
@@ -606,8 +606,8 @@ public static class OutputNaming
     /// <summary>A new folder "Name [suffix]" (numbered when it already exists).</summary>
     public static string Folder(string source, string suffix, string? outputDirectory)
     {
-        var dir = string.IsNullOrWhiteSpace(outputDirectory) ? Path.GetDirectoryName(source)! : outputDirectory;
-        var name = Path.GetFileNameWithoutExtension(source);
+        var dir = string.IsNullOrWhiteSpace(outputDirectory) ? KnA.Core.Media.Discs.DiscSource.ContainingFolder(source)! : outputDirectory;
+        var name = KnA.Core.Media.Discs.DiscSource.DisplayName(source);
         var candidate = Path.Combine(dir, $"{name} [{Safe(suffix)}]");
         for (int i = 2; Directory.Exists(candidate); i++)
             candidate = Path.Combine(dir, $"{name} [{Safe(suffix)}] ({i.ToString(CultureInfo.InvariantCulture)})");

@@ -14,8 +14,9 @@ public sealed class QueueJob
 
     public Guid Id { get; } = Guid.NewGuid();
     public required string SourcePath { get; init; }
-    public string FileName => Path.GetFileName(SourcePath);
-    public string Folder => Path.GetDirectoryName(SourcePath) ?? "";
+    public string FileName => KnA.Core.Media.Discs.DiscSource.IsTitlePath(SourcePath)
+        ? KnA.Core.Media.Discs.DiscSource.Label(SourcePath) : Path.GetFileName(SourcePath);
+    public string Folder => KnA.Core.Media.Discs.DiscSource.ContainingFolder(SourcePath) ?? "";
 
     public JobSettings Settings { get; set; } = new();
     /// <summary>Per-file edits (trim, external files, track plan).</summary>

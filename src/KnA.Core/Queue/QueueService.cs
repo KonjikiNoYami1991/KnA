@@ -64,7 +64,7 @@ public sealed class QueueService : IDisposable
         RefreshTools();
         Presets = new PresetStore(store.DataDirectory);
         Preview = new PreviewService(this);
-        Components = new ComponentManager(store.DataDirectory);
+        Components = new ComponentManager(store.DataDirectory) { FfmpegChannel = Settings.FfmpegChannel };
         _saveTimer = new Timer(_ => SaveQueue(), null, Timeout.Infinite, Timeout.Infinite);
         JobChanged += _ => ScheduleSave();
         QueueChanged += ScheduleSave;
@@ -79,12 +79,15 @@ public sealed class QueueService : IDisposable
     public FfmpegTools? RefreshTools()
     {
         Tools = FfmpegLocator.Locate(Settings.FfmpegPath, Store.DataDirectory, Settings.ToolPaths);
+        if (Settings.Capabilities?.Main is { } main)
+            Media.Discs.DiscSource.Support = new Media.Discs.DiscSupport(main.HasBluray, main.HasDvdVideo);
         return Tools;
     }
 
     public void SaveSettings(AppSettings? settings = null)
     {
         if (settings is not null) Settings = settings;
+        Components.FfmpegChannel = Settings.FfmpegChannel is "master" ? "master" : "release";
         Store.Save(Settings);
     }
 
@@ -95,6 +98,7 @@ public sealed class QueueService : IDisposable
             Settings.VaapiDevice, log, ct);
         Settings.Capabilities = caps;
         SaveSettings();
+        RefreshTools();
         return caps;
     }
 
@@ -114,12 +118,24 @@ public sealed class QueueService : IDisposable
             if (string.IsNullOrEmpty(path)) continue;
             try
             {
-                if (Directory.Exists(path))
+                if (Media.Discs.DiscSource.IsTitlePath(path))
                 {
+                    if (Media.Discs.DiscSource.Exists(path)) files.Add(path);
+                }
+                else if (Media.Discs.DiscSource.Detect(path) is { } disc)
+                {
+                    files.AddRange(DiscTitles(disc));
+                }
+                else if (Directory.Exists(path))
+                {
+                    // Blu-ray / DVD folders and images inside the tree become titles; their .m2ts/.VOB files are not added one by one.
+                    var discs = Media.Discs.DiscSource.FindDiscs(path);
                     files.AddRange(Directory.EnumerateFiles(path, "*", new EnumerationOptions { RecurseSubdirectories = true, IgnoreInaccessible = true })
                         .Where(f => exts.Contains(Path.GetExtension(f).ToLowerInvariant()))
-                        .Where(f => !IsOwnOutput(f))
+                        .Where(f => !IsOwnOutput(f) && !f.EndsWith(".iso", StringComparison.OrdinalIgnoreCase))
+                        .Where(f => !Media.Discs.DiscSource.IsInsideDiscStructure(f))
                         .Order(StringComparer.OrdinalIgnoreCase));
+                    foreach (var d in discs) files.AddRange(DiscTitles(d));
                 }
                 else if (File.Exists(path) && MediaExtensions.IsVideo(path))
                 {
@@ -134,7 +150,7 @@ public sealed class QueueService : IDisposable
         {
             foreach (var f in files)
             {
-                var job = new QueueJob { SourcePath = Path.GetFullPath(f), Settings = settings };
+                var job = new QueueJob { SourcePath = Media.Discs.DiscSource.IsTitlePath(f) ? f : Path.GetFullPath(f), Settings = settings };
                 _jobs.Add(job);
                 added.Add(job);
             }
@@ -147,6 +163,10 @@ public sealed class QueueService : IDisposable
         if (added.Count > 0) QueueChanged?.Invoke();
         return added;
     }
+
+    /// <summary>Title paths to queue for a disc (every episode-length title, or the main one).</summary>
+    private IEnumerable<string> DiscTitles(Media.Discs.Disc disc) =>
+        Task.Run(() => Media.Discs.DiscSource.TitlePathsAsync(disc, Tools?.Ffprobe, Settings.DiscAllTitles)).GetAwaiter().GetResult();
 
     /// <summary>Files written by KnA itself ("Name [Profile …].ext") are skipped when importing folders.</summary>
     private static bool IsOwnOutput(string file)
@@ -399,7 +419,7 @@ public sealed class QueueService : IDisposable
             var saved = JsonSerializer.Deserialize<List<SavedJob>>(File.ReadAllText(QueuePath), SettingsStore.Json) ?? [];
             lock (_lock)
             {
-                foreach (var s in saved.Where(s => File.Exists(s.SourcePath)))
+                foreach (var s in saved.Where(s => KnA.Core.Media.Discs.DiscSource.Exists(s.SourcePath)))
                 {
                     var j = new QueueJob { SourcePath = s.SourcePath, Settings = s.Settings, Edit = s.Edit ?? new JobEdit() };
                     j.Status = s.Status;

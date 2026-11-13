@@ -6,7 +6,7 @@ namespace KnA.Core.Media;
 /// <summary>Turns <c>ffprobe -print_format json -show_format -show_streams</c> output into a <see cref="MediaInfo"/>.</summary>
 public static class FfprobeParser
 {
-    public static MediaInfo Parse(string path, string json)
+    public static MediaInfo Parse(string path, string json, IReadOnlyDictionary<int, int>? pidByIndex = null)
     {
         using var doc = JsonDocument.Parse(json);
         var root = doc.RootElement;
@@ -39,6 +39,14 @@ public static class FfprobeParser
                 string? profile = Str(s, "profile");
                 var (isDefault, isForced, isAttachedPic) = Disposition(s);
                 string? lang = Tag(s, "language");
+                if (lang is null && Discs.DiscSource.IsTitlePath(path))
+                {
+                    int pid = -1;
+                    if (Str(s, "id") is { } id && id.StartsWith("0x", StringComparison.Ordinal))
+                        int.TryParse(id[2..], NumberStyles.HexNumber, CultureInfo.InvariantCulture, out pid);
+                    if (pid <= 0 && pidByIndex?.TryGetValue(index, out var p) == true) pid = p;
+                    if (pid > 0) lang = Discs.DiscSource.BlurayLanguage(path, pid);
+                }
                 string? title = Tag(s, "title");
 
                 switch (type)

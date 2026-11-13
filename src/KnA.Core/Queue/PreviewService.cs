@@ -75,7 +75,7 @@ public sealed class PreviewService(QueueService queue)
                 var args = new List<string> { "-hide_banner", "-nostdin", "-y", "-v", "error" };
                 if (keyOnly) args.AddRange(["-skip_frame", "nokey"]);
                 args.AddRange(MediaProber.RobustInputArgs(job.SourcePath));
-                args.AddRange(["-ss", CommandBuilder.Sec(Math.Max(0, seconds)), "-i", job.SourcePath, "-map", "0:v:0", "-frames:v", "1",
+                args.AddRange(["-ss", CommandBuilder.Sec(Math.Max(0, seconds)), .. KnA.Core.Media.Discs.DiscSource.InputArgs(job.SourcePath), "-map", "0:v:0", "-frames:v", "1",
                     "-vf", $"scale={width}:-2", "-q:v", "5", "-update", "1", path]);
                 try { await Run(args, dir, ct); } catch (InvalidOperationException) when (keyOnly) { }
                 if (File.Exists(path) && new FileInfo(path).Length > 0) return;
@@ -101,7 +101,7 @@ public sealed class PreviewService(QueueService queue)
             }
             var args = new List<string> { "-hide_banner", "-nostdin", "-y", "-v", "error" };
             args.AddRange(MediaProber.RobustInputArgs(file));
-            args.AddRange(["-i", file, "-filter_complex",
+            args.AddRange([.. KnA.Core.Media.Discs.DiscSource.InputArgs(file), "-filter_complex",
                 $"[0:{stream}]aformat=channel_layouts=mono,showwavespic=s={width}x{height}:colors=#9B7CFF[w]",
                 "-map", "[w]", "-frames:v", "1", "-update", "1", path]);
             await Run(args, dir, ct, TimeSpan.FromMinutes(5));
@@ -163,7 +163,7 @@ public sealed class PreviewService(QueueService queue)
             var args = new List<string> { "-hide_banner", "-nostdin", "-v", "info" };
             args.AddRange(MediaProber.RobustInputArgs(job.SourcePath));
             args.AddRange(FilterBuilder.OrientationInputArgs(media.PrimaryVideo!, job.Settings.VideoFilters));
-            args.AddRange(["-ss", CommandBuilder.Sec(dur * f), "-i", job.SourcePath, "-map", $"0:{media.PrimaryVideo!.Index}",
+            args.AddRange(["-ss", CommandBuilder.Sec(dur * f), .. KnA.Core.Media.Discs.DiscSource.InputArgs(job.SourcePath), "-map", $"0:{media.PrimaryVideo!.Index}",
                 "-frames:v", "12", "-vf", "cropdetect=limit=24:round=2:reset=0", "-f", "null", "-"]);
             var r = await ProcessRunner.RunAsync(queue.Tools!.Ffmpeg, args, timeout: TimeSpan.FromSeconds(60), ct: ct);
             if (ParseCrop(r.StdErr.Split('\n').LastOrDefault(l => l.Contains("crop=", StringComparison.Ordinal))) is { } b2) Union(b2);

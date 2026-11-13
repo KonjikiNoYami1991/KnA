@@ -180,4 +180,16 @@ public class CodecTests(FeatureFixture fx) : IClassFixture<FeatureFixture>
         Assert.Contains("aac", caps.Main!.Encoders);
         Assert.Single(caps.Builds);
     }
+
+    [Fact]
+    public void Newest_ffmpeg_release_branch_is_picked()
+    {
+        if (ComponentManager.FfmpegTarget() is not { } t) return;
+        string ext = t.StartsWith("win") ? "zip" : "tar.xz";
+        var assets = new[] { $"ffmpeg-master-latest-{t}-gpl.{ext}", $"ffmpeg-n8.1-latest-{t}-gpl-8.1.{ext}", $"ffmpeg-n9.0-latest-{t}-gpl-9.0.{ext}",
+                             $"ffmpeg-n9.0-latest-{t}-lgpl-9.0.{ext}", $"ffmpeg-n10.0-latest-{t}-gpl-shared-10.0.{ext}" }
+            .Select(n => new ReleaseAsset(n, "u", 1)).ToList();
+        Assert.Equal($"ffmpeg-n9.0-latest-{t}-gpl-9.0.{ext}", ComponentManager.PickFfmpegAsset(assets, "release")!.Name);
+        Assert.Equal($"ffmpeg-master-latest-{t}-gpl.{ext}", ComponentManager.PickFfmpegAsset(assets, "master")!.Name);
+    }
 }

@@ -16,9 +16,9 @@ public static class KeyframeGenerator
     {
         var media = job.Media!;
         var dir = string.IsNullOrWhiteSpace(ctx.Settings.OutputDirectory) ? job.Folder : ctx.Settings.OutputDirectory!;
-        var output = Path.Combine(dir, Path.GetFileNameWithoutExtension(job.SourcePath) + " - Keyframes.txt");
+        var output = Path.Combine(dir, KnA.Core.Media.Discs.DiscSource.DisplayName(job.SourcePath) + " - Keyframes.txt");
         for (int i = 2; File.Exists(output); i++)
-            output = Path.Combine(dir, $"{Path.GetFileNameWithoutExtension(job.SourcePath)} - Keyframes ({i}).txt");
+            output = Path.Combine(dir, $"{KnA.Core.Media.Discs.DiscSource.DisplayName(job.SourcePath)} - Keyframes ({i}).txt");
 
         var parser = new ProgressParser(media.Duration);
         void OnStderr(string line)
@@ -41,7 +41,7 @@ public static class KeyframeGenerator
             try
             {
                 int exit = await JobRunner.RunStreamingAsync(ctx.Tools.Ffmpeg,
-                    ["-hide_banner", "-nostdin", "-v", "error", "-i", media.Path, "-map", $"0:{v.Index}", "-an", "-sn",
+                    ["-hide_banner", "-nostdin", "-v", "error", .. KnA.Core.Media.Discs.DiscSource.InputArgs(media.Path), "-map", $"0:{v.Index}", "-an", "-sn",
                      "-vf", "select='gt(scene,0.3)',metadata=print:file=scenes.txt", "-f", "null", "-",
                      "-progress", "pipe:2", "-nostats"],
                     work, ctx.Processes, null, OnStderr, ct);
@@ -63,7 +63,7 @@ public static class KeyframeGenerator
         string output, Action<string> onStderr, CancellationToken ct)
     {
         var ffPsi = ProcessRunner.CreateStartInfo(ctx.Tools.Ffmpeg,
-            ["-hide_banner", "-nostdin", "-v", "error", "-i", source, "-map", $"0:{videoIndex}", "-an", "-sn",
+            ["-hide_banner", "-nostdin", "-v", "error", .. KnA.Core.Media.Discs.DiscSource.InputArgs(source), "-map", $"0:{videoIndex}", "-an", "-sn",
              "-pix_fmt", "yuv420p", "-f", "yuv4mpegpipe", "-progress", "pipe:2", "-nostats", "-"]);
         var scPsi = ProcessRunner.CreateStartInfo(scxvid, [output]);
         scPsi.RedirectStandardInput = true;

@@ -21,13 +21,18 @@ public sealed record ComponentStatus(
 
 /// <summary>
 /// Keeps the external programs up to date:
-///  • FFmpeg + FFprobe: BtbN static "gpl" builds (Windows .zip, Linux .tar.xz), version = build date;
+///  • FFmpeg + FFprobe: BtbN static "gpl" builds (Windows .zip, Linux .tar.xz) of the NEWEST release branch
+///    (e.g. 9.0) or, on request, of master; version = branch + build date;
+///  • fdkaac: standalone Fraunhofer AAC encoder built by KnA's own release workflow (every platform);
 ///    on macOS Homebrew is the supported source (no verified static build is downloaded);
 ///  • dovi_tool and hdr10plus_tool (quietvoid) for Dolby Vision / HDR10+ passthrough: every platform.
 /// Installed copies live in the data folder and take precedence over the system ones.
 /// </summary>
 public sealed class ComponentManager(string dataDirectory)
 {
+    /// <summary>"release" = newest FFmpeg release branch (default), "master" = nightly master.</summary>
+    public string FfmpegChannel { get; set; } = "release";
+
     private const string FfmpegRepo = "BtbN/FFmpeg-Builds";
     private string StatePath => Path.Combine(dataDirectory, "tools", "components.json");
 
@@ -59,7 +64,7 @@ public sealed class ComponentManager(string dataDirectory)
                 var rel = await GitHubReleases.ByTagAsync(FfmpegRepo, "latest", ct);
                 if (rel is not null)
                 {
-                    ffLatest = rel.PublishedAt.ToString("yyyy-MM-dd");
+                    ffLatest = FfmpegVersionLabel(PickFfmpegAsset(rel.Assets, FfmpegChannel)?.Name ?? "", rel.PublishedAt);
                     ffUpdate = !ffManaged || !state.TryGetValue("ffmpeg", out var i) || i.Version != ffLatest;
                 }
             }
@@ -68,6 +73,22 @@ public sealed class ComponentManager(string dataDirectory)
         list.Add(new ComponentStatus("ffmpeg", "FFmpeg + FFprobe", L.T("Encoding, decoding, filters, subtitles (libass)."),
             ffManaged && state.TryGetValue("ffmpeg", out var fi) ? $"{fi.Version} (BtbN)" : Short(ffVersion),
             tools?.Ffmpeg, ffManaged, ffLatest, ffUpdate && ffCan, ffCan, ffNote));
+
+        // ---------------------------------------------------------------- fdkaac (KnA release assets)
+        {
+            var path = tools?.Fdkaac;
+            bool managed = path?.StartsWith(dataDirectory, StringComparison.OrdinalIgnoreCase) ?? false;
+            string? latest = null, note = path is null ? L.T("Not installed: AAC uses FFmpeg's own encoder (lower quality).") : null;
+            if (online)
+            {
+                try { latest = (await GitHubReleases.LatestAsync(AppUpdater.Repository, ct))?.Assets.Any(a => a.Name == FdkaacAssetName()) == true ? "KnA" : null; }
+                catch (Exception ex) when (ex is not OperationCanceledException) { note = ex.Message; }
+            }
+            string? installed = path is null ? null : state.TryGetValue("fdkaac", out var fk) ? fk.Version : "1.x";
+            list.Add(new ComponentStatus("fdkaac", "fdkaac (Fraunhofer AAC)",
+                L.T("Best-quality AAC / HE-AAC encoder, used automatically when FFmpeg has no libfdk_aac."),
+                installed, path, managed, latest, latest is not null && path is null, FdkaacAssetName() is not null, note));
+        }
 
         // ---------------------------------------------------------------- quietvoid tools
         foreach (var (id, name, desc, path) in new[]
@@ -98,6 +119,7 @@ public sealed class ComponentManager(string dataDirectory)
         try
         {
             if (id == "ffmpeg") await InstallFfmpegAsync(temp, progress, log, ct);
+            else if (id == "fdkaac") await InstallFdkaacAsync(temp, progress, log, ct);
             else if (id is "dovi_tool" or "hdr10plus_tool") await InstallQuietvoidAsync(id, temp, progress, log, ct);
             else throw new ArgumentException("Unknown component " + id);
         }
@@ -109,21 +131,80 @@ public sealed class ComponentManager(string dataDirectory)
 
     // ---------------------------------------------------------------- FFmpeg
 
-    public static string? FfmpegAssetName() => (OperatingSystem.IsWindows(), OperatingSystem.IsLinux(), Arch) switch
+    /// <summary>BtbN target name for this machine (win64, winarm64, linux64, linuxarm64), null elsewhere.</summary>
+    public static string? FfmpegTarget() => (OperatingSystem.IsWindows(), OperatingSystem.IsLinux(), Arch) switch
     {
-        (true, _, "x64") => "ffmpeg-master-latest-win64-gpl.zip",
-        (true, _, "arm64") => "ffmpeg-master-latest-winarm64-gpl.zip",
-        (_, true, "x64") => "ffmpeg-master-latest-linux64-gpl.tar.xz",
-        (_, true, "arm64") => "ffmpeg-master-latest-linuxarm64-gpl.tar.xz",
+        (true, _, "x64") => "win64",
+        (true, _, "arm64") => "winarm64",
+        (_, true, "x64") => "linux64",
+        (_, true, "arm64") => "linuxarm64",
         _ => null,
     };
 
+    /// <summary>Master build asset name (also the fallback when no release-branch build is listed).</summary>
+    public static string? FfmpegAssetName() => FfmpegTarget() is { } t
+        ? $"ffmpeg-master-latest-{t}-gpl.{(t.StartsWith("win", StringComparison.Ordinal) ? "zip" : "tar.xz")}" : null;
+
+    /// <summary>
+    /// Picks the asset of the newest release branch ("ffmpeg-n9.0-latest-linux64-gpl-9.0.tar.xz") from the
+    /// BtbN "latest" release, or the master build when asked / when none is listed.
+    /// </summary>
+    public static ReleaseAsset? PickFfmpegAsset(IReadOnlyList<ReleaseAsset> assets, string channel)
+    {
+        if (FfmpegTarget() is not { } t) return null;
+        if (channel != "master")
+        {
+            var rx = new System.Text.RegularExpressions.Regex($@"^ffmpeg-n(\d+)\.(\d+)-latest-{t}-gpl-\1\.\2\.(zip|tar\.xz)$");
+            var best = assets.Select(a => (a, m: rx.Match(a.Name))).Where(x => x.m.Success)
+                .OrderByDescending(x => int.Parse(x.m.Groups[1].Value, System.Globalization.CultureInfo.InvariantCulture))
+                .ThenByDescending(x => int.Parse(x.m.Groups[2].Value, System.Globalization.CultureInfo.InvariantCulture))
+                .Select(x => x.a).FirstOrDefault();
+            if (best is not null) return best;
+        }
+        return assets.FirstOrDefault(a => a.Name == FfmpegAssetName());
+    }
+
+    /// <summary>fdkaac asset published by KnA's release workflow for this machine.</summary>
+    public static string? FdkaacAssetName() => (OperatingSystem.IsWindows(), OperatingSystem.IsMacOS(), OperatingSystem.IsLinux(), Arch) switch
+    {
+        (true, _, _, "x64") => "fdkaac-win-x64.zip",
+        (_, true, _, _) => "fdkaac-osx.zip",
+        (_, _, true, "x64") => "fdkaac-linux-x64.tar.gz",
+        (_, _, true, "arm64") => "fdkaac-linux-arm64.tar.gz",
+        _ => null,
+    };
+
+    private async Task InstallFdkaacAsync(string temp, IProgress<double>? progress, IProgress<string>? log, CancellationToken ct)
+    {
+        var name = FdkaacAssetName() ?? throw new PlatformNotSupportedException();
+        var rel = await GitHubReleases.LatestAsync(AppUpdater.Repository, ct) ?? throw new InvalidOperationException(L.T("No release found for {0}.", "KnA"));
+        var asset = rel.Assets.FirstOrDefault(a => a.Name == name)
+                    ?? throw new InvalidOperationException(L.T("No download for this platform in {0} {1}.", "KnA", rel.Tag));
+        var archive = Path.Combine(temp, asset.Name);
+        log?.Report(L.T("Downloading {0}…", asset.Name));
+        await GitHubReleases.DownloadAsync(asset.Url, archive, progress, ct);
+        var extracted = Path.Combine(temp, "x");
+        await ExtractAsync(archive, extracted, ct);
+        var dir = FfmpegLocator.ManagedDir(dataDirectory, "fdkaac");
+        Directory.CreateDirectory(dir);
+        foreach (var f in Directory.EnumerateFiles(extracted, "*", SearchOption.AllDirectories))
+            if (Path.GetFileName(f) is var n && (n == FfmpegLocator.ExeName("fdkaac") || n.EndsWith(".txt", StringComparison.OrdinalIgnoreCase)))
+                ReplaceFile(f, Path.Combine(dir, n));
+        var exe = Path.Combine(dir, FfmpegLocator.ExeName("fdkaac"));
+        if (!File.Exists(exe)) throw new InvalidDataException(L.T("The archive did not contain {0}.", "fdkaac"));
+        var r = await ProcessRunner.RunAsync(exe, ["--help"], timeout: TimeSpan.FromSeconds(15), ct: ct);
+        if (!(r.StdOut + r.StdErr).Contains("fdkaac", StringComparison.OrdinalIgnoreCase))
+            throw new InvalidOperationException(L.T("The installed program does not start: {0}", r.StdErr.Trim()));
+        SaveState("fdkaac", rel.Tag);
+    }
+
     private async Task InstallFfmpegAsync(string temp, IProgress<double>? progress, IProgress<string>? log, CancellationToken ct)
     {
-        var asset = FfmpegAssetName() ?? throw new PlatformNotSupportedException(L.T("On macOS update FFmpeg with Homebrew: brew upgrade ffmpeg"));
+        var fallback = FfmpegAssetName() ?? throw new PlatformNotSupportedException(L.T("On macOS update FFmpeg with Homebrew: brew upgrade ffmpeg"));
         var rel = await GitHubReleases.ByTagAsync(FfmpegRepo, "latest", ct);
-        var url = rel?.Assets.FirstOrDefault(a => a.Name == asset)?.Url
-                  ?? $"https://github.com/{FfmpegRepo}/releases/download/latest/{asset}";
+        var picked = rel is null ? null : PickFfmpegAsset(rel.Assets, FfmpegChannel);
+        var asset = picked?.Name ?? fallback;
+        var url = picked?.Url ?? $"https://github.com/{FfmpegRepo}/releases/download/latest/{asset}";
         var archive = Path.Combine(temp, asset);
         log?.Report(L.T("Downloading {0}…", asset));
         await GitHubReleases.DownloadAsync(url, archive, progress, ct);
@@ -140,7 +221,7 @@ public sealed class ComponentManager(string dataDirectory)
             ReplaceFile(found, Path.Combine(target, FfmpegLocator.ExeName(exe)));
         }
         await VerifyAsync(Path.Combine(target, FfmpegLocator.ExeName("ffmpeg")), ["-hide_banner", "-version"], ct);
-        SaveState("ffmpeg", (rel?.PublishedAt ?? DateTimeOffset.Now).ToString("yyyy-MM-dd"));
+        SaveState("ffmpeg", FfmpegVersionLabel(asset, rel?.PublishedAt ?? DateTimeOffset.Now));
     }
 
     // ---------------------------------------------------------------- quietvoid tools
@@ -173,6 +254,12 @@ public sealed class ComponentManager(string dataDirectory)
         ReplaceFile(found, target);
         await VerifyAsync(target, ["--version"], ct);
         SaveState(id, rel.Tag);
+    }
+
+    private static string FfmpegVersionLabel(string asset, DateTimeOffset date)
+    {
+        var m = System.Text.RegularExpressions.Regex.Match(asset, @"ffmpeg-n(\d+\.\d+)-");
+        return (m.Success ? m.Groups[1].Value : "master") + " · " + date.ToString("yyyy-MM-dd");
     }
 
     // ---------------------------------------------------------------- helpers

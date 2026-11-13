@@ -24,7 +24,9 @@ public sealed class MediaProber(string ffprobePath, string? vspipePath = null)
         }
         var args = new List<string> { "-v", "error" };
         if (IsTransportLike(path)) args.AddRange(["-analyzeduration", "100M", "-probesize", "100M"]);
-        args.AddRange(["-print_format", "json", "-show_format", "-show_streams", "-show_chapters", path]);
+        var input = Discs.DiscSource.ProbeArgs(path);
+        args.AddRange(input.Take(input.Count - 1));
+        args.AddRange(["-print_format", "json", "-show_format", "-show_streams", "-show_chapters", input[^1]]);
         var result = await ProcessRunner.RunAsync(ffprobePath, args, timeout: Timeout, ct: ct);
         if (result.ExitCode != 0)
         {
@@ -32,7 +34,17 @@ public sealed class MediaProber(string ffprobePath, string? vspipePath = null)
                 throw new InvalidOperationException(Localization.L.T("This FFmpeg cannot read AviSynth scripts (it needs AviSynth+ installed and an FFmpeg built with --enable-avisynth): {0}", result.StdErr.Trim()));
             throw new InvalidOperationException($"ffprobe failed ({result.ExitCode}): {result.StdErr.Trim()}");
         }
-        var info = FfprobeParser.Parse(path, result.StdOut);
+        // Through the concat fallback the stream ids (PIDs) are lost: read them from the first clip.
+        Dictionary<int, int>? pids = null;
+        if (Discs.DiscSource.FirstClip(path) is { } clip)
+        {
+            var ids = await ProcessRunner.RunAsync(ffprobePath, ["-v", "error", "-show_entries", "stream=index,id", "-of", "csv=p=0", clip], timeout: Timeout, ct: ct);
+            pids = ids.StdOut.Split('\n').Select(l => l.Trim().Split(',')).Where(p => p.Length == 2 && p[1].StartsWith("0x", StringComparison.Ordinal))
+                .DistinctBy(p => p[0])
+                .ToDictionary(p => int.Parse(p[0], System.Globalization.CultureInfo.InvariantCulture),
+                              p => int.Parse(p[1][2..], System.Globalization.NumberStyles.HexNumber, System.Globalization.CultureInfo.InvariantCulture));
+        }
+        var info = FfprobeParser.Parse(path, result.StdOut, pids);
         if (requireVideo && info.PrimaryVideo is null)
             throw new InvalidOperationException(Localization.L.T("No video stream found."));
 
@@ -43,7 +55,7 @@ public sealed class MediaProber(string ffprobePath, string? vspipePath = null)
             {
                 var frames = await ProcessRunner.RunAsync(ffprobePath,
                     ["-v", "error", "-select_streams", v.Index.ToString(System.Globalization.CultureInfo.InvariantCulture),"-read_intervals", "%+#1",
-                     "-show_frames", "-show_entries", "frame=side_data_list", "-print_format", "json", path],
+                     "-show_frames", "-show_entries", "frame=side_data_list", "-print_format", "json", .. Discs.DiscSource.ProbeArgs(path)],
                     timeout: TimeSpan.FromSeconds(60), ct: ct);
                 if (frames.ExitCode == 0) FfprobeParser.ApplyFrameSideData(info, frames.StdOut);
             }
