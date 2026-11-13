@@ -1,6 +1,6 @@
 name: Release
 
-# Runs only when a version tag is pushed (git tag v3.0.0 && git push origin v3.0.0).
+# Runs only when a version tag is pushed (git tag v3.1.0 && git push origin v3.1.0).
 # Builds self-contained packages named as the in-app updater expects (KnA-{desktop|server}-{rid}.zip),
 # bundles the standalone fdkaac encoder (best AAC, redistributable on its own), adds a macOS KnA.app
 # with its icon, and attaches everything to a *draft* release, published by hand after a check.
@@ -171,10 +171,19 @@ jobs:
     if: ${{ !cancelled() && needs.build.result == 'success' }}
     runs-on: ubuntu-24.04
     steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: CHANGELOG.md
+          sparse-checkout-cone-mode: false
       - uses: actions/download-artifact@v4
         with:
           path: dist
           merge-multiple: true
+      # Release notes: this version's section of CHANGELOG.md (GitHub's generated list of changes is appended).
+      - name: Notes from the changelog
+        run: |
+          awk -v tag="$TAG" '$0 ~ "^## " tag "([^0-9.]|$)" {on=1; next} /^## / {if (on) exit} on' CHANGELOG.md > notes.md
+          wc -l notes.md
       - name: Draft release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -182,4 +191,5 @@ jobs:
           shopt -s nullglob
           draft=--draft
           if [[ "${{ github.event_name }}" == workflow_dispatch && "${{ inputs.draft }}" == false ]]; then draft=; fi
-          gh release create "$TAG" dist/*.zip dist/*.tar.gz --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" $draft --generate-notes --title "KnA $TAG"
+          notes=(); [[ -s notes.md ]] && notes=(--notes-file notes.md)
+          gh release create "$TAG" dist/*.zip dist/*.tar.gz --repo "$GITHUB_REPOSITORY" --target "$GITHUB_SHA" $draft "${notes[@]}" --generate-notes --title "KnA $TAG"

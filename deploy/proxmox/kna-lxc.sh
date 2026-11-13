@@ -350,8 +350,9 @@ edit_os() {
   ((${#items[@]})) || { oops "$(t "No OS template is available (pveam update failed?)." "Nessun template disponibile (pveam update non riuscito?).")"; return 0; }
   v=$(wt --default-item "$CT_OS" --menu "$(t "Operating system of the container (Proxmox template):" "Sistema operativo del container (template Proxmox):")" 18 78 10 "${items[@]}") || return 0
   CT_OS=$v
+  local nodef=(); ((CT_UNPRIV)) || nodef=(--defaultno)
   if wt --yes-button "$(t Unprivileged "Non privilegiato")" --no-button "$(t Privileged Privilegiato)" \
-       $( ((CT_UNPRIV)) || echo --defaultno ) --yesno "$(t "Unprivileged (recommended): safer; GPU and host folders work, writable host folders may need the user mapping.
+       "${nodef[@]}" --yesno "$(t "Unprivileged (recommended): safer; GPU and host folders work, writable host folders may need the user mapping.
 
 Privileged: root inside is root on the host. Simpler with host folders, less isolated." \
 "Non privilegiato (consigliato): più sicuro; GPU e cartelle dell'host funzionano, quelle scrivibili possono richiedere la mappatura utenti.
@@ -559,7 +560,7 @@ edit_binds() {
   while :; do
     items=()
     for i in "${!B_HOST[@]}"; do items+=("$i" "$(cut_to 70 "$(describe_bind "$i")")"); done
-    items+=(add "$(t "+ Add a host folder" "+ Aggiungi una cartella dell'host")" done "$(t "← Back" "← Indietro")")
+    items+=(add "$(t "+ Add a host folder" "+ Aggiungi una cartella dell'host")" "done" "$(t "← Back" "← Indietro")")
     v=$(wt --notags --default-item add --menu "$(t "Host folders in the container (bind mounts). Select one to remove it." \
                                                    "Cartelle dell'host nel container (bind mount). Scegline una per toglierla.")" 18 78 10 "${items[@]}") || return 0
     case $v in
@@ -627,7 +628,8 @@ edit_kna() {
   while v=$(ask "$(t "Web UI port:" "Porta dell'interfaccia web:")" "$KNA_PORT" 8); do
     [[ $v =~ ^[0-9]+$ ]] && ((v >= 1 && v <= 65535)) && { KNA_PORT=$v; break; }; oops "1 – 65535"
   done
-  if wt $([[ -n ${KNA_PASSWORD:-} ]] || echo --defaultno) --yesno "$(t "Protect the web UI with a password?" "Proteggere l'interfaccia web con una password?")" 8 60; then
+  local nopw=(); [[ -n ${KNA_PASSWORD:-} ]] || nopw=(--defaultno)
+  if wt "${nopw[@]}" --yesno "$(t "Protect the web UI with a password?" "Proteggere l'interfaccia web con una password?")" 8 60; then
     while :; do
       p1=$(wt --passwordbox "$(t "Password (no single quotes):" "Password (senza apici singoli):")" 9 60) || break
       p2=$(wt --passwordbox "$(t "Repeat the password:" "Ripeti la password:")" 9 60) || break
@@ -712,7 +714,7 @@ resize_ct() {
       disk  "$(printf '%-8s %s' "$(t Disk Disco)" "$(cut_to 64 "$CI_SIZE GB $(t on su) $CI_STORAGE — $(describe_usage)")")" \
       ram   "$(printf '%-8s %s' RAM "$CI_RAM MB")" \
       cores "$(printf '%-8s %s' Core "$CI_CORES / $HOST_CORES")" \
-      done  "$(t "← Done" "← Fine")") || return 0
+      "done" "$(t "← Done" "← Fine")") || return 0
     last=$v
     case $v in
       done) return 0 ;;

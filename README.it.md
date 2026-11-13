@@ -1,6 +1,6 @@
 <p align="center"><img src="src/KnA.App/Assets/kna-256.png" width="128" alt="KnA"></p>
 
-# KnA - Konjiki no Autoencoder 3.0
+# KnA - Konjiki no Autoencoder 3.1
 
 [English](README.md) · **Italiano**
 
@@ -10,6 +10,14 @@ Trascina episodi, cartelle, **Blu-ray (BDMV / ISO) o DVD**, scegli un profilo o 
 imprime i sottotitoli con libass e codifica su **CPU o GPU** (NVENC, Quick Sync, AMF, VideoToolbox, VA-API, **Vulkan**):
 H.264, HEVC, AV1, VP9, VVC, MPEG-2 e i codec professionali **ProRes, DNxHR, CineForm, FFV1, Ut Video, FFVHuff, JPEG 2000, v210**,
 con **HDR10 / HDR10+ / Dolby Vision**, codifica a segmenti riprendibile, **upscaling su GPU o con modelli neurali** e un **assistente LLM** locale.
+
+### Novità della 3.1
+- **La scheda Tracce elenca tutto** (audio compreso, anche in Demux) e permette di **copiare o convertire ogni traccia** direttamente dalla lista.
+- **Allegati e capitoli** si aggiungono, rimuovono e modificano per ogni file.
+- **Taglio a più segmenti**: uniti in un unico file, oppure divisi in un elemento in coda per segmento.
+- **Runtime AI senza installare Python**: se serve viene scaricato un Python portabile; la build CUDA di PyTorch si adatta al driver.
+
+Tutte le modifiche: [CHANGELOG.md](CHANGELOG.md).
 
 ### Novità della 3.0
 - **Nuova icona** (una K dorata: l'asta è una pellicola, le diagonali convergono nel "collo di bottiglia" di un autoencoder).

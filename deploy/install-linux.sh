@@ -271,7 +271,8 @@ La codifica hardware richiede la GPU passata a questo container/VM.")" 15 78 3 \
   KNA_GPU=$(echo "$gpus" | tr -d '"'); KNA_GPU=${KNA_GPU:-none}
 
   if [[ $PM == dnf && ( " $KNA_GPU " == *" amd "* || " $KNA_GPU " == *" intel "* ) ]]; then
-    if wt $([[ $KNA_RPMFUSION == no ]] && echo --defaultno) --yesno "$(t "Fedora's own VA-API drivers have H.264 and HEVC removed (patents): hardware encoding of those codecs needs the drivers from RPM Fusion (mesa-va-drivers-freeworld for AMD, intel-media-driver for Intel).
+    nodef=(); [[ $KNA_RPMFUSION == no ]] && nodef=(--defaultno)
+    if wt "${nodef[@]}" --yesno "$(t "Fedora's own VA-API drivers have H.264 and HEVC removed (patents): hardware encoding of those codecs needs the drivers from RPM Fusion (mesa-va-drivers-freeworld for AMD, intel-media-driver for Intel).
 
 Enable the RPM Fusion free and nonfree repositories and use them?" \
 "I driver VA-API di Fedora non hanno H.264 e HEVC (brevetti): per la codifica hardware di questi codec servono i driver di RPM Fusion (mesa-va-drivers-freeworld per AMD, intel-media-driver per Intel).
