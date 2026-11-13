@@ -191,7 +191,27 @@ the FFmpeg and AI components downloaded from the app) in a `data` folder next to
 the per-user folder instead. If the folder is read-only (e.g. Program Files) KnA falls back to the per-user folder.
 `KnA-desktop-<rid>.zip` and `KnA-server-<rid>.zip` are the same programs without the portable marker (they are also what the in-app updater downloads).
 
-### Docker (headless server, e.g. Proxmox + iGPU)
+### Proxmox VE: one command on the host
+
+Creates an LXC container (resources, network, GPU passthrough, bind mounts of your video folders, user mapping)
+and installs KnA inside it as a native service, with a wizard:
+
+```bash
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/KonjikiNoYami1991/KnA/master/deploy/proxmox/kna-lxc.sh)"
+```
+
+### Linux server, LXC or VM (native, no Docker)
+
+On Debian 12+ / Ubuntu 22.04+ (amd64, arm64), as root. The wizard asks for the video folders, the password, the GPU runtime and the components:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/KonjikiNoYami1991/KnA/master/deploy/install-linux.sh | bash
+```
+
+Update with `kna-update`. Both scripts, their unattended mode and the permissions of bind mounts are explained in
+**[docs/PROXMOX.md](docs/PROXMOX.md)** ([italiano](docs/PROXMOX.it.md)).
+
+### Docker (headless server)
 
 The image uses **bind mounts only** (no Docker volumes): config, videos and uploads are real folders on the host.
 It ships the newest release-branch static FFmpeg (BtbN), **fdkaac**, VA-API/QSV/Vulkan drivers and Python for the AI runtime.
@@ -206,8 +226,7 @@ RENDER_GID=$(getent group render | cut -d: -f3) docker compose up -d --build
 Build arguments: `FFMPEG=btbn-release` (default) · `btbn-master` · `distro`; `FDKAAC=1`.
 For an LLM on the host (Ollama, LM Studio…) use `http://host.docker.internal:<port>/v1`.
 
-Then open `http://<host>:8585`. See **[docs/PROXMOX.md](docs/PROXMOX.md)** ([italiano](docs/PROXMOX.it.md)) for LXC GPU passthrough,
-the native installer without Docker (`deploy/install-linux.sh`) and all environment variables.
+Then open `http://<host>:8585`. The environment variables are listed in **[docs/PROXMOX.md](docs/PROXMOX.md#environment-variables)**.
 
 ### Desktop from source
 
@@ -287,7 +306,7 @@ build/           build-fdkaac.sh
 src/KnA.Server   ASP.NET Core API + web UI (wwwroot), Docker entry point
 src/KnA.App      Avalonia desktop app
 tests/           xUnit unit/integration tests + headless UI test
-deploy/          Linux/LXC installer (systemd)
+deploy/          native Linux/LXC installer (systemd) and Proxmox VE container script
 docs/            Proxmox guide, screenshots
 ```
 

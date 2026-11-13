@@ -405,7 +405,7 @@ app.MapGet("/api/updates", async (CancellationToken ct) =>
             current = AppInfo.Version, latest = u.Latest?.Tag, isNewer = u.IsNewer, message = u.Message,
             url = u.Latest?.HtmlUrl, notes = u.Latest?.Body,
             howTo = IsContainer() ? L.T("Update the container: git pull && docker compose up -d --build")
-                                  : L.T("Update the service: git pull && sudo ./deploy/install-linux.sh"),
+                                  : L.T("Update the service: sudo kna-update"),
         });
     }
     catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or InvalidOperationException)

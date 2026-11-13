@@ -1,116 +1,211 @@
-# KnA on Proxmox VE (LXC or VM, no desktop)
+# KnA on Proxmox VE and Linux servers
 
 **English** · [Italiano](PROXMOX.it.md)
 
-KnA's web edition runs headless: the encoder runs on the server, and you use it from any
-browser (PC, Mac, phone) at `http://<container-ip>:8585`.
+KnA's web edition runs headless: the encoder runs on the server, and you use it from any browser
+(PC, Mac, phone) at `http://<server-ip>:8585`. It is installed **natively** as a systemd service: no Docker.
 
-There are two ways to install it:
+There are two scripts:
 
-| | Docker (inside an LXC or VM) | Native service (LXC or VM) |
+| Script | Where you run it | What it does |
 |---|---|---|
-| Install | `docker compose up -d` | `sudo ./deploy/install-linux.sh` |
-| Updates | rebuild the image | `git pull` + run the script again |
-| GPU | `/dev/dri` (or `--gpus all`) in the compose file | the container's `/dev/dri` is used directly |
+| [`deploy/proxmox/kna-lxc.sh`](../deploy/proxmox/kna-lxc.sh) | on the **Proxmox host** | creates an LXC container (resources, network, GPU, bind mounts, user mapping) and installs KnA inside |
+| [`deploy/install-linux.sh`](../deploy/install-linux.sh) | **inside** an existing LXC, VM or Debian/Ubuntu machine | installs or updates KnA as the `kna` service |
 
-## 1. Create the container
+Both have a wizard when started from a terminal, and an unattended mode driven by environment variables.
 
-An **unprivileged Ubuntu 24.04 LXC** is the simplest choice: .NET 10 comes from the Ubuntu repositories.
+> Every path, address and id in this guide is an **example from a test environment**: use your own.
 
-- CPU: as many cores as you can spare (x265 and SVT-AV1 use all of them).
-- RAM: 2–4 GB.
-- Disk: 8 GB plus space for temporary files.
-- For Docker inside the LXC, enable *Options → Features → Nesting*.
+## 1. One command on the Proxmox host
 
-## 2. Pass the GPU through (hardware encoding)
+Open the node's shell (*Datacenter → node → Shell*) and run:
 
-On the Minisforum UM890 Pro, the Radeon 780M iGPU (RDNA 3) encodes H.264, HEVC and AV1
-through **VA-API**. AMF is not used on Linux.
+```bash
+bash -c "$(curl -fsSL https://raw.githubusercontent.com/KonjikiNoYami1991/KnA/master/deploy/proxmox/kna-lxc.sh)"
+```
 
-1. On the **Proxmox host**, check that the render node exists: `ls -l /dev/dri` should list `renderD128`.
-2. Find the `render` group id **inside the container**:
-   ```bash
-   pct exec <CTID> -- getent group render
-   ```
-3. Add the device. Use either the GUI (*Resources → Add → Device Passthrough*), or the CLI:
-   ```bash
-   pct set <CTID> -dev0 /dev/dri/renderD128,gid=<render-gid-inside-the-CT>
-   ```
-4. Restart the container. Device entries are applied when it starts.
+The wizard asks for:
+
+1. **Default or advanced settings**: container id, hostname, OS (Debian 12 / 13, Ubuntu 24.04), cores, RAM, swap,
+   disk, storage, bridge, DHCP or a static address, VLAN, unprivileged or privileged.
+   The defaults are half of the host's cores (all of them on small hosts), 4 GB RAM, 16 GB disk, DHCP, unprivileged.
+2. **GPUs to pass through**: every render node of the host is listed with its vendor and model (Proxmox VE 8.2+).
+3. **Bind mounts**, as many as you want: a folder of the host → a folder in the container, read/write or read-only.
+   Network shares (NFS, SMB) must be mounted on the host first (*Datacenter → Storage*, or `/etc/fstab`).
+4. **Extra video folders inside the container** (stored on its own disk), if you want any.
+5. **User mapping** (unprivileged containers with writable bind mounts, see [§3](#3-video-folders-and-permissions)).
+6. **KnA settings**: port, password, optional components.
+
+At the end it prints the address of the web UI.
+
+Requirements: Proxmox VE 8 or newer (8.2+ for GPU passthrough to containers), internet access for the template and the KnA release.
+
+### Unattended
+
+All wizard answers can be given as variables. Example values from a test environment:
+
+```bash
+KNA_CT_ID=210 KNA_CT_CORES=6 KNA_CT_RAM=6144 KNA_CT_DISK=24 \
+KNA_CT_GPU=auto \
+KNA_CT_BINDS="/mnt/pve/media-share/videos:/media/videos;/mnt/pve/media-share/archive:/media/archive:ro" \
+KNA_CT_IDMAP=1000:1000 KNA_PASSWORD='change-me' \
+bash kna-lxc.sh --unattended
+```
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `KNA_CT_ID` | next free id | Container id |
+| `KNA_CT_HOSTNAME` | `kna` | Hostname |
+| `KNA_CT_OS` | `debian-12` | `debian-12`, `debian-13` or `ubuntu-24.04` |
+| `KNA_CT_CORES` · `KNA_CT_RAM` · `KNA_CT_SWAP` · `KNA_CT_DISK` | half the cores · 4096 · 512 · 16 | Cores, MB, MB, GB |
+| `KNA_CT_STORAGE` · `KNA_CT_TEMPLATE_STORAGE` | first active | Storage for the disk and for the template |
+| `KNA_CT_BRIDGE` · `KNA_CT_IP` · `KNA_CT_GW` · `KNA_CT_VLAN` | first bridge · `dhcp` | Network (`KNA_CT_IP` in CIDR form when static) |
+| `KNA_CT_UNPRIVILEGED` | `1` | `0` for a privileged container |
+| `KNA_CT_GPU` | `auto` | `auto` (every render node), `none`, or names such as `renderD128` |
+| `KNA_CT_BINDS` | – | `host:container[:ro]` entries separated by `;` |
+| `KNA_CT_FOLDERS` | `/srv/kna/videos` when there are no bind mounts | Video folders created inside the container |
+| `KNA_CT_IDMAP` | – | `uid:gid` of the host user the container's `kna` user is mapped to |
+
+`KNA_PORT`, `KNA_PASSWORD`, `KNA_FFMPEG_SOURCE`, `KNA_COMPONENTS` and `KNA_VERSION` are passed to the installer inside.
+
+## 2. Installing inside an existing container, VM or server
+
+On Debian 12+ / Ubuntu 22.04+ (amd64 or arm64), as root:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/KonjikiNoYami1991/KnA/master/deploy/install-linux.sh | bash
+```
+
+The wizard asks for the port, the **video folders** (read/write, `;`-separated, created when missing),
+optional **read-only folders**, the upload folder, a password, the **GPU runtime** (the vendors found are preselected),
+the FFmpeg build, the optional components and, if you want, the uid/gid of the service user.
+
+What it installs:
+
+- the self-contained server package of the newest KnA release in `/opt/kna` (no .NET SDK, nothing is compiled);
+- fonts, Vulkan (Mesa, including the CPU fallback) and `vainfo`;
+- Intel: the media driver (enabling Debian *non-free* / Ubuntu *multiverse* when needed) and oneVPL; AMD: Mesa VA-API;
+- FFmpeg: by default KnA downloads the newest static build itself (*Settings → Updates & components* updates it later);
+  the distribution package is the alternative, and the fallback when the download fails;
+- the `kna` systemd service, running as the `kna` user (in the `render` and `video` groups);
+- the `kna-update` command.
+
+Unattended, with example values from a test environment:
+
+```bash
+KNA_MEDIA_ROOTS="/srv/videos;/mnt/share/videos" KNA_READONLY_ROOTS="/mnt/share/archive" \
+KNA_PASSWORD='change-me' KNA_COMPONENTS="anime4k dovi_tool hdr10plus_tool" \
+bash install-linux.sh --unattended
+```
+
+| Variable | Default | Meaning |
+|---|---|---|
+| `KNA_VERSION` | `latest` | Release to install (`3.0.0`…) |
+| `KNA_PORT` | `8585` | Web UI port |
+| `KNA_MEDIA_ROOTS` | `/srv/kna/videos` | Read/write video folders, `;`-separated |
+| `KNA_READONLY_ROOTS` | – | Read-only folders |
+| `KNA_UPLOAD_DIR` | data folder | Destination of browser uploads |
+| `KNA_PASSWORD` | – | Web UI password (no single quotes) |
+| `KNA_GPU` | `auto` | `auto`, `none`, or any of `intel amd nvidia` |
+| `KNA_FFMPEG_SOURCE` | `btbn` | `btbn` (newest static build) or `distro` |
+| `KNA_COMPONENTS` | `anime4k fsrcnnx dovi_tool hdr10plus_tool` | Also `ai-runtime` (Python + PyTorch, several GB); empty for none |
+| `KNA_UID` · `KNA_GID` | system ids | Ids of the `kna` user |
+
+### Updating, settings, removal
+
+| | |
+|---|---|
+| Update | `kna-update` (inside the container; from the host: `pct exec <id> -- kna-update`) |
+| Settings | `/etc/kna/kna.env`, then `systemctl restart kna` (variables [below](#environment-variables)) |
+| Logs | `journalctl -u kna -f` |
+| Reconfigure | run the installer again (the wizard starts from the current settings) |
+| Remove | `bash /usr/local/sbin/kna-install --uninstall` (`--purge` also deletes settings and data, never the videos) |
+
+## 3. Video folders and permissions
+
+KnA only shows the folders listed in `KNA_MEDIA_ROOTS` (read/write) and `KNA_READONLY_ROOTS`.
+By default outputs are written **next to the sources**, so the `kna` user needs write access to the read/write folders.
+Folders created by the installer belong to `kna`. For existing folders, the installer warns when `kna` cannot write there.
+
+**Bind mounts in an unprivileged container.** Inside an unprivileged container, user *N* is user *100000 + N* on the host.
+A folder owned by a host user (for example uid 1000) is therefore not writable by `kna`. You have three options:
+
+- **User mapping** (the Proxmox script does this when you answer yes, or with `KNA_CT_IDMAP`). The container's `kna` user
+  becomes exactly that host user: one line in `/etc/subuid` and `/etc/subgid` (`root:<uid>:1`), plus these lines in
+  `/etc/pve/lxc/<id>.conf` (shown for uid/gid 1000):
+  ```
+  lxc.idmap: u 0 100000 1000
+  lxc.idmap: u 1000 1000 1
+  lxc.idmap: u 1001 101001 64535
+  lxc.idmap: g 0 100000 1000
+  lxc.idmap: g 1000 1000 1
+  lxc.idmap: g 1001 101001 64535
+  ```
+- Give the host folder to the mapped id: `chown -R 100000+<kna uid> …` on the host. The container prints `id kna`.
+- Use a privileged container. This is simpler, but less isolated.
+
+Read-only bind mounts (`ro=1`) need no mapping: reading works when the files are readable by everyone.
+
+Adding a bind mount later, from the host:
+
+```bash
+pct set <id> -mp2 /host/folder,mp=/media/new-folder
+```
+
+Then add `/media/new-folder` to `KNA_MEDIA_ROOTS` in `/etc/kna/kna.env` and restart the service.
+
+## 4. GPU
+
+KnA tests every encoder of its FFmpeg build at the first start. The *Hardware* card then shows what really works.
+Use **Detect again** after changing GPU or driver.
+
+| GPU | Inside the container | Notes |
+|---|---|---|
+| Intel (iGPU / Arc) | Quick Sync (oneVPL) and VA-API | the installer adds the media driver |
+| AMD (APU / Radeon) | VA-API (Mesa), Vulkan | AMF is not used on Linux |
+| NVIDIA | NVENC | the user-space driver must be installed in the container **at the same version as the host**, plus the `/dev/nvidia*` devices; a VM with PCIe passthrough is often simpler |
+
+Passing a render node by hand (Proxmox VE 8.2+), from the host:
+
+```bash
+ls -l /dev/dri                                    # render nodes of the host
+pct exec <id> -- getent group render              # gid of 'render' inside the container
+pct set <id> -dev0 /dev/dri/renderD128,gid=<that-gid>
+pct reboot <id>
+```
 
 > Don't combine a `devN:` entry with a manual `lxc.mount.entry` for the same device:
 > Proxmox then fails with "mknod … File exists".
 
-Check that it works inside the container:
-
-```bash
-apt install -y vainfo
-vainfo --display drm --device /dev/dri/renderD128 | grep -i enc
-```
-
-Look for `VAEntrypointEncSlice` on `VAProfileAV1Profile0`, `VAProfileHEVCMain10` and `VAProfileH264High`.
-
-**NVIDIA GPUs** in an LXC need the same driver version on the host and in the container,
-plus the `nvidia*` devices passed through. A VM with PCIe passthrough is simpler.
-
-## 3a. Native install (no Docker)
-
-```bash
-apt install -y git
-git clone https://github.com/KonjikiNoYami1991/KnA.git && cd KnA
-KNA_MEDIA_ROOTS="/mnt/anime;/mnt/nas" ./deploy/install-linux.sh
-```
-
-The script installs FFmpeg, the VA-API/QSV drivers and .NET 10, builds KnA into `/opt/kna`,
-and creates the `kna.service` systemd unit. That unit runs as the `kna` user, which is in the `render` and `video` groups.
-
-## 3b. Docker
-
-```bash
-git clone https://github.com/KonjikiNoYami1991/KnA.git && cd KnA
-# edit docker-compose.yml: your media folder, RENDER_GID, optional KNA_PASSWORD
-RENDER_GID=$(getent group render | cut -d: -f3) docker compose up -d --build
-```
-
-## 4. Media folders (NAS)
-
-Mount your NAS shares in the container, for example the UGREEN DXP4800 Pro or the Synology DS420+.
-Either bind-mount them from the host (`pct set <CTID> -mp0 /mnt/pve/nas-anime,mp=/mnt/anime`)
-or use NFS/SMB inside a privileged container/VM. Then list them in `KNA_MEDIA_ROOTS`, separated by `;`.
-The browser can only see files inside those roots.
-
-The `kna` user (or the container) needs **write** access there: by default, outputs are written next to the sources.
-
-## 5. First start
-
-On the first start, KnA test-encodes a short clip with every encoder in the FFmpeg build.
-The *Hardware* card then shows what actually works on this machine.
-Use **Detect again** after changing GPU or driver.
+To check it inside the container: `vainfo --display drm --device /dev/dri/renderD128`.
+`VAEntrypointEncSlice` lines list the codecs the GPU can encode.
 
 ## Environment variables
+
+Read from `/etc/kna/kna.env` by the service.
 
 | Variable | Default | Meaning |
 |---|---|---|
 | `KNA_URLS` | `http://0.0.0.0:8585` | Listen address |
-| `KNA_MEDIA_ROOTS` | `/media` (Docker), whole file system (native) | Read/write folders that can be browsed, separated by `;` |
+| `KNA_MEDIA_ROOTS` | installer choice | Read/write folders that can be browsed, separated by `;` |
 | `KNA_READONLY_ROOTS` | – | Extra roots that can be browsed, downloaded and encoded from but never written |
-| `KNA_UPLOAD_DIR` | `/media/uploads` (Docker), data folder | Default destination of browser uploads |
+| `KNA_UPLOAD_DIR` | data folder | Default destination of browser uploads |
 | `KNA_MAX_UPLOAD_GB` | no limit | Biggest accepted upload |
-| `KNA_FDKAAC` | auto | Path to the standalone `fdkaac` encoder |
+| `KNA_DATA_DIR` | `/var/lib/kna` | Settings, logs, temporary files, downloaded components |
+| `KNA_PASSWORD` | – | Enables HTTP Basic authentication (any user name) |
+| `KNA_FFMPEG` | auto | Path to a specific ffmpeg binary |
+| `KNA_FDKAAC` | auto | Path to the standalone `fdkaac` encoder (bundled in the package) |
 | `KNA_VULKAN_DEVICE` | auto | Vulkan GPU for libplacebo / Anime4K (index or name part; `llvmpipe` = CPU) |
 | `KNA_AI_SCRIPT` | bundled | Path to `kna_upscale.py` (neural upscaler) |
-| `KNA_DATA_DIR` | `/config` (Docker), `/var/lib/kna` | Settings, logs, temporary files |
-| `KNA_PASSWORD` | – | Enables HTTP Basic authentication (any user name) |
+| `KNA_VSPIPE` | auto | Path to `vspipe` (VapourSynth) |
 | `KNA_ALLOW_ADVANCED` | `false` | Allows editing the FFmpeg path and extra arguments from the browser |
 | `KNA_ALLOW_POWER_ACTIONS` | `false` | Allows "shut down / sleep when finished" |
-| `KNA_FFMPEG` | auto | Path to a specific ffmpeg binary (e.g. jellyfin-ffmpeg) |
-| `KNA_LOCK_COMPONENTS` | `false` | Forbids installing/updating FFmpeg and the HDR tools from the browser |
+| `KNA_LOCK_COMPONENTS` | `false` | Forbids installing/updating FFmpeg and the other components from the browser |
 | `KNA_LANG` | auto | Forces the language (`it` or `en`); otherwise the browser decides, or *Settings → General* |
-| `KNA_VSPIPE` | auto | Path to `vspipe` (VapourSynth) |
 
 ## VapourSynth and AviSynth on the server
 
 - **VapourSynth**: install it in the container/VM (for example `pip install vapoursynth` followed by `vapoursynth config`, plus the source plugins your scripts use,
   such as L-SMASH Works or BestSource), make sure `vspipe` is on the PATH of the `kna` user or set `KNA_VSPIPE`.
 - **AviSynth+** on Linux needs an FFmpeg built with `--enable-avisynth` and the AviSynth+ library installed.
-  The Ubuntu FFmpeg package and the Docker image do not include it; KnA says so clearly when an `.avs` file cannot be read.
+  The usual FFmpeg builds do not include it; KnA says so clearly when an `.avs` file cannot be read.

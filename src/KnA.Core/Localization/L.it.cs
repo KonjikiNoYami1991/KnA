@@ -434,7 +434,7 @@ public static partial class L
         ["Cannot reach GitHub: {0}"] = "Impossibile contattare GitHub: {0}",
         ["GitHub rate limit reached, try again in an hour."] = "Limite di richieste GitHub raggiunto, riprova tra un'ora.",
         ["Update the container: git pull && docker compose up -d --build"] = "Aggiorna il container: git pull && docker compose up -d --build",
-        ["Update the service: git pull && sudo ./deploy/install-linux.sh"] = "Aggiorna il servizio: git pull && sudo ./deploy/install-linux.sh",
+        ["Update the service: sudo kna-update"] = "Aggiorna il servizio: sudo kna-update",
         ["No release found for {0}."] = "Nessuna release trovata per {0}.",
         ["No download for this platform in {0} {1}."] = "Nessun download per questa piattaforma in {0} {1}.",
         ["The archive did not contain {0}."] = "L'archivio non conteneva {0}.",
