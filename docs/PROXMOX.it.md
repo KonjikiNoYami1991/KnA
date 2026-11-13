@@ -24,17 +24,29 @@ Apri la shell del nodo (*Datacenter → nodo → Shell*) e lancia:
 bash -c "$(curl -fsSL https://raw.githubusercontent.com/KonjikiNoYami1991/KnA/master/deploy/proxmox/kna-lxc.sh)"
 ```
 
-Il wizard chiede:
+Il wizard chiede prima la **lingua** (italiano / inglese), poi mostra **una sola schermata di riepilogo** con tutte le
+impostazioni e il loro valore attuale. Scegli una riga per cambiarla, poi *Crea il container*. Prima di quel momento
+non viene creato nulla. Ogni valore viene controllato quando lo inserisci (id già usato da un container o da una VM,
+storage, spazio libero, percorsi, IP).
 
-1. **Impostazioni predefinite o avanzate**: id del container, hostname, sistema (Debian 12 / 13, Ubuntu 24.04), core, RAM,
-   swap, disco, storage, bridge, DHCP o indirizzo statico, VLAN, container non privilegiato o privilegiato.
-   I valori predefiniti sono metà dei core dell'host (tutti sugli host piccoli), 4 GB di RAM, 16 GB di disco, DHCP e container non privilegiato.
-2. **GPU da passare**: ogni render node dell'host appare con produttore e modello (Proxmox VE 8.2+).
-3. **Bind mount**, quanti ne vuoi: una cartella dell'host → una cartella nel container, in lettura/scrittura o sola lettura.
-   Le condivisioni di rete (NFS, SMB) vanno prima montate sull'host (*Datacenter → Storage*, oppure `/etc/fstab`).
-4. **Cartelle video aggiuntive dentro il container** (sul suo disco), se ne vuoi.
-5. **Mappatura utenti** (container non privilegiati con bind mount scrivibili, vedi [§3](#3-cartelle-dei-video-e-permessi)).
-6. **Impostazioni di KnA**: porta, password, componenti opzionali.
+| Riga | Cosa imposti |
+|---|---|
+| ID / hostname | id libero (il prossimo è proposto) e nome |
+| Sistema | Debian 12 / 13, Ubuntu 24.04; non privilegiato (consigliato) o privilegiato |
+| CPU / RAM / swap | predefiniti: metà dei core dell'host (tutti sugli host piccoli), 4 GB, 512 MB |
+| Disco | storage (con lo spazio libero) e dimensione, predefinito 16 GB |
+| Template | storage dove scaricare il template del sistema |
+| Rete | bridge, DHCP o indirizzo statico con gateway, VLAN |
+| GPU | ogni render node dell'host con produttore e modello (Proxmox VE 8.2+) |
+| Cartelle host | bind mount, quanti ne vuoi: cartella dell'host → cartella nel container, lettura/scrittura o sola lettura. Viene mostrato il filesystem (es. `nfs4`). Le condivisioni di rete vanno prima montate sull'host (*Datacenter → Storage*, oppure `/etc/fstab`) |
+| Cartelle nel CT | cartelle video sul disco del container |
+| Upload | dove finiscono i file caricati dal browser (predefinito: `uploads` nella prima cartella scrivibile; vuoto = cartella dati di KnA) |
+| Mappatura | facoltativa, vedi [§3](#3-cartelle-dei-video-e-permessi) |
+| KnA | porta, password, componenti opzionali |
+
+Prima di creare il container il wizard mostra il riepilogo completo con gli avvisi (spazio, permessi).
+Se qualcosa non riesce **dopo** la creazione del container, lo script dice in quale passo si è fermato e propone
+di eliminare il container oppure di tenerlo per riprovare (`pct exec <id> -- bash /root/kna-install.sh`).
 
 Alla fine mostra l'indirizzo dell'interfaccia web.
 
@@ -65,6 +77,8 @@ bash kna-lxc.sh --unattended
 | `KNA_CT_BINDS` | – | Voci `host:container[:ro]` separate da `;` |
 | `KNA_CT_FOLDERS` | `/srv/kna/videos` se non ci sono bind mount | Cartelle video create dentro il container |
 | `KNA_CT_IDMAP` | – | `uid:gid` dell'utente dell'host su cui mappare l'utente `kna` del container |
+| `KNA_UPLOAD_DIR` | `uploads` nella prima cartella scrivibile | Cartella degli upload nel container (vuoto = cartella dati di KnA) |
+| `KNA_INSTALL_LANG` | lingua del sistema | `it` o `en` (salta la domanda sulla lingua) |
 
 `KNA_PORT`, `KNA_PASSWORD`, `KNA_FFMPEG_SOURCE`, `KNA_COMPONENTS` e `KNA_VERSION` vengono passate all'installer interno.
 
@@ -130,7 +144,7 @@ bash install-linux.sh --unattended
 
 KnA mostra solo le cartelle elencate in `KNA_MEDIA_ROOTS` (lettura/scrittura) e `KNA_READONLY_ROOTS`.
 Di base gli output vengono scritti **accanto ai sorgenti**, quindi l'utente `kna` deve poter scrivere nelle cartelle in lettura/scrittura.
-Le cartelle create dall'installer appartengono a `kna`. Per quelle esistenti, l'installer avvisa se `kna` non può scriverci.
+Le cartelle esistenti non vengono mai modificate. Quelle mancanti le crea l'utente `kna` stesso quando può (così una cartella creata dentro una condivisione NFS/SMB segue le regole della condivisione, senza `chown`); altrimenti le crea root e le assegna a `kna`. L'installer avvisa se `kna` non può scrivere in una cartella.
 
 **Bind mount in un container non privilegiato.** Dentro un container non privilegiato l'utente *N* è l'utente *100000 + N* sull'host.
 Una cartella che appartiene a un utente dell'host (per esempio uid 1000) quindi non è scrivibile da `kna`. Hai tre possibilità:

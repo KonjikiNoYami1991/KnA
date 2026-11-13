@@ -24,17 +24,28 @@ Open the node's shell (*Datacenter → node → Shell*) and run:
 bash -c "$(curl -fsSL https://raw.githubusercontent.com/KonjikiNoYami1991/KnA/master/deploy/proxmox/kna-lxc.sh)"
 ```
 
-The wizard asks for:
+The wizard first asks for the **language** (Italian / English), then shows **one review screen** with every setting
+and its current value. Select a line to change it, then *Create the container*. Nothing is created before that.
+Each value is checked when you enter it (id already used by a container or a VM, storage, free space, paths, IP).
 
-1. **Default or advanced settings**: container id, hostname, OS (Debian 12 / 13, Ubuntu 24.04), cores, RAM, swap,
-   disk, storage, bridge, DHCP or a static address, VLAN, unprivileged or privileged.
-   The defaults are half of the host's cores (all of them on small hosts), 4 GB RAM, 16 GB disk, DHCP, unprivileged.
-2. **GPUs to pass through**: every render node of the host is listed with its vendor and model (Proxmox VE 8.2+).
-3. **Bind mounts**, as many as you want: a folder of the host → a folder in the container, read/write or read-only.
-   Network shares (NFS, SMB) must be mounted on the host first (*Datacenter → Storage*, or `/etc/fstab`).
-4. **Extra video folders inside the container** (stored on its own disk), if you want any.
-5. **User mapping** (unprivileged containers with writable bind mounts, see [§3](#3-video-folders-and-permissions)).
-6. **KnA settings**: port, password, optional components.
+| Line | What you set |
+|---|---|
+| ID / hostname | a free id (the next one is proposed) and the name |
+| System | Debian 12 / 13, Ubuntu 24.04; unprivileged (recommended) or privileged |
+| CPU / RAM / swap | defaults: half of the host's cores (all of them on small hosts), 4 GB, 512 MB |
+| Disk | storage (with its free space) and size, 16 GB by default |
+| Template | storage the OS template is downloaded to |
+| Network | bridge, DHCP or a static address with gateway, VLAN |
+| GPU | every render node of the host with vendor and model (Proxmox VE 8.2+) |
+| Host folders | bind mounts, as many as you want: host folder → container folder, read/write or read-only. The filesystem is shown (e.g. `nfs4`). Network shares must be mounted on the host first (*Datacenter → Storage*, or `/etc/fstab`) |
+| Folders in CT | video folders on the container's own disk |
+| Upload | where browser uploads go (default: `uploads` in the first writable folder; empty = KnA's data folder) |
+| User mapping | optional, see [§3](#3-video-folders-and-permissions) |
+| KnA | port, password, optional components |
+
+Before creating the container the wizard shows the full summary with any warnings (space, permissions).
+If something fails **after** the container was created, the script says which step stopped and offers to delete
+the container or keep it to retry (`pct exec <id> -- bash /root/kna-install.sh`).
 
 At the end it prints the address of the web UI.
 
@@ -65,6 +76,8 @@ bash kna-lxc.sh --unattended
 | `KNA_CT_BINDS` | – | `host:container[:ro]` entries separated by `;` |
 | `KNA_CT_FOLDERS` | `/srv/kna/videos` when there are no bind mounts | Video folders created inside the container |
 | `KNA_CT_IDMAP` | – | `uid:gid` of the host user the container's `kna` user is mapped to |
+| `KNA_UPLOAD_DIR` | `uploads` in the first writable folder | Upload folder inside the container (empty = KnA's data folder) |
+| `KNA_INSTALL_LANG` | system locale | `it` or `en` (skips the language question) |
 
 `KNA_PORT`, `KNA_PASSWORD`, `KNA_FFMPEG_SOURCE`, `KNA_COMPONENTS` and `KNA_VERSION` are passed to the installer inside.
 
@@ -125,7 +138,7 @@ bash install-linux.sh --unattended
 
 KnA only shows the folders listed in `KNA_MEDIA_ROOTS` (read/write) and `KNA_READONLY_ROOTS`.
 By default outputs are written **next to the sources**, so the `kna` user needs write access to the read/write folders.
-Folders created by the installer belong to `kna`. For existing folders, the installer warns when `kna` cannot write there.
+Existing folders are never changed. Missing ones are created by the `kna` user itself when it can (so a folder created inside an NFS/SMB share follows the share's rules, no `chown`); otherwise by root and given to `kna`. The installer warns when `kna` cannot write to a folder.
 
 **Bind mounts in an unprivileged container.** Inside an unprivileged container, user *N* is user *100000 + N* on the host.
 A folder owned by a host user (for example uid 1000) is therefore not writable by `kna`. You have three options:

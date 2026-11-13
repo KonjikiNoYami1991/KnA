@@ -132,6 +132,14 @@ if ((INTERACTIVE)) && ! command -v whiptail >/dev/null; then
 fi
 
 wt() { whiptail --title "$TITLE" "$@" 3>&1 1>&2 2>&3 </dev/tty; }
+
+# Language: asked once in the wizard (unless KNA_INSTALL_LANG is set), preselected from the system locale.
+if ((INTERACTIVE)) && [[ -z ${KNA_INSTALL_LANG:-} ]]; then
+  lang=$(wt --notags --default-item "$( ((IT)) && echo it || echo en)" --ok-button "OK" --cancel-button "Cancel / Annulla" \
+    --menu "Language / Lingua" 10 50 2 it "Italiano" en "English") || { echo "Cancelled / Annullato" >&2; exit 1; }
+  [[ $lang == it ]] && IT=1 || IT=0
+  export KNA_INSTALL_LANG=$lang
+fi
 cancelled() { die "$(t "Installation cancelled." "Installazione annullata.")"; }
 valid_paths() { # ';'-separated absolute paths without single quotes
   local p IFS=';'
@@ -335,10 +343,12 @@ fi
 if [[ $MODE == install ]]; then
   SERVICE_GROUP=kna
   if [[ -n $KNA_GID ]] && g=$(getent group "$KNA_GID" | cut -d: -f1) && [[ -n $g ]]; then SERVICE_GROUP=$g; fi
-  getent group "$SERVICE_GROUP" >/dev/null || groupadd --system ${KNA_GID:+--gid "$KNA_GID"} "$SERVICE_GROUP"
+  # With an explicit id (e.g. the one an LXC user mapping points to) the user is not a "system" one:
+  # useradd/groupadd would only warn that the id is above SYS_UID_MAX/SYS_GID_MAX.
+  getent group "$SERVICE_GROUP" >/dev/null || groupadd ${KNA_GID:+--gid "$KNA_GID"} ${KNA_GID:---system} "$SERVICE_GROUP"
   SERVICE_USER=kna
   if [[ -n $KNA_UID ]] && u=$(getent passwd "$KNA_UID" | cut -d: -f1) && [[ -n $u ]]; then SERVICE_USER=$u; fi
-  id -u "$SERVICE_USER" >/dev/null 2>&1 || useradd --system ${KNA_UID:+--uid "$KNA_UID"} --gid "$SERVICE_GROUP" \
+  id -u "$SERVICE_USER" >/dev/null 2>&1 || useradd ${KNA_UID:+--uid "$KNA_UID"} ${KNA_UID:---system} --gid "$SERVICE_GROUP" \
     --home-dir "$DATA_DIR" --no-create-home --shell /usr/sbin/nologin "$SERVICE_USER"
   for g in render video; do getent group "$g" >/dev/null && usermod -aG "$g" "$SERVICE_USER"; done
 
@@ -347,13 +357,26 @@ if [[ $MODE == install ]]; then
   IFS=';' read -ra dirs <<< "$KNA_MEDIA_ROOTS;$KNA_UPLOAD_DIR"
   for d in "${dirs[@]}"; do
     [[ -z $d ]] && continue
+    # Existing folders are never touched. A missing one is created by the service user itself when it can
+    # (e.g. 'uploads' inside a writable NFS/SMB share: no chown, the share keeps its own rules); otherwise
+    # by root and then given to the service user, which only works on local filesystems.
     if [[ ! -d $d ]]; then
-      mkdir -p "$d" && chown "$SERVICE_USER:$SERVICE_GROUP" "$d"   # only folders created here change owner
-      log "$(t "Created $d" "Creata $d")"
-    elif ! runuser -u "$SERVICE_USER" -- test -w "$d"; then
-      warn "$(t "The '$SERVICE_USER' user cannot write to $d: outputs next to the sources will fail there." \
-                "L'utente '$SERVICE_USER' non può scrivere in $d: lì gli output accanto ai sorgenti non riusciranno.")"
+      if runuser -u "$SERVICE_USER" -- mkdir -p "$d" 2>/dev/null; then
+        log "$(t "Created $d" "Creata $d")"
+      elif mkdir -p "$d" 2>/dev/null; then
+        chown "$SERVICE_USER:$SERVICE_GROUP" "$d" 2>/dev/null \
+          || warn "$(t "Created $d, but its owner cannot be changed (network share?): left as it is." \
+                       "Creata $d, ma il proprietario non si può cambiare (condivisione di rete?): lasciata com'è.")"
+        log "$(t "Created $d" "Creata $d")"
+      else
+        warn "$(t "Cannot create $d: create it yourself, then restart KnA (systemctl restart kna)." \
+                  "Impossibile creare $d: creala tu, poi riavvia KnA (systemctl restart kna).")"
+        continue
+      fi
     fi
+    runuser -u "$SERVICE_USER" -- test -w "$d" \
+      || warn "$(t "The '$SERVICE_USER' user cannot write to $d: outputs and uploads there will fail." \
+                   "L'utente '$SERVICE_USER' non può scrivere in $d: lì output e upload non riusciranno.")"
   done
 
   q() { printf "%s='%s'\n" "$1" "$2"; }
