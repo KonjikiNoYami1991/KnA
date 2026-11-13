@@ -38,7 +38,7 @@ storage, spazio libero, percorsi, IP).
 | Template | storage dove scaricare il template del sistema |
 | Rete | bridge, DHCP o indirizzo statico con gateway, VLAN |
 | GPU | ogni render node dell'host con produttore e modello (Proxmox VE 8.2+) |
-| Cartelle host | bind mount, quanti ne vuoi: cartella dell'host → cartella nel container, lettura/scrittura o sola lettura. Viene mostrato il filesystem (es. `nfs4`). Le condivisioni di rete vanno prima montate sull'host (*Datacenter → Storage*, oppure `/etc/fstab`) |
+| Cartelle host | bind mount, quanti ne vuoi: cartella dell'host → cartella nel container, lettura/scrittura o sola lettura. Il wizard elenca i punti di montaggio già configurati sull'host, letti da storage Proxmox (`/etc/pve/storage.cfg`), `/etc/fstab`, unit `.mount` di systemd e mount attivi, con tipo (`nfs4`, `cifs`, `zfs`…), origine e stato (montato / NON montato / solo runtime); oppure *Altro percorso*. Una condivisione di rete non montata viene rifiutata: montala prima (*Datacenter → Storage*, oppure `/etc/fstab`) |
 | Cartelle nel CT | cartelle video sul disco del container |
 | Upload | dove finiscono i file caricati dal browser (predefinito: `uploads` nella prima cartella scrivibile; vuoto = cartella dati di KnA) |
 | Mappatura | facoltativa, vedi [§3](#3-cartelle-dei-video-e-permessi) |

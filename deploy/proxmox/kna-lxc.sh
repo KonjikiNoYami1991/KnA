@@ -328,11 +328,114 @@ edit_gpu() {
   CT_GPU=$(echo "$sel" | tr -d '"')
 }
 
+# Folders already set up on this host that make sense as bind mounts, from every place that defines mounts:
+# Proxmox storages (/etc/pve/storage.cfg), /etc/fstab, systemd .mount units and what is mounted right now.
+# Fills MNT_LIST (paths, in that order) and MNT_TYPE / MNT_SRC / MNT_FROM (fs type, source, where it was found).
+declare -A MNT_TYPE=() MNT_SRC=() MNT_FROM=()
+MNT_LIST=() ZFS_SKIP=()
+mnt_add() { # path fstype source origin
+  local p=${1%/} f
+  [[ $p == /?* ]] || return 0
+  case "$p" in
+    /boot|/boot/*|/proc*|/sys|/sys/*|/dev|/dev/*|/run|/run/*|/etc|/etc/*|/usr|/usr/*|/var/lib/lxcfs*|/tmp|/var/lib/vz|/var/log*) return 0 ;;
+    */subvol-*|*/basevol-*) return 0 ;;
+  esac
+  case "$2" in
+    proc|sysfs|devtmpfs|devpts|tmpfs|cgroup|cgroup2|pstore|bpf|securityfs|debugfs|tracefs|mqueue|hugetlbfs|configfs|fusectl|autofs|binfmt_misc|efivarfs|ramfs|rpc_pipefs|nsfs|fuse.lxcfs|overlay|squashfs|swap|none) return 0 ;;
+  esac
+  for f in "${ZFS_SKIP[@]}"; do [[ $3 == "$f" || $3 == "$f"/* ]] && return 0; done
+  if [[ -z ${MNT_FROM[$p]+x} ]]; then
+    MNT_LIST+=("$p"); MNT_TYPE[$p]=$2; MNT_SRC[$p]=$3; MNT_FROM[$p]=$4
+  else
+    [[ -z ${MNT_TYPE[$p]} || ${MNT_TYPE[$p]} == dir ]] && [[ -n $2 ]] && MNT_TYPE[$p]=$2
+    [[ -z ${MNT_SRC[$p]} ]] && MNT_SRC[$p]=$3
+    [[ ${MNT_FROM[$p]} == *"$4"* ]] || MNT_FROM[$p]+=", $4"
+  fi
+}
+discover_mounts() {
+  local type name path src where what fstype u
+  MNT_LIST=(); MNT_TYPE=(); MNT_SRC=(); MNT_FROM=(); ZFS_SKIP=()
+  # ZFS datasets holding guest disks or the host system are not video folders.
+  [[ -r /etc/pve/storage.cfg ]] && mapfile -t ZFS_SKIP < <(awk '/^zfspool:/ {z=1; next} /^[a-z0-9]+:/ {z=0} z && $1=="pool" {print $2}' /etc/pve/storage.cfg)
+  ZFS_SKIP+=(rpool/ROOT)
+  # 1. Proxmox storages with a path (dir, nfs, cifs, cephfs, glusterfs…; network ones live in /mnt/pve/<id>).
+  if [[ -r /etc/pve/storage.cfg ]]; then
+    while IFS=$'\t' read -r type name path src; do
+      [[ $path == - ]] && path=""; [[ $src == - ]] && src=""   # '-' = empty (read collapses empty tab fields)
+      case "$type" in nfs|cifs|cephfs|glusterfs) path=${path:-/mnt/pve/$name} ;; esac
+      [[ -n $path ]] || continue
+      [[ $type == dir ]] && type=""
+      mnt_add "$path" "$type" "$src" "Proxmox: $name"
+    done < <(awk '
+      function out() { if (name != "") printf "%s\t%s\t%s\t%s\n", t, name, (path != "" ? path : "-"), (ex != "" ? srv ":" ex : (shr != "" ? "//" srv "/" shr : "-")) }
+      /^[a-z0-9]+:[ \t]/ { out(); t=$1; sub(/:$/, "", t); name=$2; path=""; srv=""; ex=""; shr=""; next }
+      $1=="path" {path=$2} $1=="server" {srv=$2} $1=="export" {ex=$2} $1=="share" {shr=$2}
+      END { out() }' /etc/pve/storage.cfg)
+  fi
+  # 2. /etc/fstab
+  [[ -r /etc/fstab ]] && while read -r src where fstype _; do
+    [[ -z $src || $src == \#* || $fstype == swap || $where == / ]] && continue
+    mnt_add "$where" "$fstype" "$src" fstab
+  done < /etc/fstab
+  # 3. systemd mount units written by hand (Where= / What= / Type=)
+  for u in /etc/systemd/system/*.mount; do
+    [[ -f $u ]] || continue
+    where=$(sed -n 's/^Where=//p' "$u" | head -1); what=$(sed -n 's/^What=//p' "$u" | head -1); fstype=$(sed -n 's/^Type=//p' "$u" | head -1)
+    [[ -n $where ]] && mnt_add "$where" "$fstype" "$what" "systemd: $(basename "$u")"
+  done
+  # 4. Everything mounted now (disks, ZFS datasets, shares mounted by hand, autofs…)
+  while read -r where fstype src; do
+    where=$(printf '%b' "$where"); [[ $where == / ]] && continue
+    if [[ -n ${MNT_FROM[$where]+x} ]]; then   # already listed above: only learn the real filesystem type
+      [[ -z ${MNT_TYPE[$where]} ]] && MNT_TYPE[$where]=$fstype
+      continue
+    fi
+    mnt_add "$where" "$fstype" "$src" "$(t "runtime only" "solo runtime")"   # not persistent: gone after a reboot
+  done < <(findmnt -rn -o TARGET,FSTYPE,SOURCE 2>/dev/null)
+  return 0
+}
+mnt_state() { # mounted | folder | missing
+  if mountpoint -q "$1" 2>/dev/null; then echo mounted; elif [[ -d $1 ]]; then echo folder; else echo missing; fi
+}
+is_netfs() { case "$1" in nfs|nfs4|cifs|smb3|smbfs|cephfs|ceph|glusterfs|fuse.glusterfs|fuse.sshfs|9p|virtiofs) return 0 ;; *) return 1 ;; esac; }
+
+# Choose the host folder of a bind mount: a known mount point, or a custom path. Prints the path.
+pick_host_folder() {
+  local items=() i p st ty label v hp
+  discover_mounts
+  for i in "${!MNT_LIST[@]}"; do
+    p=${MNT_LIST[$i]}
+    [[ " ${B_HOST[*]} " == *" $p "* ]] && continue
+    st=$(mnt_state "$p"); ty=${MNT_TYPE[$p]:-$(fs_of "$p")}
+    case $st in
+      mounted) label=$(t mounted montato) ;;
+      folder) if is_netfs "${MNT_TYPE[$p]}"; then label=$(t "NOT mounted" "NON montato"); else label=$(t folder cartella); fi ;;
+      missing) label=$(t "NOT mounted" "NON montato") ;;
+    esac
+    items+=("$i" "$(cut_to 72 "$(printf '%-24s %-6s %-11s %s' "$(cut_to 24 "$p")" "$(cut_to 6 "${ty:-?}")" "$label" "${MNT_FROM[$p]}${MNT_SRC[$p]:+ · ${MNT_SRC[$p]}}")")")
+  done
+  items+=(custom "$(t "… Other path (type it)" "… Altro percorso (scrivilo tu)")")
+  v=$(wt --notags --menu "$(t "Folder of THIS HOST to mount in the container. Found in Proxmox storages, /etc/fstab, systemd units and current mounts:" \
+                             "Cartella di QUESTO HOST da montare nel container. Trovate negli storage Proxmox, /etc/fstab, unit systemd e mount attivi:")" 22 78 13 "${items[@]}") || return 1
+  if [[ $v == custom ]]; then
+    hp=$(ask "$(t "Folder on THIS HOST (absolute path):" "Cartella su QUESTO HOST (percorso assoluto):")" "/mnt/" 8) || return 1
+  else
+    hp=${MNT_LIST[$v]}
+    if [[ $(mnt_state "$hp") != mounted ]] && is_netfs "${MNT_TYPE[$hp]}"; then
+      oops "$(t "$hp (${MNT_TYPE[$hp]}) is NOT mounted right now: the container would see an empty folder or fail to start.
+Mount it first (for Proxmox storages: enable it in Datacenter → Storage), then add it." \
+"$hp (${MNT_TYPE[$hp]}) NON è montato adesso: il container vedrebbe una cartella vuota o non partirebbe.
+Montalo prima (per gli storage Proxmox: abilitalo in Datacenter → Storage), poi aggiungilo.")"
+      return 1
+    fi
+  fi
+  printf '%s' "$hp"
+}
+
 add_bind() {
   local hp cp fs ro=0
   while :; do
-    hp=$(ask "$(t "Folder on THIS HOST (absolute path). Network shares (NFS/SMB) must already be mounted on the host, e.g. /mnt/pve/<storage>:" \
-                  "Cartella su QUESTO HOST (percorso assoluto). Le condivisioni di rete (NFS/SMB) devono essere già montate sull'host, es. /mnt/pve/<storage>:")" "${hp:-/mnt/pve/}" 10) || return 0
+    hp=$(pick_host_folder) || return 0
     hp=${hp%/}
     [[ $hp == /?* && $hp != *[:\;,]* ]] || { oops "$(t "Absolute path, not '/', without ':' ';' ','." "Percorso assoluto, non '/', senza ':' ';' ','.")"; continue; }
     if [[ ! -d $hp ]]; then

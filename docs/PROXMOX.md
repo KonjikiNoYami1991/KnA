@@ -37,7 +37,7 @@ Each value is checked when you enter it (id already used by a container or a VM,
 | Template | storage the OS template is downloaded to |
 | Network | bridge, DHCP or a static address with gateway, VLAN |
 | GPU | every render node of the host with vendor and model (Proxmox VE 8.2+) |
-| Host folders | bind mounts, as many as you want: host folder → container folder, read/write or read-only. The filesystem is shown (e.g. `nfs4`). Network shares must be mounted on the host first (*Datacenter → Storage*, or `/etc/fstab`) |
+| Host folders | bind mounts, as many as you want: host folder → container folder, read/write or read-only. The wizard lists the mount points already set up on the host, read from Proxmox storages (`/etc/pve/storage.cfg`), `/etc/fstab`, systemd `.mount` units and current mounts, with type (`nfs4`, `cifs`, `zfs`…), origin and state (mounted / NOT mounted / runtime only); or *Other path*. A network share that is not mounted is refused: mount it first (*Datacenter → Storage*, or `/etc/fstab`) |
 | Folders in CT | video folders on the container's own disk |
 | Upload | where browser uploads go (default: `uploads` in the first writable folder; empty = KnA's data folder) |
 | User mapping | optional, see [§3](#3-video-folders-and-permissions) |
