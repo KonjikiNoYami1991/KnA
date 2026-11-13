@@ -57,7 +57,7 @@ plus the `nvidia*` devices passed through. A VM with PCIe passthrough is simpler
 
 ```bash
 apt install -y git
-git clone https://github.com/KonjikiNoYami1991/TnA.git && cd TnA
+git clone https://github.com/KonjikiNoYami1991/KnA.git && cd KnA
 KNA_MEDIA_ROOTS="/mnt/anime;/mnt/nas" ./deploy/install-linux.sh
 ```
 
@@ -67,7 +67,7 @@ and creates the `kna.service` systemd unit. That unit runs as the `kna` user, wh
 ## 3b. Docker
 
 ```bash
-git clone https://github.com/KonjikiNoYami1991/TnA.git && cd TnA
+git clone https://github.com/KonjikiNoYami1991/KnA.git && cd KnA
 # edit docker-compose.yml: your media folder, RENDER_GID, optional KNA_PASSWORD
 RENDER_GID=$(getent group render | cut -d: -f3) docker compose up -d --build
 ```

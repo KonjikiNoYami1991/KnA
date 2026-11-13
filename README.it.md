@@ -182,7 +182,7 @@ L'immagine usa **solo bind mount** (nessun volume Docker): config, video e uploa
 Contiene l'FFmpeg statico del ramo di release più recente (BtbN), **fdkaac**, i driver VA-API/QSV/Vulkan e Python per il runtime AI.
 
 ```bash
-git clone https://github.com/KonjikiNoYami1991/TnA.git && cd TnA
+git clone https://github.com/KonjikiNoYami1991/KnA.git && cd KnA
 # modifica docker-compose.yml: cartella dei video (bind mount), password consigliata
 mkdir -p ./config /mnt/anime/uploads
 RENDER_GID=$(getent group render | cut -d: -f3) docker compose up -d --build
@@ -275,8 +275,9 @@ src/KnA.App      app desktop Avalonia
 tests/           test xUnit unitari/di integrazione + test headless dell'interfaccia
 deploy/          installer Linux/LXC (systemd)
 docs/            guida Proxmox, screenshot
-legacy/          l'app originale WinForms/.NET Framework 4.8 (v0.9.9), conservata come riferimento
 ```
+
+L'app originale WinForms/.NET Framework 4.8 (TnA 0.9.9) è stata tolta dall'albero nella 3.0; resta nella cronologia git (`git checkout 5e911be -- legacy`).
 
 ## Cosa è cambiato dalla 0.9.9
 

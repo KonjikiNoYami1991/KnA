@@ -14,7 +14,7 @@ public sealed record UpdateCheck(Version Current, ReleaseInfo? Latest, bool IsNe
 /// </summary>
 public static class AppUpdater
 {
-    public const string Repository = "KonjikiNoYami1991/TnA";
+    public const string Repository = "KonjikiNoYami1991/KnA";
 
     public static string RuntimeId =>
         (OperatingSystem.IsWindows() ? "win" : OperatingSystem.IsMacOS() ? "osx" : "linux") + "-" +

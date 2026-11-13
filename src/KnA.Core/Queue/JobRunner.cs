@@ -701,5 +701,5 @@ public static class JobRunner
 public static class AppInfo
 {
     public static string Version { get; } =
-        typeof(AppInfo).Assembly.GetName().Version is { } v ? $"{v.Major}.{v.Minor}.{v.Build}" : "2.0.0";
+        typeof(AppInfo).Assembly.GetName().Version is { } v ? $"{v.Major}.{v.Minor}.{v.Build}" : "3.0.0";
 }

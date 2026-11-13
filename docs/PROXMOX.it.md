@@ -57,7 +57,7 @@ più i dispositivi `nvidia*` passati al container. Una VM con passthrough PCIe �
 
 ```bash
 apt install -y git
-git clone https://github.com/KonjikiNoYami1991/TnA.git && cd TnA
+git clone https://github.com/KonjikiNoYami1991/KnA.git && cd KnA
 KNA_MEDIA_ROOTS="/mnt/anime;/mnt/nas" ./deploy/install-linux.sh
 ```
 
@@ -67,7 +67,7 @@ e crea l'unità systemd `kna.service`, che gira come utente `kna` (membro dei gr
 ## 3b. Docker
 
 ```bash
-git clone https://github.com/KonjikiNoYami1991/TnA.git && cd TnA
+git clone https://github.com/KonjikiNoYami1991/KnA.git && cd KnA
 # modifica docker-compose.yml: la cartella dei video, RENDER_GID, KNA_PASSWORD facoltativa
 RENDER_GID=$(getent group render | cut -d: -f3) docker compose up -d --build
 ```
