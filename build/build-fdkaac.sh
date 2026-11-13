@@ -8,20 +8,22 @@
 #
 # Usage: build/build-fdkaac.sh <target> <output-dir>
 #   target: linux-x64 | linux-arm64 | win-x64 | osx (universal, on macOS)
-# Needs: git, cmake, a C/C++ compiler (mingw-w64 for win-x64, aarch64-linux-gnu-gcc for linux-arm64 on x64).
+# Needs: git, cmake (3.10+), a C/C++ compiler (mingw-w64 for win-x64, aarch64-linux-gnu-gcc for linux-arm64 on x64).
 set -euo pipefail
 TARGET="${1:?target}"
 mkdir -p "${2:?output dir}"
 OUT="$(cd "$2" && pwd)"
 FDK_REF="${FDK_REF:-v2.0.3}"
-FDKAAC_REF="${FDKAAC_REF:-v1.0.6}"
+FDKAAC_REF="${FDKAAC_REF:-v1.0.9}"
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 cd "$WORK"
 git clone -q --depth 1 --branch "$FDK_REF" https://github.com/mstorsjo/fdk-aac.git
 git clone -q --depth 1 --branch "$FDKAAC_REF" https://github.com/nu774/fdkaac.git
 
-CMAKE_ARGS=(-DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF -DCMAKE_INSTALL_PREFIX="$WORK/prefix" -DCMAKE_PREFIX_PATH="$WORK/prefix")
+# fdkaac's own CMake fetches and builds libfdk-aac ($FDK_REF) as a static library with the same toolchain
+# (native, MinGW cross, macOS universal) and links the C++ runtime it needs.
+CMAKE_ARGS=(-DCMAKE_BUILD_TYPE=Release -DBUILD_SHARED_LIBS=OFF -DFDKAAC_BUILD_FDK_AAC=ON -DFDKAAC_FDK_AAC_GIT_TAG="$FDK_REF")
 EXE=fdkaac
 case "$TARGET" in
   linux-x64)
@@ -43,13 +45,12 @@ case "$TARGET" in
   *) echo "unknown target $TARGET" >&2; exit 2 ;;
 esac
 
-cmake -S fdk-aac -B b1 "${CMAKE_ARGS[@]}" -DBUILD_PROGRAMS=OFF >/dev/null
-cmake --build b1 --parallel >/dev/null
-cmake --install b1 >/dev/null
-cmake -S fdkaac -B b2 "${CMAKE_ARGS[@]}" >/dev/null
-cmake --build b2 --parallel >/dev/null
+cmake -S fdkaac -B b "${CMAKE_ARGS[@]}"
+cmake --build b --parallel
 
-cp "b2/$EXE" "$OUT/$EXE"
+found="$(find b -maxdepth 3 -type f -name "$EXE" | head -1)"
+[ -n "$found" ] || { echo "fdkaac executable not produced" >&2; exit 1; }
+cp "$found" "$OUT/$EXE"
 "${STRIP:-strip}" "$OUT/$EXE" 2>/dev/null || true
 {
   echo "fdkaac $FDKAAC_REF (https://github.com/nu774/fdkaac) - Zlib licence"
