@@ -26,7 +26,17 @@ export DEBIAN_FRONTEND=noninteractive
 log "Installing packages for $PRETTY_NAME…"
 apt-get update
 apt-get install -y --no-install-recommends ca-certificates curl ffmpeg fontconfig fonts-dejavu-core \
-  mesa-va-drivers vainfo
+  mesa-va-drivers vainfo libvulkan1 mesa-vulkan-drivers python3 python3-venv
+# Standalone Fraunhofer AAC encoder (Ubuntu multiverse / Debian non-free); KnA can also install its own build from Components.
+apt-get install -y --no-install-recommends fdkaac 2>/dev/null || log "fdkaac not in your repositories: install it later from Settings → Components."
+
+# Upgrade from TnA 2.x: stop the old service and keep its data.
+if systemctl list-unit-files tna.service >/dev/null 2>&1 && [[ -f /etc/systemd/system/tna.service ]]; then
+  log "Migrating the TnA service to KnA…"
+  systemctl disable --now tna.service || true
+  rm -f /etc/systemd/system/tna.service
+fi
+if [[ -d /var/lib/tna && ! -d "$DATA_DIR" ]]; then mv /var/lib/tna "$DATA_DIR"; fi
 
 if ! apt-cache show dotnet-sdk-10.0 >/dev/null 2>&1; then
   # Debian: .NET comes from the Microsoft repository.

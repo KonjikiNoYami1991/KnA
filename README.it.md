@@ -1,17 +1,34 @@
-# KnA - Konjiki no Autoencoder 2.0
+<p align="center"><img src="src/KnA.App/Assets/kna-256.png" width="128" alt="KnA"></p>
+
+# KnA - Konjiki no Autoencoder 3.0
 
 [English](README.md) · **Italiano**
 
-Un hardsubber e encoder quasi automatico by KonjikiNoYami, riscritto da zero per **.NET 10**.
+Encoder e hardsubber quasi automatico by KonjikiNoYami (prima *TnA - Tanoshimi no Autohardsubber*), per **.NET 10**.
 
-Trascina qualche episodio MKV e scegli un profilo o un preset. KnA trova la traccia di sottotitoli giusta, estrae i font allegati,
-imprime i sottotitoli con libass e codifica il video su **CPU o GPU** (NVENC, Quick Sync, AMF, VideoToolbox, VA-API),
-compresi **AV1 e HEVC a 10 bit**, **HDR10 / HDR10+ / Dolby Vision** e la **codifica a segmenti** riprendibile.
+Trascina episodi, cartelle, **Blu-ray (BDMV / ISO) o DVD**, scegli un profilo o un preset. KnA trova i sottotitoli giusti, estrae i font,
+imprime i sottotitoli con libass e codifica su **CPU o GPU** (NVENC, Quick Sync, AMF, VideoToolbox, VA-API, **Vulkan**):
+H.264, HEVC, AV1, VP9, VVC, MPEG-2 e i codec professionali **ProRes, DNxHR, CineForm, FFV1, Ut Video, FFVHuff, JPEG 2000, v210**,
+con **HDR10 / HDR10+ / Dolby Vision**, codifica a segmenti riprendibile, **upscaling su GPU o con modelli neurali** e un **assistente LLM** locale.
+
+### Novità della 3.0
+- **Nuovo nome e nuova icona** (una K dorata: l'asta è una pellicola, le diagonali convergono nel "collo di bottiglia" di un autoencoder).
+- **Codec professionali e lossless**, scelta del **codec audio** (AAC, HE-AAC, Opus, FLAC, ALAC, PCM, AC-3, E-AC-3, TrueHD, DTS…).
+- **Il miglior AAC senza chiedere nulla**: libfdk_aac → AudioToolbox → programma **fdkaac** incluso → AAC di FFmpeg.
+- **Build FFmpeg personalizzate**: ogni lavoro usa la build che ha i suoi encoder; l'FFmpeg scaricato è quello del **ramo di release più recente**.
+- **Errore chiaro se la GPU scelta non ha l'encoder** (o non ha superato il test), invece di un ripiego silenzioso o di un errore a metà.
+- **Blu-ray / DVD / ISO**: un lavoro per ogni titolo (episodio), lingue delle tracce lette dalla playlist.
+- **Web**: tutto il file system (o le radici scelte), **file manager con download** (anche cartelle in ZIP), **upload riprendibili**, **cartelle monitorate per preset**.
+- **Docker solo con bind mount**, nessun volume.
+- **Drag & drop intelligente** su desktop e web.
+- **AI**: assistente con Ollama, LM Studio, Unsloth Studio, llama.cpp, vLLM…; upscaling Anime4K / FSRCNNX su GPU e Real-ESRGAN via PyTorch.
 
 | Edizione web (Docker / Proxmox / qualsiasi browser) | Edizione desktop (Windows / macOS / Linux) |
 |---|---|
 | ![Interfaccia web](docs/screenshots/web-dark.png) | ![Interfaccia desktop](docs/screenshots/desktop-dark.png) |
 | ![Editor web: taglio visivo](docs/screenshots/web-editor-trim-it.png) | ![Editor desktop: tracce](docs/screenshots/desktop-editor-tracks-it.png) |
+| ![File manager web](docs/screenshots/web-files.png) | ![Cartelle monitorate](docs/screenshots/web-watch-folders.png) |
+| ![Upload con abbinamento intelligente](docs/screenshots/web-upload.png) | ![Impostazioni AI](docs/screenshots/web-ai-settings.png) |
 
 ## Due interfacce, un solo motore
 
@@ -26,19 +43,87 @@ L'interfaccia è in **italiano** se il sistema (o il browser) è in italiano, al
 
 ## Funzioni
 
-### Codifica
-- **Profili**: Universale MKV (H.264/HEVC/AV1), Streaming/Web MP4, Blu-ray AAC / AC-3, Workraw, XviD+MP3,
-  Remux→MP4, Remux→MKV, **Immagini** (PNG / JPEG / TIFF / WebP / BMP), **Demux** e keyframe per Aegisub.
-- **Encoder hardware** (ognuno viene verificato con una vera codifica di prova, non solo letto da `ffmpeg -encoders`):
+### Codec
 
-  | Backend | H.264 | HEVC | AV1 | 10 bit |
-  |---|---|---|---|---|
-  | CPU (x264 / x265 / SVT-AV1) | ✓ | ✓ | ✓ | HEVC, AV1 |
-  | NVIDIA NVENC | ✓ | ✓ | ✓ (RTX 40/50) | HEVC, AV1 |
-  | Intel Quick Sync | ✓ | ✓ | ✓ (Arc / Core Ultra) | HEVC, AV1 |
-  | AMD AMF (Windows) | ✓ | ✓ | ✓ (RDNA 3+) | HEVC, AV1 |
-  | VA-API (Linux, Intel/AMD) | ✓ | ✓ | ✓ (se la GPU lo supporta) | HEVC, AV1 |
-  | Apple VideoToolbox | ✓ | ✓ | — (Apple Silicon non ha un encoder AV1 hardware) | HEVC |
+| Gruppo | Codec | Note |
+|---|---|---|
+| Distribuzione | H.264, HEVC, AV1, VP9, VVC (H.266), MPEG-2, XviD | 10 bit per HEVC / AV1 / VP9 / VVC |
+| Professionali (profilo *Professionale / Lossless*) | ProRes (Proxy…4444 XQ), DNxHR (LB…444), CineForm | MOV / MXF / MKV / AVI, profilo automatico dalla qualità o scelto a mano, croma 4:2:2 / 4:4:4 |
+| Lossless | FFV1 (v3, slice CRC), Ut Video, FFVHuff, JPEG 2000, v210 non compresso | profondità di bit della sorgente o scelta (8–16) |
+| Audio | AAC, HE-AAC, Opus, MP3, Vorbis, AC-3, E-AC-3, FLAC, ALAC, WavPack, TrueHD, DTS, PCM 16/24/32f | *Automatico* = come il profilo, copia quando possibile; bitrate per coppia di canali |
+
+**Encoder alternativi**: per ogni codec/backend KnA prova più encoder in ordine (AV1 su CPU: SVT-AV1 → libaom → rav1e; JPEG 2000: OpenJPEG → nativo)
+e usa il primo che supera una **codifica di prova reale**.
+
+**GPU** (tutte verificate con una codifica di prova):
+
+| Backend | Codec |
+|---|---|
+| NVIDIA NVENC | H.264, HEVC, AV1 (RTX 40/50) |
+| Intel Quick Sync | H.264, HEVC, AV1, VP9, MPEG-2 |
+| AMD AMF | H.264, HEVC, AV1 |
+| VA-API (Linux) | H.264, HEVC, AV1, VP9, MPEG-2 |
+| Apple VideoToolbox | H.264, HEVC, **ProRes** |
+| **Vulkan** (qualsiasi GPU, FFmpeg 7.1+ / 8.0+ / 8.1+) | H.264, HEVC, AV1, **FFV1**, ProRes |
+
+Se il backend scelto non ha un encoder per quel codec, o l'encoder non ha superato il test su quel computer, il lavoro viene segnalato
+**in errore prima di iniziare**, con l'elenco dei backend disponibili.
+
+**AAC di qualità senza configurare nulla**: libfdk_aac non può essere distribuito dentro un FFmpeg GPL, quindi KnA usa, nell'ordine,
+`libfdk_aac` (se una tua build personalizzata ce l'ha) → `aac_at` (AudioToolbox su macOS) → il programma **fdkaac**
+(Fraunhofer FDK AAC + frontend Zlib, distribuibile da solo: incluso nei pacchetti di KnA e nell'immagine Docker, installabile dai Componenti;
+KnA lo usa come processo separato, ffmpeg → WAV → fdkaac) → l'AAC interno di FFmpeg. Anche l'**HE-AAC** passa da qui.
+
+**FFmpeg personalizzati**: in *Impostazioni → Avanzate* puoi elencare altre build (es. una compilata con libfdk_aac, o una nightly con gli encoder Vulkan)
+e i percorsi di ffprobe, fdkaac, dovi_tool, hdr10plus_tool, vspipe, scxvid. Il rilevamento prova tutte le build; ogni lavoro usa quella che ha
+il suo encoder (prima le personalizzate, preferendo quella con libfdk_aac). Il component manager scarica la **build BtbN del ramo di release più recente**
+(es. 9.0) o, se lo scegli, master.
+
+### Blu-ray, DVD e immagini ISO
+- Cartelle **BDMV** (o la cartella che le contiene), cartelle **VIDEO_TS** e file **.iso** si aggiungono come qualsiasi video.
+- Ogni **titolo lungo come un episodio** diventa un lavoro (`Disco - playlist 00002`), oppure solo il titolo principale; le playlist duplicate vengono scartate.
+- Lettura: protocollo `bluray:` di FFmpeg (libbluray, anche ISO) e demuxer `dvdvideo` (FFmpeg 7+, anche ISO). Se mancano, KnA legge
+  **da solo** le cartelle: parser MPLS/CLPI per i Blu-ray (le clip vengono unite con i punti di inizio/fine giusti) e IFO per i DVD.
+- Le **lingue** delle tracce dei Blu-ray vengono lette dalla playlist (il flusso TS non le contiene).
+
+### Upscaling e AI
+| Metodo | Dove gira | Per cosa |
+|---|---|---|
+| Standard (Lanczos) | CPU | riduce soltanto, come prima |
+| EWA Lanczos (libplacebo) | qualsiasi GPU Vulkan | ingrandimento di qualità |
+| **Anime4K** modi A/B/C/A+A | GPU (libplacebo) | anime, in tempo quasi reale |
+| **FSRCNNX** | GPU (libplacebo) | rete neurale piccola, anche live action |
+| **Neurale**: Real-ESRGAN, AnimeVideo v3, qualsiasi modello *spandrel* (.pth/.safetensors) o .onnx | PyTorch su CUDA (RTX 50 inclusa), ROCm, Apple MPS, CPU | qualità massima |
+
+Gli shader e il **runtime AI** (ambiente Python privato con la build PyTorch giusta per la tua GPU) si installano da *Componenti*; i modelli ufficiali Real-ESRGAN
+si scaricano al primo uso. Il sidecar `ai/kna_upscale.py` decodifica la sorgente con i filtri di KnA, esegue il modello e passa i fotogrammi RGB a 16 bit
+all'FFmpeg che codifica: sottotitoli impressi, audio, capitoli, codifica a segmenti e anteprime funzionano come sempre.
+
+**Assistente LLM** (*Impostazioni → AI*): Ollama, LM Studio, **Unsloth Studio**, llama.cpp, vLLM, LocalAI, Jan o un servizio cloud compatibile OpenAI.
+- *Chiedi*: "MP4 leggero per Telegram sotto i 2 GB, 720p, sottotitoli impressi" → impostazioni proposte.
+- *Analizza i fotogrammi*: un modello **vision** (es. `qwen2.5vl`, `gemma3`, `llava`) guarda alcuni fotogrammi e propone filtri e upscaler.
+
+L'LLM **non codifica il video** (non è quello che sa fare): sceglie le impostazioni. La risposta è un JSON vincolato alle opzioni di KnA,
+validato campo per campo e confrontato con il rilevamento hardware; non cambia nulla finché non premi *Usa queste impostazioni*.
+
+### Edizione web: file, upload, download, cartelle monitorate
+- **Tutto il file system** del sistema su cui gira (tutti i dischi su Windows, `/` altrove) oppure solo le radici di `KNA_MEDIA_ROOTS`,
+  più radici in **sola lettura** (`KNA_READONLY_ROOTS`). Senza password KnA lo segnala nel log.
+- **File manager**: sfoglia, crea cartelle, **scarica** file (riprendibili) o cartelle intere (**ZIP** in streaming), aggiungi alla coda.
+- **Upload** dal browser a blocchi da 16 MB, **riprendibili** dopo una disconnessione, direttamente nella cartella di destinazione;
+  i video vanno in coda con il preset scelto, sottotitoli/audio/font si agganciano al loro video.
+- **Cartelle monitorate**: ogni cartella ha il suo **preset**, cartella di uscita, sottocartelle, avvio automatico della coda e cosa fare dopo
+  (lasciare, spostare in `_done`, eliminare). La scansione funziona anche su NAS e bind mount; un file viene preso quando smette di crescere.
+- Il risultato di ogni lavoro si scarica dal pulsante ⬇ della coda.
+
+### Drag & drop intelligente
+Desktop e web: video, script, dischi e cartelle vanno in coda; **sottotitoli, audio e font** si agganciano al lavoro su cui li rilasci
+o al video con lo stesso nome (`Ep01.ita.ass` → `Ep01.mkv`; in hardsub il sottotitolo diventa quello impresso); i **preset** `.json` vengono importati;
+duplicati, file non supportati e cartelle enormi vengono mostrati prima di procedere.
+
+### Codifica
+- **Profili**: Universale (H.264/HEVC/AV1/VP9/VVC/MPEG-2), Streaming/Web, **Professionale / Lossless**, Blu-ray AAC / AC-3, Workraw, XviD+MP3,
+  Remux→MP4, Remux→MKV, **Immagini** (PNG / JPEG / TIFF / WebP / BMP), **Demux** e keyframe per Aegisub.
 
 - **Codifica a segmenti** (stile av1an): il video viene diviso sui keyframe, i segmenti vengono codificati in parallelo
   e un lavoro fermato **riparte dall'ultimo segmento completato**. Ideale per gli encoder lenti su CPU (x265, SVT-AV1).
@@ -93,11 +178,18 @@ Preset integrati, preset personali salvati da qualsiasi file e una **procedura g
 
 ### Docker (server senza interfaccia, es. Proxmox + iGPU)
 
+L'immagine usa **solo bind mount** (nessun volume Docker): config, video e upload sono cartelle vere sull'host.
+Contiene l'FFmpeg statico del ramo di release più recente (BtbN), **fdkaac**, i driver VA-API/QSV/Vulkan e Python per il runtime AI.
+
 ```bash
 git clone https://github.com/KonjikiNoYami1991/TnA.git && cd TnA
-# modifica docker-compose.yml: cartella dei video, password facoltativa
+# modifica docker-compose.yml: cartella dei video (bind mount), password consigliata
+mkdir -p ./config /mnt/anime/uploads
 RENDER_GID=$(getent group render | cut -d: -f3) docker compose up -d --build
 ```
+
+Argomenti di build: `FFMPEG=btbn-release` (predefinito) · `btbn-master` · `distro`; `FDKAAC=1`.
+Per un LLM sull'host (Ollama, LM Studio…) usa `http://host.docker.internal:<porta>/v1`.
 
 Poi apri `http://<host>:8585`. Vedi **[docs/PROXMOX.it.md](docs/PROXMOX.it.md)** per il passthrough della GPU in un LXC,
 l'installazione nativa senza Docker (`deploy/install-linux.sh`) e tutte le variabili d'ambiente.
@@ -108,8 +200,9 @@ l'installazione nativa senza Docker (`deploy/install-linux.sh`) e tutte le varia
 dotnet run --project src/KnA.App -c Release
 ```
 
-Su Windows e Linux, *Impostazioni → Aggiornamenti e componenti* installa FFmpeg (build statica di BtbN, GPL: libass, x264, x265,
-SVT-AV1, NVENC, QSV, AMF, VA-API). Su macOS esegui `brew install ffmpeg`.
+Su Windows e Linux, *Impostazioni → Aggiornamenti e componenti* installa FFmpeg (build statica di BtbN del ramo di release più recente, GPL:
+libass, x264, x265, SVT-AV1, NVENC, QSV, AMF, VA-API, Vulkan, libplacebo), fdkaac, gli shader Anime4K/FSRCNNX e il runtime AI.
+Su macOS esegui `brew install ffmpeg` (l'AAC usa AudioToolbox).
 
 ### Edizione web sul tuo PC
 
@@ -126,6 +219,22 @@ dotnet run --project src/KnA.Server -c Release -- --open
 
 Con un frameserver la decodifica avviene nello script, quindi senza decodifica hardware; l'encoder può comunque essere quello della GPU.
 
+## Variabili d'ambiente
+
+Tutte accettano anche il vecchio prefisso `TNA_`; la cartella dati `TnA` viene rinominata in `KnA` al primo avvio.
+
+| Variabile | Uso |
+|---|---|
+| `KNA_DATA_DIR` | cartella dati (impostazioni, preset, coda, log, modelli AI) |
+| `KNA_MEDIA_ROOTS` | radici in lettura/scrittura, separate da `;` (predefinito: tutto il file system; `/media` in Docker) |
+| `KNA_READONLY_ROOTS` | radici in sola lettura |
+| `KNA_UPLOAD_DIR` · `KNA_MAX_UPLOAD_GB` | destinazione e limite degli upload |
+| `KNA_PASSWORD` | password HTTP Basic dell'interfaccia web |
+| `KNA_ALLOW_ADVANCED` | consente di modificare dal browser FFmpeg, build personalizzate, argomenti extra, Python |
+| `KNA_FFMPEG` · `KNA_FDKAAC` · `KNA_VSPIPE` · `KNA_AI_SCRIPT` | percorsi dei programmi |
+| `KNA_VULKAN_DEVICE` | GPU Vulkan per libplacebo (indice o parte del nome; `llvmpipe` = CPU) |
+| `KNA_URLS` · `KNA_LANG` · `KNA_LOCK_COMPONENTS` · `KNA_ALLOW_POWER_ACTIONS` | come prima |
+
 ## Compilazione e test
 
 Servono l'[SDK .NET 10](https://dotnet.microsoft.com/download) e, per i test di integrazione, FFmpeg nel PATH.
@@ -135,9 +244,11 @@ dotnet build KnA.slnx
 dotnet test KnA.slnx
 ```
 
-I test creano media di prova con FFmpeg (video anamorfico, audio 5.1, sottotitoli ASS/SRT, font, una clip HDR10, un transport stream)
-ed eseguono lavori reali: hardsub, softsub AV1 10 bit, remux, keyframe, tracce esterne con ritardo, taglio dopo l'importazione, demux, immagini,
-HDR10, codifica a segmenti con ripresa, sorgenti VapourSynth (se `vspipe` è disponibile), anteprime, più il rendering headless delle finestre desktop.
+I test creano media di prova con FFmpeg (video anamorfico, audio 5.1, sottotitoli ASS/SRT, font, una clip HDR10, un transport stream,
+un **Blu-ray** con playlist MPLS, un **DVD** con IFO e VOB divisi, una **ISO**) ed eseguono lavori reali: hardsub, softsub, remux, keyframe, tracce esterne,
+taglio, demux, immagini, HDR10, codifica a segmenti, tutti i **codec professionali**, i **codec audio**, la pipeline **fdkaac**, cartelle monitorate,
+drag & drop, l'assistente LLM (server simulato), più il rendering headless delle finestre desktop.
+Facoltativi: `KNA_TEST_VULKAN=1` (+ `KNA_VULKAN_DEVICE=llvmpipe` senza GPU) prova Anime4K, `KNA_TEST_PYTHON=<python con torch>` prova Real-ESRGAN.
 
 Build autonome:
 
@@ -148,12 +259,17 @@ dotnet publish src/KnA.Server -c Release -r linux-x64 --self-contained
 ```
 
 Il push di un tag `v*` avvia `.github/workflows/release.yml`, che compila per tutte le piattaforme e prepara una release **in bozza**
-con i pacchetti cercati dall'aggiornamento interno (`KnA-desktop-<rid>.zip`, `KnA-server-<rid>.zip`).
+con i pacchetti cercati dall'aggiornamento interno (`KnA-desktop-<rid>.zip`, `KnA-server-<rid>.zip`), **fdkaac** incluso in ogni pacchetto
+(e pubblicato a parte per il component manager) e `KnA.app` con l'icona per macOS.
 
 ## Struttura del progetto
 
 ```
-src/KnA.Core     motore (senza interfaccia): analisi, piano tracce, filtri, HDR, comandi, codifica a segmenti, coda, anteprime, preset, aggiornamenti
+src/KnA.Core     motore (senza interfaccia): analisi, piano tracce, filtri, HDR, comandi, codifica a segmenti, coda, anteprime, preset, aggiornamenti,
+                 dischi (Media/Discs), cartelle monitorate e drag & drop (Queue), AI (Ai: LLM, upscaler)
+ai/              sidecar Python dell'upscaler neurale
+branding/        icona (SVG sorgente, script di rendering, .ico/.icns)
+build/           build-fdkaac.sh
 src/KnA.Server   API ASP.NET Core + interfaccia web (wwwroot), punto d'ingresso Docker
 src/KnA.App      app desktop Avalonia
 tests/           test xUnit unitari/di integrazione + test headless dell'interfaccia

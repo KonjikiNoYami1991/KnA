@@ -12,16 +12,41 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 10.0.x
-      - name: Install FFmpeg
-        run: sudo apt-get update && sudo apt-get install -y ffmpeg fonts-dejavu-core
+      # FFmpeg + fonts; Mesa's lavapipe gives libplacebo a (CPU) Vulkan device for the Anime4K test;
+      # Ubuntu's fdkaac exercises the external AAC pipeline (its library has no HE-AAC: the fallback is tested too).
+      - name: Install FFmpeg, Vulkan (lavapipe) and fdkaac
+        run: sudo apt-get update && sudo apt-get install -y ffmpeg fonts-dejavu-core mesa-vulkan-drivers fdkaac
       - run: dotnet build KnA.slnx -c Release
       - run: dotnet test KnA.slnx -c Release --no-build
+        env:
+          KNA_TEST_VULKAN: "1"
+          KNA_VULKAN_DEVICE: llvmpipe
+          KNA_AI_SCRIPT: ${{ github.workspace }}/ai/kna_upscale.py
+
+  web-ui:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: JavaScript syntax
+        run: for f in src/KnA.Server/wwwroot/*.js; do node --check "$f"; done
 
   docker:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
       - run: docker build -t kna .
+      - name: Smoke test
+        run: |
+          mkdir -p /tmp/kna/config /tmp/kna/media
+          docker run -d --name kna -p 8585:8585 \
+            --mount type=bind,src=/tmp/kna/config,dst=/config --mount type=bind,src=/tmp/kna/media,dst=/media kna
+          for i in $(seq 1 60); do curl -fsS http://127.0.0.1:8585/api/info && break; sleep 2; done
+          docker exec kna ffmpeg -hide_banner -version | head -1
+          docker exec kna /app/tools/fdkaac --help 2>&1 | head -1
+          docker inspect kna --format '{{json .Mounts}}' | grep -v '"Type":"volume"'
 
   publish:
     needs: test

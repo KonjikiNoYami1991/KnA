@@ -92,7 +92,13 @@ Usa **Rileva di nuovo** dopo aver cambiato GPU o driver.
 | Variabile | Predefinito | Significato |
 |---|---|---|
 | `KNA_URLS` | `http://0.0.0.0:8585` | Indirizzo di ascolto |
-| `KNA_MEDIA_ROOTS` | `/media` (Docker) | Cartelle che si possono sfogliare, separate da `;` |
+| `KNA_MEDIA_ROOTS` | `/media` (Docker), tutto il file system (nativo) | Cartelle in lettura/scrittura che si possono sfogliare, separate da `;` |
+| `KNA_READONLY_ROOTS` | – | Radici in più che si possono sfogliare, scaricare e codificare ma mai scrivere |
+| `KNA_UPLOAD_DIR` | `/media/uploads` (Docker), cartella dati | Destinazione predefinita degli upload dal browser |
+| `KNA_MAX_UPLOAD_GB` | nessun limite | Upload più grande accettato |
+| `KNA_FDKAAC` | auto | Percorso dell'encoder `fdkaac` |
+| `KNA_VULKAN_DEVICE` | auto | GPU Vulkan per libplacebo / Anime4K (indice o parte del nome; `llvmpipe` = CPU) |
+| `KNA_AI_SCRIPT` | incluso | Percorso di `kna_upscale.py` (upscaler neurale) |
 | `KNA_DATA_DIR` | `/config` (Docker), `/var/lib/kna` | Impostazioni, log, file temporanei |
 | `KNA_PASSWORD` | – | Attiva l'autenticazione HTTP Basic (qualsiasi nome utente) |
 | `KNA_ALLOW_ADVANCED` | `false` | Permette di modificare dal browser il percorso di FFmpeg e gli argomenti extra |

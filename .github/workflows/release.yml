@@ -1,8 +1,9 @@
 name: Release
 
-# Runs only when a version tag is pushed (git tag v2.0.0 && git push origin v2.0.0).
-# Builds self-contained packages named as the in-app updater expects (KnA-{desktop|server}-{rid}.zip)
-# and attaches them to a *draft* release, which is published by hand after a check.
+# Runs only when a version tag is pushed (git tag v3.0.0 && git push origin v3.0.0).
+# Builds self-contained packages named as the in-app updater expects (KnA-{desktop|server}-{rid}.zip),
+# bundles the standalone fdkaac encoder (best AAC, redistributable on its own), adds a macOS KnA.app
+# with its icon, and attaches everything to a *draft* release, published by hand after a check.
 on:
   push:
     tags: ["v*"]
@@ -11,17 +12,52 @@ permissions:
   contents: write
 
 jobs:
-  build:
+  # ---------------------------------------------------------------- fdkaac (Fraunhofer AAC, standalone program)
+  fdkaac:
     strategy:
       fail-fast: false
       matrix:
         include:
-          - { os: windows-latest, rid: win-x64 }
-          - { os: windows-latest, rid: win-arm64 }
-          - { os: macos-latest, rid: osx-arm64 }
-          - { os: macos-latest, rid: osx-x64 }
-          - { os: ubuntu-24.04, rid: linux-x64 }
-          - { os: ubuntu-24.04-arm, rid: linux-arm64 }
+          - { os: ubuntu-24.04, target: linux-x64 }
+          - { os: ubuntu-24.04, target: win-x64 }
+          - { os: ubuntu-24.04-arm, target: linux-arm64 }
+          - { os: macos-latest, target: osx }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Toolchain
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y cmake ${{ matrix.target == 'win-x64' && 'mingw-w64' || '' }}
+      - name: Build
+        run: bash build/build-fdkaac.sh ${{ matrix.target }} out
+      - name: Package for the component manager
+        run: |
+          cd out
+          case "${{ matrix.target }}" in
+            win-x64|osx) zip -q "../fdkaac-${{ matrix.target }}.zip" * ;;
+            *) tar -czf "../fdkaac-${{ matrix.target }}.tar.gz" * ;;
+          esac
+      - uses: actions/upload-artifact@v4
+        with:
+          name: fdkaac-${{ matrix.target }}
+          path: |
+            out/
+            fdkaac-${{ matrix.target }}.*
+
+  # ---------------------------------------------------------------- KnA packages
+  build:
+    needs: fdkaac
+    if: ${{ !cancelled() }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: windows-latest, rid: win-x64, fdk: win-x64 }
+          - { os: windows-latest, rid: win-arm64, fdk: win-x64 }   # x64 emulation on Windows on Arm
+          - { os: macos-latest, rid: osx-arm64, fdk: osx }
+          - { os: macos-latest, rid: osx-x64, fdk: osx }
+          - { os: ubuntu-24.04, rid: linux-x64, fdk: linux-x64 }
+          - { os: ubuntu-24.04-arm, rid: linux-arm64, fdk: linux-arm64 }
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -36,6 +72,20 @@ jobs:
         run: |
           dotnet publish src/KnA.App -c Release -r ${{ matrix.rid }} --self-contained -p:Version=$VERSION -o out/desktop
           dotnet publish src/KnA.Server -c Release -r ${{ matrix.rid }} --self-contained -p:Version=$VERSION -o out/server
+      - name: fdkaac
+        uses: actions/download-artifact@v4
+        continue-on-error: true
+        with:
+          name: fdkaac-${{ matrix.fdk }}
+          path: fdk
+      - name: Bundle fdkaac
+        shell: bash
+        run: |
+          if [ -d fdk/out ]; then
+            for d in out/desktop out/server; do mkdir -p "$d/tools" && cp fdk/out/* "$d/tools/"; done
+          else
+            echo "::warning::fdkaac not available for ${{ matrix.rid }}: AAC falls back to FFmpeg's encoder"
+          fi
       - name: Zip (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
@@ -47,13 +97,40 @@ jobs:
         run: |
           (cd out/desktop && zip -qry "$GITHUB_WORKSPACE/KnA-desktop-${{ matrix.rid }}.zip" .)
           (cd out/server && zip -qry "$GITHUB_WORKSPACE/KnA-server-${{ matrix.rid }}.zip" .)
+      - name: macOS app bundle (icon, Finder, Dock)
+        if: runner.os == 'macOS'
+        run: |
+          app=KnA.app
+          mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
+          cp -R out/desktop/. "$app/Contents/MacOS/"
+          cp branding/kna.icns "$app/Contents/Resources/kna.icns"
+          cat > "$app/Contents/Info.plist" <<EOF
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0"><dict>
+            <key>CFBundleName</key><string>KnA</string>
+            <key>CFBundleDisplayName</key><string>KnA · Konjiki no Autoencoder</string>
+            <key>CFBundleIdentifier</key><string>io.github.konjikinoyami1991.kna</string>
+            <key>CFBundleVersion</key><string>$VERSION</string>
+            <key>CFBundleShortVersionString</key><string>$VERSION</string>
+            <key>CFBundleExecutable</key><string>KnA</string>
+            <key>CFBundleIconFile</key><string>kna.icns</string>
+            <key>CFBundlePackageType</key><string>APPL</string>
+            <key>LSMinimumSystemVersion</key><string>12.0</string>
+            <key>NSHighResolutionCapable</key><true/>
+          </dict></plist>
+          EOF
+          sed -i '' 's/^          //' "$app/Contents/Info.plist"
+          codesign --force --deep --sign - "$app" || true
+          ditto -c -k --keepParent "$app" "KnA-macOS-${{ matrix.rid }}.app.zip"
       - uses: actions/upload-artifact@v4
         with:
           name: kna-${{ matrix.rid }}
           path: KnA-*.zip
 
   release:
-    needs: build
+    needs: [fdkaac, build]
+    if: ${{ !cancelled() && needs.build.result == 'success' }}
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/download-artifact@v4
@@ -64,4 +141,5 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "$GITHUB_REF_NAME" dist/*.zip --repo "$GITHUB_REPOSITORY" --draft --generate-notes --title "KnA $GITHUB_REF_NAME"
+          shopt -s nullglob
+          gh release create "$GITHUB_REF_NAME" dist/*.zip dist/fdkaac-*.tar.gz --repo "$GITHUB_REPOSITORY" --draft --generate-notes --title "KnA $GITHUB_REF_NAME"

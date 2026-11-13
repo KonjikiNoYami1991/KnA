@@ -100,6 +100,9 @@ public static class ShellIntegration
 
     private static string DataHome => Environment.GetEnvironmentVariable("XDG_DATA_HOME") is { Length: > 0 } x
         ? x : Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), ".local", "share");
+    /// <summary>The KnA icon shipped next to the executable (falls back to a theme icon).</summary>
+    private static string IconPath => File.Exists(Path.Combine(AppContext.BaseDirectory, "kna.png")) ? Path.Combine(AppContext.BaseDirectory, "kna.png") : "video-x-generic";
+
     private static string DesktopFile => Path.Combine(DataHome, "applications", "kna.desktop");
     private static string DolphinFile => Path.Combine(DataHome, "kio", "servicemenus", "kna.desktop");
     private static string NautilusDir => Path.Combine(DataHome, "nautilus", "scripts");
@@ -114,7 +117,7 @@ public static class ShellIntegration
         var actions = entries.Skip(1).Select((e, i) => (Id: "preset" + i, e)).ToList();
         var sb = new StringBuilder();
         sb.AppendLine("[Desktop Entry]").AppendLine("Type=Application").AppendLine("Name=KnA - Konjiki no Autoencoder")
-          .AppendLine("Comment=" + L.T("Add to the KnA queue")).AppendLine("Exec=" + Exec(exe, "")).AppendLine("Icon=video-x-generic")
+          .AppendLine("Comment=" + L.T("Add to the KnA queue")).AppendLine("Exec=" + Exec(exe, "")).AppendLine("Icon=" + IconPath)
           .AppendLine("Terminal=false").AppendLine("Categories=AudioVideo;Video;").AppendLine("MimeType=" + Mime);
         if (actions.Count > 0) sb.AppendLine("Actions=" + string.Join(";", actions.Select(a => a.Id)) + ";");
         foreach (var (id, e) in actions)
@@ -127,7 +130,7 @@ public static class ShellIntegration
         kde.AppendLine("[Desktop Entry]").AppendLine("Type=Service").AppendLine("MimeType=video/*;")
            .AppendLine("Actions=" + string.Join(";", entries.Select((_, i) => "kna" + i)) + ";").AppendLine("X-KDE-Submenu=KnA");
         for (int i = 0; i < entries.Count; i++)
-            kde.AppendLine().AppendLine($"[Desktop Action kna{i}]").AppendLine("Name=" + entries[i].Name).AppendLine("Icon=video-x-generic").AppendLine("Exec=" + Exec(exe, entries[i].Arguments));
+            kde.AppendLine().AppendLine($"[Desktop Action kna{i}]").AppendLine("Name=" + entries[i].Name).AppendLine("Icon=" + IconPath).AppendLine("Exec=" + Exec(exe, entries[i].Arguments));
         File.WriteAllText(DolphinFile, kde.ToString());
         TryChmod(DolphinFile);
 
