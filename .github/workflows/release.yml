@@ -97,6 +97,28 @@ jobs:
         run: |
           (cd out/desktop && zip -qry "$GITHUB_WORKSPACE/KnA-desktop-${{ matrix.rid }}.zip" .)
           (cd out/server && zip -qry "$GITHUB_WORKSPACE/KnA-server-${{ matrix.rid }}.zip" .)
+      # Portable desktop edition: same files plus portable.txt, so settings, presets, queue, logs and the
+      # FFmpeg/AI components downloaded from the app live in a "data" folder next to the program.
+      - name: Portable marker
+        if: runner.os != 'macOS'
+        shell: bash
+        run: |
+          mkdir -p portable && cp -R out/desktop portable/KnA
+          cat > portable/KnA/portable.txt <<'EOF'
+          KnA portable: settings, presets, queue, logs and downloaded components (FFmpeg, shaders, AI models)
+          are kept in the "data" folder next to this file. Delete this file to use the per-user folder instead.
+
+          KnA portable: impostazioni, preset, coda, log e componenti scaricati (FFmpeg, shader, modelli AI)
+          stanno nella cartella "data" accanto a questo file. Elimina questo file per usare la cartella dell'utente.
+          EOF
+          sed -i.bak 's/^          //' portable/KnA/portable.txt && rm portable/KnA/portable.txt.bak
+      - name: Portable zip (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: Compress-Archive -Path portable/KnA -DestinationPath KnA-portable-${{ matrix.rid }}.zip
+      - name: Portable tarball (Linux)
+        if: runner.os == 'Linux'
+        run: tar -C portable -czf KnA-portable-${{ matrix.rid }}.tar.gz KnA
       - name: macOS app bundle (icon, Finder, Dock)
         if: runner.os == 'macOS'
         run: |
@@ -126,7 +148,9 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: kna-${{ matrix.rid }}
-          path: KnA-*.zip
+          path: |
+            KnA-*.zip
+            KnA-*.tar.gz
 
   release:
     needs: [fdkaac, build]
@@ -142,4 +166,4 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           shopt -s nullglob
-          gh release create "$GITHUB_REF_NAME" dist/*.zip dist/fdkaac-*.tar.gz --repo "$GITHUB_REPOSITORY" --draft --generate-notes --title "KnA $GITHUB_REF_NAME"
+          gh release create "$GITHUB_REF_NAME" dist/*.zip dist/*.tar.gz --repo "$GITHUB_REPOSITORY" --draft --generate-notes --title "KnA $GITHUB_REF_NAME"

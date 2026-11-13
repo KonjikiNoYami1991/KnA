@@ -193,3 +193,37 @@ public class OutputNamingTests
         finally { Directory.Delete(dir, true); }
     }
 }
+
+public class PortableModeTests
+{
+    [Fact]
+    public void Without_marker_the_program_is_not_portable()
+    {
+        var dir = Directory.CreateTempSubdirectory("kna-portable-").FullName;
+        try { Assert.Null(KnA.Core.Settings.AppEnv.PortableDataDirectory(dir)); }
+        finally { Directory.Delete(dir, true); }
+    }
+
+    [Fact]
+    public void Marker_puts_data_next_to_the_program()
+    {
+        var dir = Directory.CreateTempSubdirectory("kna-portable-").FullName;
+        try
+        {
+            File.WriteAllText(Path.Combine(dir, KnA.Core.Settings.AppEnv.PortableMarker), "");
+            var data = KnA.Core.Settings.AppEnv.PortableDataDirectory(dir);
+            Assert.Equal(Path.Combine(dir, "data"), data);
+            Assert.True(Directory.Exists(data));
+            Assert.Empty(Directory.GetFiles(data!));
+        }
+        finally { Directory.Delete(dir, true); }
+    }
+
+    [Fact]
+    public void Forced_portable_works_without_marker()
+    {
+        var dir = Directory.CreateTempSubdirectory("kna-portable-").FullName;
+        try { Assert.Equal(Path.Combine(dir, "data"), KnA.Core.Settings.AppEnv.PortableDataDirectory(dir, forced: true)); }
+        finally { Directory.Delete(dir, true); }
+    }
+}

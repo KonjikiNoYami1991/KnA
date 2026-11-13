@@ -176,6 +176,21 @@ Built-in presets, your own presets saved from any file, and a **wizard** that as
 
 ## Quick start
 
+### Download (portable)
+
+Get the latest package from **[Releases](https://github.com/KonjikiNoYami1991/KnA/releases/latest)**:
+
+| System | Portable package | Run |
+|---|---|---|
+| Windows x64 / Arm | `KnA-portable-win-x64.zip` · `KnA-portable-win-arm64.zip` | unzip anywhere (USB stick too), open `KnA\KnA.exe` |
+| Linux x64 / arm64 | `KnA-portable-linux-x64.tar.gz` · `KnA-portable-linux-arm64.tar.gz` | `tar xzf KnA-portable-*.tar.gz && ./KnA/KnA` |
+| macOS | `KnA-macOS-osx-arm64.app.zip` · `KnA-macOS-osx-x64.app.zip` | unzip, move `KnA.app` to Applications |
+
+Portable packages need nothing installed (.NET is included) and keep everything (settings, presets, queue, logs,
+the FFmpeg and AI components downloaded from the app) in a `data` folder next to the program; delete `portable.txt` to use
+the per-user folder instead. If the folder is read-only (e.g. Program Files) KnA falls back to the per-user folder.
+`KnA-desktop-<rid>.zip` and `KnA-server-<rid>.zip` are the same programs without the portable marker (they are also what the in-app updater downloads).
+
 ### Docker (headless server, e.g. Proxmox + iGPU)
 
 The image uses **bind mounts only** (no Docker volumes): config, videos and uploads are real folders on the host.
@@ -194,7 +209,7 @@ For an LLM on the host (Ollama, LM Studio…) use `http://host.docker.internal:<
 Then open `http://<host>:8585`. See **[docs/PROXMOX.md](docs/PROXMOX.md)** ([italiano](docs/PROXMOX.it.md)) for LXC GPU passthrough,
 the native installer without Docker (`deploy/install-linux.sh`) and all environment variables.
 
-### Desktop
+### Desktop from source
 
 ```bash
 dotnet run --project src/KnA.App -c Release
@@ -224,6 +239,7 @@ Frameserver decoding happens in the script, so it does not use hardware decoding
 | Variable | Use |
 |---|---|
 | `KNA_DATA_DIR` | data folder (settings, presets, queue, logs, AI models) |
+| `KNA_PORTABLE` | `1` = portable mode without `portable.txt` (data in `data` next to the program) |
 | `KNA_MEDIA_ROOTS` | read/write roots, `;` separated (default: the whole file system; `/media` in Docker) |
 | `KNA_READONLY_ROOTS` | read-only roots |
 | `KNA_UPLOAD_DIR` · `KNA_MAX_UPLOAD_GB` | upload destination and limit |
@@ -257,7 +273,7 @@ dotnet publish src/KnA.Server -c Release -r linux-x64 --self-contained
 ```
 
 Pushing a `v*` tag runs `.github/workflows/release.yml`, which builds every platform and prepares a **draft** release
-with the packages the in-app updater looks for (`KnA-desktop-<rid>.zip`, `KnA-server-<rid>.zip`), **fdkaac** inside every package
+with the packages the in-app updater looks for (`KnA-desktop-<rid>.zip`, `KnA-server-<rid>.zip`), the **portable** Windows/Linux packages (`KnA-portable-<rid>.zip` / `.tar.gz`), **fdkaac** inside every package
 (and published on its own for the component manager) and a `KnA.app` with its icon for macOS.
 
 ## Project layout
