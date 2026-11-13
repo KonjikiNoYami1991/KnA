@@ -3,7 +3,7 @@
     <LangVersion>latest</LangVersion>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
-    <Version>3.1.0</Version>
+    <Version>3.1.1</Version>
     <Authors>KonjikiNoYami1991</Authors>
     <Product>KnA - Konjiki no Autoencoder</Product>
     <Copyright>GPLv3</Copyright>

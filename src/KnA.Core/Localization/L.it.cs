@@ -795,5 +795,14 @@ public static partial class L
         ["{0} jobs created: one per segment."] = "{0} elementi creati: uno per segmento.",
         ["{0} segments"] = "{0} segmenti",
         ["{0} segments, {1} in total: they are joined into one file, in time order."] = "{0} segmenti, {1} in totale: vengono uniti in un unico file, in ordine di tempo.",
+        ["Done, with warnings"] = "Completato, con avvisi",
+        ["HDR → SDR tone mapping"] = "Tone mapping HDR → SDR",
+        ["Adapt brightness scene by scene (dynamic peak)"] = "Adatta la luminosità scena per scena (picco dinamico)",
+        ["Used only when an HDR source becomes SDR. Off: the brightness follows the mastering metadata and stays stable across the film; on, dim scenes are brightened."] = "Usato solo quando una sorgente HDR diventa SDR. Spento: la luminosità segue i metadati di mastering e resta stabile per tutto il film; acceso, le scene scure vengono schiarite.",
+        ["Spline (balanced, recommended)"] = "Spline (bilanciata, consigliata)",
+        ["BT.2390 (brighter)"] = "BT.2390 (più luminosa)",
+        ["BT.2446 method A (ITU broadcast, darker)"] = "BT.2446 metodo A (broadcast ITU, più scura)",
+        ["Hable (filmic, darker)"] = "Hable (cinematografica, più scura)",
+        ["Mobius (brightest, keeps saturation)"] = "Mobius (la più luminosa, mantiene la saturazione)",
     };
 }

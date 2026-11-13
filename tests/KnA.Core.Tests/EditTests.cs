@@ -238,3 +238,28 @@ public class AiRuntimeTests
         Assert.Equal(13.0, KnA.Core.Tools.ComponentManager.CudaOf("cu130"), 3);
     }
 }
+
+public class ToneMapTests
+{
+    [Fact]
+    public void Sdr_conversion_is_static_by_default_and_drops_hdr_metadata()
+    {
+        var v = new VideoStream { Width = 3840, Height = 2160, ColorTransfer = "smpte2084", Hdr = new HdrInfo { Format = HdrFormat.Hdr10, MaxCll = 991 } };
+        var env = new HdrEnvironment(true, true, false, false);
+        var s = new JobSettings { Codec = VideoCodec.H264, Hdr = HdrMode.ToneMapSdr };
+        var plan = HdrPlanner.Plan(v, s, false, false, env);
+        Assert.Equal(HdrAction.ToneMap, plan.Action);
+        Assert.Contains("tonemapping=spline", plan.Filter);
+        Assert.Contains("peak_detect=0", plan.Filter);
+        Assert.Contains("contrast_recovery=0", plan.Filter);
+        Assert.EndsWith(HdrPlanner.StripHdrSideData, plan.Filter);
+
+        var dyn = HdrPlanner.Plan(v, s with { ToneMap = ToneMapCurve.Bt2446a, ToneMapDynamic = true }, false, false, env);
+        Assert.Contains("tonemapping=bt.2446a", dyn.Filter);
+        Assert.DoesNotContain("peak_detect=0", dyn.Filter);
+
+        var zs = HdrPlanner.Plan(v, s with { ToneMap = ToneMapCurve.Mobius }, false, false, env with { HasLibplacebo = false });
+        Assert.Contains("tonemap=mobius", zs.Filter);
+        Assert.EndsWith(HdrPlanner.StripHdrSideData, zs.Filter);
+    }
+}

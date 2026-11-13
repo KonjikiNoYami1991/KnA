@@ -163,6 +163,9 @@ input[type=checkbox], input[type=radio] { accent-color: var(--accent-2); width: 
   border-radius: var(--radius); padding: 14px 14px 12px; position: relative; overflow: hidden;
   transition: border-color .15s, box-shadow .15s;
 }
+.job.done { border-color: color-mix(in srgb, var(--ok) 75%, var(--border)); }
+.job.warning { border-color: color-mix(in srgb, var(--warn) 75%, var(--border)); }
+.job.error, .job.stopped { border-color: color-mix(in srgb, var(--err) 75%, var(--border)); }
 .job.selected { border-color: color-mix(in srgb, var(--accent-2) 70%, var(--border)); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent-2) 18%, transparent); }
 .job.running { border-color: color-mix(in srgb, var(--ok) 50%, var(--border)); }
 .job .sel { margin-top: 3px; }
@@ -190,7 +193,8 @@ input[type=checkbox], input[type=radio] { accent-color: var(--accent-2); width: 
 .badge.ready { background: color-mix(in srgb, var(--info) 18%, transparent); color: var(--info); }
 .badge.running { background: color-mix(in srgb, var(--ok) 18%, transparent); color: var(--ok); }
 .badge.paused, .badge.warning { background: color-mix(in srgb, var(--warn) 18%, transparent); color: var(--warn); }
-.badge.done { background: color-mix(in srgb, var(--ok) 18%, transparent); color: var(--ok); }
+.badge.done { background: var(--ok); color: #052e1f; }
+.badge.warning { background: var(--warn); color: #3b2a02; }
 .badge.error, .badge.stopped { background: color-mix(in srgb, var(--err) 18%, transparent); color: var(--err); }
 .right { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; }
 .pct { font-weight: 700; font-variant-numeric: tabular-nums; font-size: 13px; }

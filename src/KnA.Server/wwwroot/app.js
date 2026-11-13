@@ -180,7 +180,7 @@ $("#btn-detect").onclick = guard(async () => {
 
 // ---------------------------------------------------------------- queue rendering
 const statusClass = s => s.toLowerCase();
-const statusText = s => ({ Ready: t("Ready"), Running: t("Running"), Paused: t("Paused"), Done: t("Done"), Warning: t("Warning"), Error: t("Error"), Stopped: t("Stopped") }[s] ?? s);
+const statusText = s => ({ Ready: t("Ready"), Running: "▶ " + t("Running"), Paused: "❚❚ " + t("Paused"), Done: "✓ " + t("Done"), Warning: "✓ " + t("Done, with warnings"), Error: "✕ " + t("Error"), Stopped: "■ " + t("Stopped") }[s] ?? s);
 
 function jobHtml(j) {
   const s = j.settings, p = profileOf(s.profile);

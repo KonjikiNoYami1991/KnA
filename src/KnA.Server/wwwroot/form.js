@@ -76,7 +76,10 @@ export function renderSettingsForm(root, s, opts = {}) {
       ${s.upscale?.method && s.upscale.method !== "Standard" ? `<label class="toggle"><input type="checkbox" data-k="upscale.alwaysApply" ${s.upscale.alwaysApply ? "checked" : ""}><span class="switch"></span><span>${esc(t("Also at the same size (restoration only)"))}</span></label>
         <small class="muted">${esc(t("Used when the chosen resolution is above the source."))}</small>` : ""}
     </details>` : ""}
-    ${full && show.hdr ? `<label class="field"><span>HDR</span><select data-k="hdr"></select></label>` : ""}
+    ${full && show.hdr ? `<label class="field"><span>HDR</span><select data-k="hdr"></select></label>
+      ${s.hdr !== "Preserve" ? `<label class="field"><span>${esc(t("HDR → SDR tone mapping"))}</span><select data-k="toneMap"></select></label>
+      <label class="toggle"><input type="checkbox" data-k="toneMapDynamic" ${s.toneMapDynamic ? "checked" : ""}><span class="switch"></span><span>${esc(t("Adapt brightness scene by scene (dynamic peak)"))}</span></label>
+      <small class="muted">${esc(t("Used only when an HDR source becomes SDR. Off: the brightness follows the mastering metadata and stays stable across the film; on, dim scenes are brightened."))}</small>` : ""}` : ""}
     ${p.encodesVideo ? `<label class="toggle"><input type="checkbox" data-k="chunks.enabled" ${s.chunks?.enabled ? "checked" : ""}><span class="switch"></span>
         <span>${esc(t("Segmented encoding (resumable, parallel)"))}</span></label>
       ${s.chunks?.enabled ? `<div class="grid2">
@@ -121,6 +124,7 @@ export function renderSettingsForm(root, s, opts = {}) {
     if (s.upscale.method === "Neural") fillSelect(sel("upscale.model"), o.neuralModels, s.upscale.model ?? o.neuralModels[0].value);
   }
   if (full && show.hdr) fillSelect(sel("hdr"), o.hdrModes, s.hdr);
+  if (sel("toneMap")) fillSelect(sel("toneMap"), o.toneMapCurves, s.toneMap ?? "Spline");
   if (show.images) { fillSelect(sel("images.format"), o.imageFormats, s.images.format); fillSelect(sel("images.mode"), o.imageModes, s.images.mode); }
 
   const changed = () => { renderSettingsForm(root, s, opts); opts.onChange?.(s); };

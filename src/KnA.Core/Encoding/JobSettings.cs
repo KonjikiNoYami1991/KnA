@@ -132,6 +132,13 @@ public sealed record JobSettings
     /// <summary>Output container ("mkv", "mp4"…), null = profile default.</summary>
     public string? Container { get; init; }
     public HdrMode Hdr { get; init; } = HdrMode.Auto;
+    /// <summary>Curve used when HDR is converted to SDR.</summary>
+    public ToneMapCurve ToneMap { get; init; } = ToneMapCurve.Spline;
+    /// <summary>
+    /// Scene-by-scene peak detection (libplacebo): dim scenes are stretched towards SDR white. Off = the
+    /// mastering metadata (MaxCLL / mastering peak) decides, so the brightness is stable across the film.
+    /// </summary>
+    public bool ToneMapDynamic { get; init; }
     public VideoFilterSettings VideoFilters { get; init; } = new();
     public AudioFilterSettings AudioFilters { get; init; } = new();
     public ImageSettings Images { get; init; } = new();

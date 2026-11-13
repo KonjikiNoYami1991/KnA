@@ -23,6 +23,8 @@ public sealed partial class JobViewModel(QueueJob job, MainViewModel owner) : Ob
     [ObservableProperty] private bool _isDone;
     [ObservableProperty] private bool _isError;
     [ObservableProperty] private bool _isPaused;
+    [ObservableProperty] private bool _isWarning;
+    [ObservableProperty] private bool _isReady;
     [ObservableProperty] private bool _showProgress;
     [ObservableProperty] private bool _canEdit = true;
 
@@ -31,11 +33,13 @@ public sealed partial class JobViewModel(QueueJob job, MainViewModel owner) : Ob
     public void Refresh()
     {
         var j = Job;
-        Status = KnA.Core.Localization.L.T(j.Status.ToString()).ToUpperInvariant();
+        Status = StatusLabel(j.Status);
         IsRunning = j.Status == JobStatus.Running;
         IsPaused = j.Status == JobStatus.Paused;
         IsDone = j.Status is JobStatus.Done or JobStatus.Warning;
+        IsWarning = j.Status == JobStatus.Warning;
         IsError = j.Status is JobStatus.Error or JobStatus.Stopped;
+        IsReady = j.Status == JobStatus.Ready;
         CanEdit = !(IsRunning || IsPaused);
         Percent = j.Percent;
         ShowProgress = IsRunning || IsPaused || j.Percent > 0;
@@ -56,6 +60,18 @@ public sealed partial class JobViewModel(QueueJob job, MainViewModel owner) : Ob
         }
         else Stats = "";
     }
+
+    /// <summary>Badge text with an icon, so finished jobs stand out at a glance.</summary>
+    public static string StatusLabel(JobStatus s) => (s switch
+    {
+        JobStatus.Done => "✓ " + KnA.Core.Localization.L.T("Done"),
+        JobStatus.Warning => "✓ " + KnA.Core.Localization.L.T("Done, with warnings"),
+        JobStatus.Running => "▶ " + KnA.Core.Localization.L.T("Running"),
+        JobStatus.Paused => "❚❚ " + KnA.Core.Localization.L.T("Paused"),
+        JobStatus.Error => "✕ " + KnA.Core.Localization.L.T("Error"),
+        JobStatus.Stopped => "■ " + KnA.Core.Localization.L.T("Stopped"),
+        _ => KnA.Core.Localization.L.T("Ready"),
+    }).ToUpperInvariant();
 
     private static IReadOnlyList<Chip> BuildChips(JobSettings s, JobEdit e)
     {

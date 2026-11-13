@@ -141,7 +141,9 @@ duplicati, file non supportati e cartelle enormi vengono mostrati prima di proce
 - **Codifica a segmenti** (stile av1an): il video viene diviso sui keyframe, i segmenti vengono codificati in parallelo
   e un lavoro fermato **riparte dall'ultimo segmento completato**. Ideale per gli encoder lenti su CPU (x265, SVT-AV1).
 - **HDR**: l'HDR10 viene mantenuto (metadati mastering display e luminanza passati all'encoder) oppure **convertito in SDR**
-  (libplacebo se disponibile, altrimenti zscale + Hable). **Dolby Vision** (RPU tramite `dovi_tool`) e **HDR10+**
+  in BT.709 (libplacebo se disponibile, altrimenti zscale). La **curva di tone mapping** si sceglie (Spline di default, BT.2390, BT.2446a,
+  Hable, Mobius) e la luminosità segue i metadati di mastering, stabile per tutto il film; il rilevamento del picco scena per scena è facoltativo.
+  Il file SDR non porta metadati HDR (mastering display, MaxCLL/MaxFALL, HDR10+). **Dolby Vision** (RPU tramite `dovi_tool`) e **HDR10+**
   (tramite `hdr10plus_tool`) vengono conservati ricodificando in HEVC con x265; KnA spiega quando non è possibile (taglio, ritaglio, cambio di frame rate, encoder GPU).
 - **Contenitori**: MKV, MP4, MOV, WebM, AVI, TS, con controllo di compatibilità con i codec scelti
   (un AVI non può contenere HEVC, gli allegati richiedono Matroska, e così via).

@@ -83,7 +83,8 @@
               </ItemsControl.ItemsPanel>
               <ItemsControl.ItemTemplate>
                 <DataTemplate x:DataType="vm:JobViewModel">
-                  <Border Classes="card job" Classes.running="{Binding IsRunning}" Classes.selected="{Binding IsSelected}" Padding="14,12">
+                  <Border Classes="card job" Classes.running="{Binding IsRunning}" Classes.done="{Binding IsDone}" Classes.warning="{Binding IsWarning}"
+                          Classes.error="{Binding IsError}" Classes.selected="{Binding IsSelected}" Padding="14,12">
                     <Grid ColumnDefinitions="Auto,*,Auto" RowDefinitions="Auto,Auto,Auto,Auto,Auto">
                       <CheckBox IsChecked="{Binding IsSelected}" VerticalAlignment="Top" Margin="0,-4,6,0" />
                       <StackPanel Grid.Column="1">
@@ -91,9 +92,10 @@
                         <TextBlock Text="{Binding Folder}" Classes="muted" FontSize="12" TextTrimming="LeadingCharacterEllipsis" />
                       </StackPanel>
                       <StackPanel Grid.Column="2" HorizontalAlignment="Right" Spacing="6">
-                        <Border HorizontalAlignment="Right" CornerRadius="6" Padding="8,3" Background="{DynamicResource CardBackground2}">
-                          <TextBlock Text="{Binding Status}" FontSize="11" FontWeight="Bold"
-                                     Foreground="{StaticResource InfoBrush}" />
+                        <Border Classes="status" HorizontalAlignment="Right" CornerRadius="6" Padding="8,3"
+                                Classes.ready="{Binding IsReady}" Classes.running="{Binding IsRunning}" Classes.paused="{Binding IsPaused}"
+                                Classes.done="{Binding IsDone}" Classes.warning="{Binding IsWarning}" Classes.error="{Binding IsError}">
+                          <TextBlock Text="{Binding Status}" FontSize="11" FontWeight="Bold" />
                         </Border>
                         <StackPanel Orientation="Horizontal" Spacing="0">
                           <Button Classes="ghost" Command="{Binding EditCommand}" IsEnabled="{Binding CanEdit}" ToolTip.Tip="{v:T 'Edit tracks, trim, filters, preview'}"><PathIcon Data="{StaticResource IconEdit}" /></Button>

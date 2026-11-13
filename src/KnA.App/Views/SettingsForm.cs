@@ -145,7 +145,15 @@ public sealed class SettingsForm : StackPanel
                 Ui.Combo(_containers.Select(c => (c, Containers.Display(c))), s.Container ?? p.Container, v => Set(s with { Container = v }))));
 
         if (_full && p.UsesVideoFilters)
+        {
             Children.Add(Ui.Field("HDR", Ui.Combo(Enum.GetValues<HdrMode>().Select(m => (m, m.Display())), s.Hdr, v => Set(s with { Hdr = v }))));
+            if (s.Hdr != HdrMode.Preserve)
+            {
+                Children.Add(Ui.Field("HDR → SDR tone mapping", Ui.Combo(Enum.GetValues<ToneMapCurve>().Select(c => (c, c.Display())), s.ToneMap, v => Set(s with { ToneMap = v }, false))));
+                Children.Add(Ui.Toggle(L.T("Adapt brightness scene by scene (dynamic peak)"), s.ToneMapDynamic, v => Set(s with { ToneMapDynamic = v }, false)));
+                Children.Add(Ui.Muted(L.T("Used only when an HDR source becomes SDR. Off: the brightness follows the mastering metadata and stays stable across the film; on, dim scenes are brightened.")));
+            }
+        }
 
         if (p.UsesAudio)
         {

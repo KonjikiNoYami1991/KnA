@@ -70,6 +70,52 @@
     <Style Selector="Border.job.running">
       <Setter Property="BorderBrush" Value="{StaticResource OkBrush}" />
     </Style>
+    <!-- finished / failed jobs are recognisable at a glance: coloured border and status badge -->
+    <Style Selector="Border.job.done">
+      <Setter Property="BorderBrush" Value="{StaticResource OkBrush}" />
+    </Style>
+    <Style Selector="Border.job.warning">
+      <Setter Property="BorderBrush" Value="{StaticResource WarnBrush}" />
+    </Style>
+    <Style Selector="Border.job.error">
+      <Setter Property="BorderBrush" Value="{StaticResource ErrBrush}" />
+    </Style>
+    <Style Selector="Border.status">
+      <Setter Property="Background" Value="#2660A5FA" />
+    </Style>
+    <Style Selector="Border.status > TextBlock">
+      <Setter Property="Foreground" Value="{StaticResource InfoBrush}" />
+    </Style>
+    <Style Selector="Border.status.running, Border.status.done">
+      <Setter Property="Background" Value="#2E34D399" />
+    </Style>
+    <Style Selector="Border.status.running > TextBlock, Border.status.done > TextBlock">
+      <Setter Property="Foreground" Value="{StaticResource OkBrush}" />
+    </Style>
+    <Style Selector="Border.status.done">
+      <Setter Property="Background" Value="{StaticResource OkBrush}" />
+    </Style>
+    <Style Selector="Border.status.done > TextBlock">
+      <Setter Property="Foreground" Value="#052E1F" />
+    </Style>
+    <Style Selector="Border.status.paused, Border.status.warning">
+      <Setter Property="Background" Value="#2EFBBF24" />
+    </Style>
+    <Style Selector="Border.status.paused > TextBlock, Border.status.warning > TextBlock">
+      <Setter Property="Foreground" Value="{StaticResource WarnBrush}" />
+    </Style>
+    <Style Selector="Border.status.done.warning">
+      <Setter Property="Background" Value="{StaticResource WarnBrush}" />
+    </Style>
+    <Style Selector="Border.status.done.warning > TextBlock">
+      <Setter Property="Foreground" Value="#3B2A02" />
+    </Style>
+    <Style Selector="Border.status.error">
+      <Setter Property="Background" Value="#2EF87171" />
+    </Style>
+    <Style Selector="Border.status.error > TextBlock">
+      <Setter Property="Foreground" Value="{StaticResource ErrBrush}" />
+    </Style>
     <Style Selector="Border.job.selected">
       <Setter Property="BorderBrush" Value="#F5C242" />
     </Style>

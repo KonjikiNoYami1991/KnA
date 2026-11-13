@@ -72,6 +72,12 @@ public enum ProfileKind
 
 public enum PostQueueAction { Nothing, CloseApp, Sleep, Shutdown }
 
+/// <summary>
+/// HDR → SDR tone-mapping curve, from brightest to darkest mid-tones (measured with libplacebo, static peak:
+/// a 100-nit grey becomes Mobius ≈ 70 %, BT.2390 ≈ 69 %, Spline ≈ 56 %, Hable ≈ 53 %, BT.2446a ≈ 51 % of SDR white).
+/// </summary>
+public enum ToneMapCurve { Spline, Bt2390, Bt2446a, Hable, Mobius }
+
 /// <summary>How a picture is enlarged when the target resolution is above the source.</summary>
 public enum UpscaleMethod
 {
@@ -234,6 +240,16 @@ public static class EnumText
         HdrMode.Preserve => L.T("Keep HDR"),
         HdrMode.ToneMapSdr => L.T("Convert to SDR (tone mapping)"),
         _ => m.ToString(),
+    };
+
+    public static string Display(this ToneMapCurve c) => c switch
+    {
+        ToneMapCurve.Spline => L.T("Spline (balanced, recommended)"),
+        ToneMapCurve.Bt2390 => L.T("BT.2390 (brighter)"),
+        ToneMapCurve.Bt2446a => L.T("BT.2446 method A (ITU broadcast, darker)"),
+        ToneMapCurve.Hable => L.T("Hable (filmic, darker)"),
+        ToneMapCurve.Mobius => L.T("Mobius (brightest, keeps saturation)"),
+        _ => c.ToString(),
     };
 
     public static string Display(this FilterStrength f) => f switch

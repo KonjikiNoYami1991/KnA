@@ -43,6 +43,7 @@ public sealed record OptionsDto(
     public IReadOnlyList<OptionDto> AudioCodecs { get; init; } = Enum.GetValues<AudioCodec>().Select(a => new OptionDto(a.ToString(), a.Display())).ToList();
     public IReadOnlyList<OptionDto> ProResProfiles { get; init; } = Enum.GetValues<ProResProfile>().Select(a => new OptionDto(a.ToString(), a.Display())).ToList();
     public IReadOnlyList<OptionDto> DnxhrProfiles { get; init; } = Enum.GetValues<DnxhrProfile>().Select(a => new OptionDto(a.ToString(), a.Display())).ToList();
+    public IReadOnlyList<OptionDto> ToneMapCurves { get; init; } = Enum.GetValues<ToneMapCurve>().Select(a => new OptionDto(a.ToString(), a.Display())).ToList();
     public IReadOnlyList<OptionDto> ChromaFormats { get; init; } = Enum.GetValues<ChromaFormat>().Select(a => new OptionDto(a.ToString(), a.Display())).ToList();
     public IReadOnlyList<OptionDto> UpscaleMethods { get; init; } = Enum.GetValues<UpscaleMethod>().Select(a => new OptionDto(a.ToString(), a.Display(), a.Description())).ToList();
     public IReadOnlyList<OptionDto> Anime4KModes { get; init; } = KnA.Core.Ai.Upscalers.Anime4KModes.Select(m => new OptionDto(m.Id, m.Label, m.Description)).ToList();
