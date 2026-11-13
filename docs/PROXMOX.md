@@ -1,8 +1,8 @@
-# TnA on Proxmox VE (LXC or VM, no desktop)
+# KnA on Proxmox VE (LXC or VM, no desktop)
 
 **English** · [Italiano](PROXMOX.it.md)
 
-TnA's web edition runs headless: the encoder runs on the server, and you use it from any
+KnA's web edition runs headless: the encoder runs on the server, and you use it from any
 browser (PC, Mac, phone) at `http://<container-ip>:8585`.
 
 There are two ways to install it:
@@ -58,17 +58,17 @@ plus the `nvidia*` devices passed through. A VM with PCIe passthrough is simpler
 ```bash
 apt install -y git
 git clone https://github.com/KonjikiNoYami1991/TnA.git && cd TnA
-TNA_MEDIA_ROOTS="/mnt/anime;/mnt/nas" ./deploy/install-linux.sh
+KNA_MEDIA_ROOTS="/mnt/anime;/mnt/nas" ./deploy/install-linux.sh
 ```
 
-The script installs FFmpeg, the VA-API/QSV drivers and .NET 10, builds TnA into `/opt/tna`,
-and creates the `tna.service` systemd unit. That unit runs as the `tna` user, which is in the `render` and `video` groups.
+The script installs FFmpeg, the VA-API/QSV drivers and .NET 10, builds KnA into `/opt/kna`,
+and creates the `kna.service` systemd unit. That unit runs as the `kna` user, which is in the `render` and `video` groups.
 
 ## 3b. Docker
 
 ```bash
 git clone https://github.com/KonjikiNoYami1991/TnA.git && cd TnA
-# edit docker-compose.yml: your media folder, RENDER_GID, optional TNA_PASSWORD
+# edit docker-compose.yml: your media folder, RENDER_GID, optional KNA_PASSWORD
 RENDER_GID=$(getent group render | cut -d: -f3) docker compose up -d --build
 ```
 
@@ -76,14 +76,14 @@ RENDER_GID=$(getent group render | cut -d: -f3) docker compose up -d --build
 
 Mount your NAS shares in the container, for example the UGREEN DXP4800 Pro or the Synology DS420+.
 Either bind-mount them from the host (`pct set <CTID> -mp0 /mnt/pve/nas-anime,mp=/mnt/anime`)
-or use NFS/SMB inside a privileged container/VM. Then list them in `TNA_MEDIA_ROOTS`, separated by `;`.
+or use NFS/SMB inside a privileged container/VM. Then list them in `KNA_MEDIA_ROOTS`, separated by `;`.
 The browser can only see files inside those roots.
 
-The `tna` user (or the container) needs **write** access there: by default, outputs are written next to the sources.
+The `kna` user (or the container) needs **write** access there: by default, outputs are written next to the sources.
 
 ## 5. First start
 
-On the first start, TnA test-encodes a short clip with every encoder in the FFmpeg build.
+On the first start, KnA test-encodes a short clip with every encoder in the FFmpeg build.
 The *Hardware* card then shows what actually works on this machine.
 Use **Detect again** after changing GPU or driver.
 
@@ -91,20 +91,20 @@ Use **Detect again** after changing GPU or driver.
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `TNA_URLS` | `http://0.0.0.0:8585` | Listen address |
-| `TNA_MEDIA_ROOTS` | `/media` (Docker) | Folders that can be browsed, separated by `;` |
-| `TNA_DATA_DIR` | `/config` (Docker), `/var/lib/tna` | Settings, logs, temporary files |
-| `TNA_PASSWORD` | – | Enables HTTP Basic authentication (any user name) |
-| `TNA_ALLOW_ADVANCED` | `false` | Allows editing the FFmpeg path and extra arguments from the browser |
-| `TNA_ALLOW_POWER_ACTIONS` | `false` | Allows "shut down / sleep when finished" |
-| `TNA_FFMPEG` | auto | Path to a specific ffmpeg binary (e.g. jellyfin-ffmpeg) |
-| `TNA_LOCK_COMPONENTS` | `false` | Forbids installing/updating FFmpeg and the HDR tools from the browser |
-| `TNA_LANG` | auto | Forces the language (`it` or `en`); otherwise the browser decides, or *Settings → General* |
-| `TNA_VSPIPE` | auto | Path to `vspipe` (VapourSynth) |
+| `KNA_URLS` | `http://0.0.0.0:8585` | Listen address |
+| `KNA_MEDIA_ROOTS` | `/media` (Docker) | Folders that can be browsed, separated by `;` |
+| `KNA_DATA_DIR` | `/config` (Docker), `/var/lib/kna` | Settings, logs, temporary files |
+| `KNA_PASSWORD` | – | Enables HTTP Basic authentication (any user name) |
+| `KNA_ALLOW_ADVANCED` | `false` | Allows editing the FFmpeg path and extra arguments from the browser |
+| `KNA_ALLOW_POWER_ACTIONS` | `false` | Allows "shut down / sleep when finished" |
+| `KNA_FFMPEG` | auto | Path to a specific ffmpeg binary (e.g. jellyfin-ffmpeg) |
+| `KNA_LOCK_COMPONENTS` | `false` | Forbids installing/updating FFmpeg and the HDR tools from the browser |
+| `KNA_LANG` | auto | Forces the language (`it` or `en`); otherwise the browser decides, or *Settings → General* |
+| `KNA_VSPIPE` | auto | Path to `vspipe` (VapourSynth) |
 
 ## VapourSynth and AviSynth on the server
 
 - **VapourSynth**: install it in the container/VM (for example `pip install vapoursynth` followed by `vapoursynth config`, plus the source plugins your scripts use,
-  such as L-SMASH Works or BestSource), make sure `vspipe` is on the PATH of the `tna` user or set `TNA_VSPIPE`.
+  such as L-SMASH Works or BestSource), make sure `vspipe` is on the PATH of the `kna` user or set `KNA_VSPIPE`.
 - **AviSynth+** on Linux needs an FFmpeg built with `--enable-avisynth` and the AviSynth+ library installed.
-  The Ubuntu FFmpeg package and the Docker image do not include it; TnA says so clearly when an `.avs` file cannot be read.
+  The Ubuntu FFmpeg package and the Docker image do not include it; KnA says so clearly when an `.avs` file cannot be read.

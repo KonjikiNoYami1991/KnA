@@ -1,10 +1,10 @@
-# TnA - Tanoshimi no Autohardsubber 2.0
+# KnA - Konjiki no Autoencoder 2.0
 
 [English](README.md) · **Italiano**
 
 Un hardsubber e encoder quasi automatico by KonjikiNoYami, riscritto da zero per **.NET 10**.
 
-Trascina qualche episodio MKV e scegli un profilo o un preset. TnA trova la traccia di sottotitoli giusta, estrae i font allegati,
+Trascina qualche episodio MKV e scegli un profilo o un preset. KnA trova la traccia di sottotitoli giusta, estrae i font allegati,
 imprime i sottotitoli con libass e codifica il video su **CPU o GPU** (NVENC, Quick Sync, AMF, VideoToolbox, VA-API),
 compresi **AV1 e HEVC a 10 bit**, **HDR10 / HDR10+ / Dolby Vision** e la **codifica a segmenti** riprendibile.
 
@@ -15,13 +15,13 @@ compresi **AV1 e HEVC a 10 bit**, **HDR10 / HDR10+ / Dolby Vision** e la **codif
 
 ## Due interfacce, un solo motore
 
-| | **Edizione web** `src/TnA.Server` | **Edizione desktop** `src/TnA.App` |
+| | **Edizione web** `src/KnA.Server` | **Edizione desktop** `src/KnA.App` |
 |---|---|---|
 | Gira su | Docker, LXC/VM Proxmox, NAS o in locale | Windows, macOS (anche Apple Silicon), Linux |
 | Interfaccia | Pagina web responsive (anche da telefono), avanzamento in diretta via SSE | Finestra Avalonia nativa, drag & drop, Ctrl+V, Invia a |
 | File | Sfogliati sul server (radici multimediali) | Dischi locali |
 
-Entrambe usano **`TnA.Core`**, che si occupa di analisi dei file, costruzione dei comandi, coda, anteprime, preset, aggiornamenti e log.
+Entrambe usano **`KnA.Core`**, che si occupa di analisi dei file, costruzione dei comandi, coda, anteprime, preset, aggiornamenti e log.
 L'interfaccia è in **italiano** se il sistema (o il browser) è in italiano, altrimenti in **inglese**; si può forzare da *Impostazioni → Generale*.
 
 ## Funzioni
@@ -44,7 +44,7 @@ L'interfaccia è in **italiano** se il sistema (o il browser) è in italiano, al
   e un lavoro fermato **riparte dall'ultimo segmento completato**. Ideale per gli encoder lenti su CPU (x265, SVT-AV1).
 - **HDR**: l'HDR10 viene mantenuto (metadati mastering display e luminanza passati all'encoder) oppure **convertito in SDR**
   (libplacebo se disponibile, altrimenti zscale + Hable). **Dolby Vision** (RPU tramite `dovi_tool`) e **HDR10+**
-  (tramite `hdr10plus_tool`) vengono conservati ricodificando in HEVC con x265; TnA spiega quando non è possibile (taglio, ritaglio, cambio di frame rate, encoder GPU).
+  (tramite `hdr10plus_tool`) vengono conservati ricodificando in HEVC con x265; KnA spiega quando non è possibile (taglio, ritaglio, cambio di frame rate, encoder GPU).
 - **Contenitori**: MKV, MP4, MOV, WebM, AVI, TS, con controllo di compatibilità con i codec scelti
   (un AVI non può contenere HEVC, gli allegati richiedono Matroska, e così via).
 
@@ -78,16 +78,16 @@ Preset integrati, preset personali salvati da qualsiasi file e una **procedura g
 - **Non sovrascrive mai nulla**: i nomi seguono un modello (`{name} [{label}]` di default) e si aggiunge un contatore se il nome esiste già.
 
 ### Aggiornamenti
-- *Impostazioni → Aggiornamenti e componenti* controlla le **release GitHub di questo repository** per una nuova versione di TnA
+- *Impostazioni → Aggiornamenti e componenti* controlla le **release GitHub di questo repository** per una nuova versione di KnA
   (l'app desktop la scarica e la installa; il server mostra come aggiornare il container o il servizio).
 - **FFmpeg, ffprobe, dovi_tool e hdr10plus_tool** si installano o aggiornano dalle loro pagine di release ufficiali
   (build FFmpeg di BtbN su Windows/Linux, Homebrew su macOS).
 
 ### Integrazione col desktop
-- **"Invia a" di Windows**: *Impostazioni → Uscita* aggiunge la voce "TnA" più una voce per ogni preset scelto (aggiunge i file con
+- **"Invia a" di Windows**: *Impostazioni → Uscita* aggiunge la voce "KnA" più una voce per ogni preset scelto (aggiunge i file con
   quel preset e avvia la coda). Più file inviati insieme finiscono nella stessa finestra.
 - **Linux**: "Apri con", script di Nautilus e menu di servizio di Dolphin con le stesse voci.
-- Riga di comando: `TnA [--preset "Nome"] [--start] file-o-cartelle…`
+- Riga di comando: `KnA [--preset "Nome"] [--start] file-o-cartelle…`
 
 ## Avvio rapido
 
@@ -105,7 +105,7 @@ l'installazione nativa senza Docker (`deploy/install-linux.sh`) e tutte le varia
 ### Desktop
 
 ```bash
-dotnet run --project src/TnA.App -c Release
+dotnet run --project src/KnA.App -c Release
 ```
 
 Su Windows e Linux, *Impostazioni → Aggiornamenti e componenti* installa FFmpeg (build statica di BtbN, GPL: libass, x264, x265,
@@ -114,15 +114,15 @@ SVT-AV1, NVENC, QSV, AMF, VA-API). Su macOS esegui `brew install ffmpeg`.
 ### Edizione web sul tuo PC
 
 ```bash
-dotnet run --project src/TnA.Server -c Release -- --open
+dotnet run --project src/KnA.Server -c Release -- --open
 ```
 
 ### VapourSynth e AviSynth (facoltativi)
 
-- **VapourSynth**: installalo in modo che `vspipe` sia nel PATH (oppure imposta `TNA_VSPIPE`), insieme ai plugin sorgente usati
+- **VapourSynth**: installalo in modo che `vspipe` sia nel PATH (oppure imposta `KNA_VSPIPE`), insieme ai plugin sorgente usati
   dai tuoi script (L-SMASH Works, BestSource o FFMS2). I file `.vpy` si possono aggiungere direttamente alla coda.
 - **AviSynth+**: installa AviSynth+ e usa un FFmpeg compilato con `--enable-avisynth`; gli script `.avs` vengono letti da FFmpeg.
-  TnA mostra un messaggio chiaro se l'FFmpeg in uso non riesce a leggerli.
+  KnA mostra un messaggio chiaro se l'FFmpeg in uso non riesce a leggerli.
 
 Con un frameserver la decodifica avviene nello script, quindi senza decodifica hardware; l'encoder può comunque essere quello della GPU.
 
@@ -131,8 +131,8 @@ Con un frameserver la decodifica avviene nello script, quindi senza decodifica h
 Servono l'[SDK .NET 10](https://dotnet.microsoft.com/download) e, per i test di integrazione, FFmpeg nel PATH.
 
 ```bash
-dotnet build TnA.slnx
-dotnet test TnA.slnx
+dotnet build KnA.slnx
+dotnet test KnA.slnx
 ```
 
 I test creano media di prova con FFmpeg (video anamorfico, audio 5.1, sottotitoli ASS/SRT, font, una clip HDR10, un transport stream)
@@ -142,20 +142,20 @@ HDR10, codifica a segmenti con ripresa, sorgenti VapourSynth (se `vspipe` è dis
 Build autonome:
 
 ```bash
-dotnet publish src/TnA.App -c Release -r win-x64 --self-contained -p:PublishSingleFile=true
-dotnet publish src/TnA.App -c Release -r osx-arm64 --self-contained
-dotnet publish src/TnA.Server -c Release -r linux-x64 --self-contained
+dotnet publish src/KnA.App -c Release -r win-x64 --self-contained -p:PublishSingleFile=true
+dotnet publish src/KnA.App -c Release -r osx-arm64 --self-contained
+dotnet publish src/KnA.Server -c Release -r linux-x64 --self-contained
 ```
 
 Il push di un tag `v*` avvia `.github/workflows/release.yml`, che compila per tutte le piattaforme e prepara una release **in bozza**
-con i pacchetti cercati dall'aggiornamento interno (`TnA-desktop-<rid>.zip`, `TnA-server-<rid>.zip`).
+con i pacchetti cercati dall'aggiornamento interno (`KnA-desktop-<rid>.zip`, `KnA-server-<rid>.zip`).
 
 ## Struttura del progetto
 
 ```
-src/TnA.Core     motore (senza interfaccia): analisi, piano tracce, filtri, HDR, comandi, codifica a segmenti, coda, anteprime, preset, aggiornamenti
-src/TnA.Server   API ASP.NET Core + interfaccia web (wwwroot), punto d'ingresso Docker
-src/TnA.App      app desktop Avalonia
+src/KnA.Core     motore (senza interfaccia): analisi, piano tracce, filtri, HDR, comandi, codifica a segmenti, coda, anteprime, preset, aggiornamenti
+src/KnA.Server   API ASP.NET Core + interfaccia web (wwwroot), punto d'ingresso Docker
+src/KnA.App      app desktop Avalonia
 tests/           test xUnit unitari/di integrazione + test headless dell'interfaccia
 deploy/          installer Linux/LXC (systemd)
 docs/            guida Proxmox, screenshot

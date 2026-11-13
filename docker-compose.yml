@@ -1,20 +1,20 @@
-# TnA web edition — open http://<host>:8585
+# KnA web edition — open http://<host>:8585
 services:
-  tna:
+  kna:
     build: .
-    image: tna-autohardsubber:latest
-    container_name: tna
+    image: kna:latest
+    container_name: kna
     restart: unless-stopped
     ports:
       - "8585:8585"
     environment:
       TZ: Europe/Rome
       # Optional HTTP Basic password for the web UI (any user name).
-      # TNA_PASSWORD: "change-me"
+      # KNA_PASSWORD: "change-me"
       # Several media roots: separate with ';'
-      TNA_MEDIA_ROOTS: /media
+      KNA_MEDIA_ROOTS: /media
       # Allow editing FFmpeg path / extra arguments from the browser.
-      # TNA_ALLOW_ADVANCED: "true"
+      # KNA_ALLOW_ADVANCED: "true"
     volumes:
       - ./config:/config
       - /mnt/anime:/media          # <-- your videos (NAS share, local disk…)

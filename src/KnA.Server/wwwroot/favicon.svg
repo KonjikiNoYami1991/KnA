@@ -1,0 +1,61 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <!-- KnA · Konjiki no Autoencoder
+       A golden K on "golden darkness": the stem is a film strip, the two arms converge into
+       one glowing point - the bottleneck (latent space) of an autoencoder. -->
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#2a1838"/>
+      <stop offset="0.55" stop-color="#120b1c"/>
+      <stop offset="1" stop-color="#06050a"/>
+    </linearGradient>
+    <radialGradient id="halo" cx="0.44" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#ffcf4d" stop-opacity="0.33"/>
+      <stop offset="0.6" stop-color="#ffb000" stop-opacity="0.06"/>
+      <stop offset="1" stop-color="#ffb000" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="gold" x1="0" y1="0" x2="0.35" y2="1">
+      <stop offset="0" stop-color="#fff4c2"/>
+      <stop offset="0.28" stop-color="#ffd659"/>
+      <stop offset="0.62" stop-color="#e0a21e"/>
+      <stop offset="1" stop-color="#8a5a0c"/>
+    </linearGradient>
+    <linearGradient id="rim" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#ffe08a" stop-opacity="0.85"/>
+      <stop offset="1" stop-color="#7a4f0a" stop-opacity="0.35"/>
+    </linearGradient>
+    <radialGradient id="core" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="0.45" stop-color="#fff2b0"/>
+      <stop offset="1" stop-color="#ffc21a" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+
+  <rect x="16" y="16" width="480" height="480" rx="108" fill="url(#bg)"/>
+  <rect x="16" y="16" width="480" height="480" rx="108" fill="url(#halo)"/>
+  <rect x="19" y="19" width="474" height="474" rx="105" fill="none" stroke="url(#rim)" stroke-width="6"/>
+
+  <!-- arms: encoder (top) and decoder (bottom) converging into the latent point -->
+  <path d="M206 262 L372 104 L430 104 L248 276 Z" fill="url(#gold)"/>
+  <path d="M232 244 L436 408 L372 408 L196 268 Z" fill="url(#gold)"/>
+
+  <!-- stem: film strip -->
+  <rect x="104" y="96" width="104" height="320" rx="18" fill="url(#gold)"/>
+  <g fill="#1a0f22">
+    <rect x="116" y="118" width="18" height="26" rx="5"/>
+    <rect x="116" y="170" width="18" height="26" rx="5"/>
+    <rect x="116" y="222" width="18" height="26" rx="5"/>
+    <rect x="116" y="274" width="18" height="26" rx="5"/>
+    <rect x="116" y="326" width="18" height="26" rx="5"/>
+    <rect x="116" y="378" width="18" height="18" rx="5"/>
+    <rect x="178" y="118" width="18" height="26" rx="5"/>
+    <rect x="178" y="170" width="18" height="26" rx="5"/>
+    <rect x="178" y="222" width="18" height="26" rx="5"/>
+    <rect x="178" y="274" width="18" height="26" rx="5"/>
+    <rect x="178" y="326" width="18" height="26" rx="5"/>
+    <rect x="178" y="378" width="18" height="18" rx="5"/>
+  </g>
+
+  <!-- latent point -->
+  <circle cx="226" cy="258" r="46" fill="url(#core)"/>
+  <circle cx="226" cy="258" r="13" fill="#ffffff"/>
+</svg>

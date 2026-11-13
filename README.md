@@ -1,10 +1,10 @@
-# TnA - Tanoshimi no Autohardsubber 2.0
+# KnA - Konjiki no Autoencoder 2.0
 
 **English** · [Italiano](README.it.md)
 
 An almost automatic hardsubber and encoder by KonjikiNoYami, rewritten from scratch for **.NET 10**.
 
-Drop in some MKV episodes and pick a profile or a preset. TnA finds the right subtitle track, extracts the embedded fonts,
+Drop in some MKV episodes and pick a profile or a preset. KnA finds the right subtitle track, extracts the embedded fonts,
 burns the subtitles in with libass, and encodes the video on the **CPU or the GPU** (NVENC, Quick Sync, AMF,
 VideoToolbox, VA-API), including **AV1 and HEVC 10-bit**, **HDR10 / HDR10+ / Dolby Vision**, and resumable **segmented encoding**.
 
@@ -15,13 +15,13 @@ VideoToolbox, VA-API), including **AV1 and HEVC 10-bit**, **HDR10 / HDR10+ / Dol
 
 ## Two front-ends, one engine
 
-| | **Web edition** `src/TnA.Server` | **Desktop edition** `src/TnA.App` |
+| | **Web edition** `src/KnA.Server` | **Desktop edition** `src/KnA.App` |
 |---|---|---|
 | Runs on | Docker, Proxmox LXC/VM, NAS, or locally | Windows, macOS (Apple Silicon too), Linux |
 | UI | Responsive web page (phone included), live progress via SSE | Native Avalonia window, drag & drop, Ctrl+V, Send To |
 | Files | Browsed on the server (media roots) | Local disks |
 
-Both use **`TnA.Core`**, which handles probing, command building, the queue, previews, presets, updates and logs.
+Both use **`KnA.Core`**, which handles probing, command building, the queue, previews, presets, updates and logs.
 The UI is in **Italian** when the system (or the browser) is Italian, in **English** otherwise; it can be forced in *Settings → General*.
 
 ## Features
@@ -44,7 +44,7 @@ The UI is in **Italian** when the system (or the browser) is Italian, in **Engli
   and a stopped job **resumes from the last finished segment**. Ideal for slow CPU encoders (x265, SVT-AV1).
 - **HDR**: HDR10 is kept (mastering display and light levels passed to the encoder) or **tone-mapped to SDR**
   (libplacebo when available, otherwise zscale + Hable). **Dolby Vision** (RPU via `dovi_tool`) and **HDR10+**
-  (via `hdr10plus_tool`) are carried over when re-encoding HEVC with x265; TnA explains when that is not possible (trim, crop, frame-rate change, GPU encoders).
+  (via `hdr10plus_tool`) are carried over when re-encoding HEVC with x265; KnA explains when that is not possible (trim, crop, frame-rate change, GPU encoders).
 - **Containers**: MKV, MP4, MOV, WebM, AVI, TS, with a compatibility check for the chosen codecs
   (an AVI cannot hold HEVC, attachments need Matroska, and so on).
 
@@ -78,16 +78,16 @@ Built-in presets, your own presets saved from any file, and a **wizard** that as
 - **Never overwrites anything**: outputs follow a name template (`{name} [{label}]` by default), and a counter is added when the name already exists.
 
 ### Updates
-- *Settings → Updates & components* checks the **GitHub releases of this repository** for a new TnA version
+- *Settings → Updates & components* checks the **GitHub releases of this repository** for a new KnA version
   (the desktop app downloads and installs it; the server shows how to update the container or the service).
 - **FFmpeg, ffprobe, dovi_tool and hdr10plus_tool** are installed or updated from their official release pages
   (BtbN FFmpeg builds on Windows/Linux, Homebrew on macOS).
 
 ### Desktop integration
-- **Windows "Send to"**: *Settings → Output* adds a "TnA" entry plus one entry per chosen preset (adds the files with that
+- **Windows "Send to"**: *Settings → Output* adds a "KnA" entry plus one entry per chosen preset (adds the files with that
   preset and starts the queue). Many files sent at once go into the same window.
 - **Linux**: "Open with", Nautilus scripts and a Dolphin service menu with the same entries.
-- Command line: `TnA [--preset "Name"] [--start] files-or-folders…`
+- Command line: `KnA [--preset "Name"] [--start] files-or-folders…`
 
 ## Quick start
 
@@ -105,7 +105,7 @@ the native installer without Docker (`deploy/install-linux.sh`) and all environm
 ### Desktop
 
 ```bash
-dotnet run --project src/TnA.App -c Release
+dotnet run --project src/KnA.App -c Release
 ```
 
 On Windows and Linux, *Settings → Updates & components* installs FFmpeg (BtbN static build, GPL: libass, x264, x265,
@@ -114,15 +114,15 @@ SVT-AV1, NVENC, QSV, AMF, VA-API). On macOS, run `brew install ffmpeg`.
 ### Web edition on your own PC
 
 ```bash
-dotnet run --project src/TnA.Server -c Release -- --open
+dotnet run --project src/KnA.Server -c Release -- --open
 ```
 
 ### VapourSynth and AviSynth (optional)
 
-- **VapourSynth**: install it so that `vspipe` is on the PATH (or set `TNA_VSPIPE`), plus the source plugins your
+- **VapourSynth**: install it so that `vspipe` is on the PATH (or set `KNA_VSPIPE`), plus the source plugins your
   scripts use (L-SMASH Works, BestSource or FFMS2). `.vpy` files can be added to the queue directly.
 - **AviSynth+**: install AviSynth+ and use an FFmpeg built with `--enable-avisynth`; `.avs` scripts are read by FFmpeg.
-  TnA shows a clear message when the FFmpeg in use cannot read them.
+  KnA shows a clear message when the FFmpeg in use cannot read them.
 
 Frameserver decoding happens in the script, so it does not use hardware decoding; the encoder can still be a GPU one.
 
@@ -131,8 +131,8 @@ Frameserver decoding happens in the script, so it does not use hardware decoding
 You need the [.NET 10 SDK](https://dotnet.microsoft.com/download) and, for the integration tests, FFmpeg on your PATH.
 
 ```bash
-dotnet build TnA.slnx
-dotnet test TnA.slnx
+dotnet build KnA.slnx
+dotnet test KnA.slnx
 ```
 
 The tests build sample media with FFmpeg (anamorphic video, 5.1 audio, ASS/SRT subtitles, fonts, an HDR10 clip, a transport stream)
@@ -142,20 +142,20 @@ HDR10, segmented encoding with resume, VapourSynth sources (when `vspipe` is ava
 Self-contained builds:
 
 ```bash
-dotnet publish src/TnA.App -c Release -r win-x64 --self-contained -p:PublishSingleFile=true
-dotnet publish src/TnA.App -c Release -r osx-arm64 --self-contained
-dotnet publish src/TnA.Server -c Release -r linux-x64 --self-contained
+dotnet publish src/KnA.App -c Release -r win-x64 --self-contained -p:PublishSingleFile=true
+dotnet publish src/KnA.App -c Release -r osx-arm64 --self-contained
+dotnet publish src/KnA.Server -c Release -r linux-x64 --self-contained
 ```
 
 Pushing a `v*` tag runs `.github/workflows/release.yml`, which builds every platform and prepares a **draft** release
-with the packages the in-app updater looks for (`TnA-desktop-<rid>.zip`, `TnA-server-<rid>.zip`).
+with the packages the in-app updater looks for (`KnA-desktop-<rid>.zip`, `KnA-server-<rid>.zip`).
 
 ## Project layout
 
 ```
-src/TnA.Core     engine (no UI): probe, track plan, filters, HDR, command builder, chunked encoder, queue, previews, presets, updates
-src/TnA.Server   ASP.NET Core API + web UI (wwwroot), Docker entry point
-src/TnA.App      Avalonia desktop app
+src/KnA.Core     engine (no UI): probe, track plan, filters, HDR, command builder, chunked encoder, queue, previews, presets, updates
+src/KnA.Server   ASP.NET Core API + web UI (wwwroot), Docker entry point
+src/KnA.App      Avalonia desktop app
 tests/           xUnit unit/integration tests + headless UI test
 deploy/          Linux/LXC installer (systemd)
 docs/            Proxmox guide, screenshots

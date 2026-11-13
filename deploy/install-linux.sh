@@ -1,25 +1,25 @@
 #!/usr/bin/env bash
-# Installs TnA web edition as a systemd service on a headless Debian/Ubuntu machine
+# Installs KnA web edition as a systemd service on a headless Debian/Ubuntu machine
 # (Proxmox LXC, VM, bare metal). Run as root from a clone of the repository:
 #
 #   sudo ./deploy/install-linux.sh                 # install / update
-#   sudo TNA_PORT=9000 TNA_MEDIA_ROOTS="/mnt/nas;/media" ./deploy/install-linux.sh
+#   sudo KNA_PORT=9000 KNA_MEDIA_ROOTS="/mnt/nas;/media" ./deploy/install-linux.sh
 #
-# Afterwards open http://<ip>:8585 (or your TNA_PORT).
+# Afterwards open http://<ip>:8585 (or your KNA_PORT).
 set -euo pipefail
 
-TNA_PORT="${TNA_PORT:-8585}"
-TNA_MEDIA_ROOTS="${TNA_MEDIA_ROOTS:-/media;/mnt}"
-INSTALL_DIR=/opt/tna
-DATA_DIR=/var/lib/tna
-SERVICE_USER=tna
+KNA_PORT="${KNA_PORT:-8585}"
+KNA_MEDIA_ROOTS="${KNA_MEDIA_ROOTS:-/media;/mnt}"
+INSTALL_DIR=/opt/kna
+DATA_DIR=/var/lib/kna
+SERVICE_USER=kna
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-log() { printf '\033[1;35m[TnA]\033[0m %s\n' "$*"; }
-die() { printf '\033[1;31m[TnA] %s\033[0m\n' "$*" >&2; exit 1; }
+log() { printf '\033[1;35m[KnA]\033[0m %s\n' "$*"; }
+die() { printf '\033[1;31m[KnA] %s\033[0m\n' "$*" >&2; exit 1; }
 
 [[ $EUID -eq 0 ]] || die "Run as root (sudo)."
-[[ -f "$REPO_DIR/src/TnA.Server/TnA.Server.csproj" ]] || die "Run this script from a clone of the TnA repository."
+[[ -f "$REPO_DIR/src/KnA.Server/KnA.Server.csproj" ]] || die "Run this script from a clone of the KnA repository."
 . /etc/os-release
 export DEBIAN_FRONTEND=noninteractive
 
@@ -45,8 +45,8 @@ if [[ "$(dpkg --print-architecture)" == "amd64" ]]; then
     || log "Intel media driver not available from your repositories (only needed for Intel GPUs)."
 fi
 
-log "Building TnA…"
-dotnet publish "$REPO_DIR/src/TnA.Server/TnA.Server.csproj" -c Release -o "$INSTALL_DIR" --nologo -v quiet
+log "Building KnA…"
+dotnet publish "$REPO_DIR/src/KnA.Server/KnA.Server.csproj" -c Release -o "$INSTALL_DIR" --nologo -v quiet
 
 log "Creating service user and folders…"
 id -u "$SERVICE_USER" >/dev/null 2>&1 || useradd --system --home "$DATA_DIR" --shell /usr/sbin/nologin "$SERVICE_USER"
@@ -55,9 +55,9 @@ mkdir -p "$DATA_DIR"
 chown -R "$SERVICE_USER:$SERVICE_USER" "$DATA_DIR"
 
 log "Writing systemd unit…"
-cat > /etc/systemd/system/tna.service <<EOF
+cat > /etc/systemd/system/kna.service <<EOF
 [Unit]
-Description=TnA - Tanoshimi no Autohardsubber (web)
+Description=KnA - Konjiki no Autoencoder (web)
 After=network-online.target remote-fs.target
 Wants=network-online.target
 
@@ -67,12 +67,12 @@ User=$SERVICE_USER
 Group=$SERVICE_USER
 SupplementaryGroups=render video
 WorkingDirectory=$INSTALL_DIR
-ExecStart=/usr/bin/dotnet $INSTALL_DIR/tna-server.dll
-Environment=TNA_DATA_DIR=$DATA_DIR
-Environment="TNA_MEDIA_ROOTS=$TNA_MEDIA_ROOTS"
-Environment=TNA_URLS=http://0.0.0.0:$TNA_PORT
+ExecStart=/usr/bin/dotnet $INSTALL_DIR/kna-server.dll
+Environment=KNA_DATA_DIR=$DATA_DIR
+Environment="KNA_MEDIA_ROOTS=$KNA_MEDIA_ROOTS"
+Environment=KNA_URLS=http://0.0.0.0:$KNA_PORT
 Environment=DOTNET_CLI_TELEMETRY_OPTOUT=1
-# Environment=TNA_PASSWORD=change-me
+# Environment=KNA_PASSWORD=change-me
 Restart=on-failure
 RestartSec=5
 Nice=5
@@ -82,15 +82,15 @@ WantedBy=multi-user.target
 EOF
 
 systemctl daemon-reload
-systemctl enable --now tna.service
-systemctl restart tna.service
+systemctl enable --now kna.service
+systemctl restart kna.service
 
 ip="$(hostname -I 2>/dev/null | awk '{print $1}')"
-log "Done! Open http://${ip:-<this-host>}:${TNA_PORT}"
-log "Media roots: $TNA_MEDIA_ROOTS  (the 'tna' user needs read/write access there)"
+log "Done! Open http://${ip:-<this-host>}:${KNA_PORT}"
+log "Media roots: $KNA_MEDIA_ROOTS  (the 'kna' user needs read/write access there)"
 if [[ -e /dev/dri/renderD128 ]]; then
   log "GPU render node found. Check supported codecs with: vainfo --display drm --device /dev/dri/renderD128"
 else
   log "No /dev/dri/renderD128: hardware encoding needs GPU passthrough (see docs/PROXMOX.md)."
 fi
-log "Logs: journalctl -u tna -f"
+log "Logs: journalctl -u kna -f"

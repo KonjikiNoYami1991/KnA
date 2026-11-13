@@ -1,0 +1,260 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>KnA · Konjiki no Autoencoder</title>
+  <meta name="color-scheme" content="dark light">
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="apple-touch-icon.png">
+  <link rel="manifest" href="manifest.webmanifest">
+  <meta name="theme-color" content="#120b1c">
+  <link rel="stylesheet" href="app.css">
+</head>
+<body>
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <symbol id="i-play" viewBox="0 0 24 24"><path d="M8 5.5v13a1 1 0 0 0 1.5.86l10.4-6.5a1 1 0 0 0 0-1.72L9.5 4.64A1 1 0 0 0 8 5.5Z"/></symbol>
+  <symbol id="i-pause" viewBox="0 0 24 24"><rect x="6" y="5" width="4" height="14" rx="1.2"/><rect x="14" y="5" width="4" height="14" rx="1.2"/></symbol>
+  <symbol id="i-stop" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2"/></symbol>
+  <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" fill="none"/></symbol>
+  <symbol id="i-folder" viewBox="0 0 24 24"><path d="M3 7.5A2.5 2.5 0 0 1 5.5 5H9l2 2h7.5A2.5 2.5 0 0 1 21 9.5v7a2.5 2.5 0 0 1-2.5 2.5h-13A2.5 2.5 0 0 1 3 16.5v-9Z"/></symbol>
+  <symbol id="i-film" viewBox="0 0 24 24"><path d="M5 4h14a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2Zm0 3v2h2V7H5Zm12 0v2h2V7h-2ZM5 11v2h2v-2H5Zm12 0v2h2v-2h-2ZM5 15v2h2v-2H5Zm12 0v2h2v-2h-2Z"/></symbol>
+  <symbol id="i-file" viewBox="0 0 24 24"><path d="M6 3h9l5 5v11a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2Z"/></symbol>
+  <symbol id="i-gear" viewBox="0 0 24 24"><path d="M12 15.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7Zm8.1-2.3.1-1.2-.1-1.2 2-1.6-2-3.4-2.4 1a8 8 0 0 0-2-1.2L15.3 3h-4l-.4 2.6a8 8 0 0 0-2 1.2l-2.4-1-2 3.4 2 1.6-.1 1.2.1 1.2-2 1.6 2 3.4 2.4-1a8 8 0 0 0 2 1.2l.4 2.6h4l.4-2.6a8 8 0 0 0 2-1.2l2.4 1 2-3.4-2.1-1.6Z"/></symbol>
+  <symbol id="i-trash" viewBox="0 0 24 24"><path d="M9 3h6l1 2h4v2H4V5h4l1-2Zm-3 6h12l-1 11a2 2 0 0 1-2 2H9a2 2 0 0 1-2-2L6 9Z"/></symbol>
+  <symbol id="i-moon" viewBox="0 0 24 24"><path d="M20 14.5A8.5 8.5 0 0 1 9.5 4a8.5 8.5 0 1 0 10.5 10.5Z"/></symbol>
+  <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4.5"/><path d="M12 1.5v3M12 19.5v3M1.5 12h3M19.5 12h3M4.6 4.6l2.1 2.1M17.3 17.3l2.1 2.1M4.6 19.4l2.1-2.1M17.3 6.7l2.1-2.1" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
+  <symbol id="i-chip" viewBox="0 0 24 24"><path d="M9 2v2H7a3 3 0 0 0-3 3v2H2v2h2v2H2v2h2v2a3 3 0 0 0 3 3h2v2h2v-2h2v2h2v-2h2a3 3 0 0 0 3-3v-2h2v-2h-2v-2h2V9h-2V7a3 3 0 0 0-3-3h-2V2h-2v2h-2V2H9Zm0 7h6v6H9V9Z"/></symbol>
+  <symbol id="i-log" viewBox="0 0 24 24"><path d="M6 3h9l5 5v11a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2Zm2 9v2h8v-2H8Zm0 4v2h6v-2H8Zm0-8v2h4V8H8Z"/></symbol>
+  <symbol id="i-term" viewBox="0 0 24 24"><path d="M4 4h16a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2Zm2.3 4.3L5 9.6 7.4 12 5 14.4l1.3 1.3 3.7-3.7-3.7-3.7ZM11 15v2h7v-2h-7Z"/></symbol>
+  <symbol id="i-redo" viewBox="0 0 24 24"><path d="M12 5a7 7 0 1 0 6.9 8.2h-2.1A5 5 0 1 1 12 7c1.4 0 2.6.6 3.5 1.5L13 11h7V4l-2.6 2.6A7 7 0 0 0 12 5Z"/></symbol>
+  <symbol id="i-up" viewBox="0 0 24 24"><path d="m12 7-6 6 1.4 1.4L12 9.8l4.6 4.6L18 13z"/></symbol>
+  <symbol id="i-down" viewBox="0 0 24 24"><path d="m12 17 6-6-1.4-1.4-4.6 4.6-4.6-4.6L6 11z"/></symbol>
+  <symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></symbol>
+  <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12.5 4.5 4.5L19 7.5" stroke="currentColor" stroke-width="2.4" fill="none" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+  <symbol id="i-edit" viewBox="0 0 24 24"><path d="M4 17.2V20h2.8l9.4-9.4-2.8-2.8L4 17.2Zm15.7-9.5a1 1 0 0 0 0-1.4l-2-2a1 1 0 0 0-1.4 0l-1.6 1.6 2.8 2.8 2.2-1Z"/></symbol>
+  <symbol id="i-wand" viewBox="0 0 24 24"><path d="m3 19 12-12 2 2L5 21l-2-2Zm13-15 .7 1.6L18.3 6l-1.6.7L16 8.3l-.7-1.6L13.7 6l1.6-.7L16 3.7ZM20 9l.5 1 1 .5-1 .5-.5 1-.5-1-1-.5 1-.5.5-1ZM9 2l.5 1 1 .5-1 .5L9 5l-.5-1-1-.5 1-.5L9 2Z"/></symbol>
+  <symbol id="i-save" viewBox="0 0 24 24"><path d="M5 3h11l3 3v13a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2Zm2 2v5h8V5H7Zm5 9a2.5 2.5 0 1 0 0 5 2.5 2.5 0 0 0 0-5Z"/></symbol>
+</svg>
+
+<header class="topbar">
+  <div class="brand">
+    <div class="logo">KnA</div>
+    <div class="brand-text">
+      <strong>Konjiki no Autoencoder</strong>
+      <span id="platform" class="muted">…</span>
+    </div>
+  </div>
+  <div class="status-pill" id="queue-pill"><span class="dot"></span><span id="queue-text" data-i18n>Idle</span></div>
+  <div class="top-actions">
+    <button class="btn" id="btn-add" data-i18n-title="Add files or folders"><svg><use href="#i-plus"/></svg><span data-i18n>Add</span></button>
+    <button class="btn primary" id="btn-start"><svg><use href="#i-play"/></svg><span data-i18n>Start</span></button>
+    <button class="btn" id="btn-pause" disabled><svg><use href="#i-pause"/></svg><span data-i18n>Pause</span></button>
+    <button class="btn icon" id="btn-theme" data-i18n-title="Light / dark"><svg><use href="#i-moon"/></svg></button>
+    <button class="btn icon" id="btn-settings" data-i18n-title="Settings"><svg><use href="#i-gear"/></svg><span class="dot-badge" id="update-badge" hidden></span></button>
+  </div>
+</header>
+
+<main class="layout">
+  <section class="queue-col">
+    <div class="queue-head">
+      <h2><span data-i18n>Queue</span> <span class="count" id="queue-count">0</span></h2>
+      <div class="queue-tools">
+        <label class="check"><input type="checkbox" id="select-all"><span data-i18n>All</span></label>
+        <button class="btn ghost sm" id="btn-reset-sel" data-i18n-title="Process selected again"><svg><use href="#i-redo"/></svg><span data-i18n>Retry</span></button>
+        <button class="btn ghost sm" id="btn-remove-sel"><svg><use href="#i-trash"/></svg><span data-i18n>Remove</span></button>
+        <button class="btn ghost sm" id="btn-clear-done"><svg><use href="#i-check"/></svg><span data-i18n>Clear finished</span></button>
+      </div>
+    </div>
+    <div id="jobs" class="jobs"></div>
+    <div id="empty" class="empty">
+      <div class="empty-art"><svg><use href="#i-film"/></svg></div>
+      <h3 data-i18n>Nothing in the queue yet</h3>
+      <p data-i18n>Pick episodes or whole folders from the server. Subtitles and fonts inside MKV files are found automatically.</p>
+      <button class="btn primary" id="btn-add-empty"><svg><use href="#i-plus"/></svg><span data-i18n>Add files</span></button>
+    </div>
+  </section>
+
+  <aside class="side-col">
+    <section class="card" id="settings-card">
+      <div class="card-head">
+        <h2 data-i18n>Encode settings</h2>
+        <span class="muted small" id="settings-target"></span>
+      </div>
+      <div class="field">
+        <span data-i18n>Preset</span>
+        <div class="row">
+          <select id="f-preset"></select>
+          <button class="btn icon sm" id="btn-wizard" data-i18n-title="Preset wizard"><svg><use href="#i-wand"/></svg></button>
+          <button class="btn icon sm" id="btn-save-preset" data-i18n-title="Save as preset"><svg><use href="#i-save"/></svg></button>
+          <button class="btn icon sm" id="btn-delete-preset" data-i18n-title="Delete preset"><svg><use href="#i-trash"/></svg></button>
+        </div>
+      </div>
+      <div id="quick-form"></div>
+      <div class="card-actions">
+        <button class="btn sm" id="btn-save-defaults" data-i18n>Save as default</button>
+        <button class="btn sm accent" id="btn-apply-sel" disabled data-i18n>Apply to selected</button>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="card-head">
+        <h2><svg class="h-icon"><use href="#i-chip"/></svg><span data-i18n>Hardware</span></h2>
+        <button class="btn ghost sm" id="btn-detect" data-i18n>Detect again</button>
+      </div>
+      <div id="hw-table" class="hw-table"></div>
+      <p class="muted small" id="hw-info"></p>
+    </section>
+  </aside>
+</main>
+
+<!-- File browser -->
+<dialog id="dlg-browse" class="dialog wide">
+  <form method="dialog" class="dialog-inner">
+    <header class="dialog-head">
+      <h2 id="browse-title" data-i18n>Add from server</h2>
+      <button class="btn icon ghost" value="cancel" data-i18n-title="Close"><svg><use href="#i-x"/></svg></button>
+    </header>
+    <nav class="crumbs" id="crumbs"></nav>
+    <div class="browse-list" id="browse-list"></div>
+    <footer class="dialog-foot">
+      <span class="muted small" id="browse-sel"></span>
+      <div class="grow"></div>
+      <button class="btn" type="button" id="btn-add-current" data-i18n>Add this folder</button>
+      <button class="btn primary" type="button" id="btn-add-selected" disabled data-i18n>Add selected</button>
+    </footer>
+  </form>
+</dialog>
+
+<!-- Job editor -->
+<dialog id="dlg-editor" class="dialog xwide">
+  <div class="dialog-inner">
+    <header class="dialog-head">
+      <div class="grow min0">
+        <h2 id="ed-title">…</h2>
+        <div class="muted small ellipsis" id="ed-sub"></div>
+      </div>
+      <span class="saving muted small" id="ed-saving"></span>
+      <button class="btn icon ghost" id="ed-close" data-i18n-title="Close"><svg><use href="#i-x"/></svg></button>
+    </header>
+    <nav class="tabs" id="ed-tabs">
+      <button data-tab="tracks" class="on" data-i18n>Tracks</button>
+      <button data-tab="trim" data-i18n>Trim</button>
+      <button data-tab="filters" data-i18n>Filters</button>
+      <button data-tab="output" data-i18n>Output</button>
+      <button data-tab="preview" data-i18n>Preview</button>
+    </nav>
+    <div class="issues" id="ed-issues"></div>
+    <div class="dialog-body" id="ed-body"></div>
+  </div>
+</dialog>
+
+<!-- Preset wizard -->
+<dialog id="dlg-wizard" class="dialog">
+  <form method="dialog" class="dialog-inner">
+    <header class="dialog-head">
+      <h2 data-i18n>Preset wizard</h2>
+      <button class="btn icon ghost" value="cancel" data-i18n-title="Close"><svg><use href="#i-x"/></svg></button>
+    </header>
+    <div class="dialog-body" id="wiz-body"></div>
+    <footer class="dialog-foot">
+      <span class="muted small" id="wiz-step"></span>
+      <div class="grow"></div>
+      <button class="btn" type="button" id="wiz-back" data-i18n>Back</button>
+      <button class="btn primary" type="button" id="wiz-next" data-i18n>Next</button>
+    </footer>
+  </form>
+</dialog>
+
+<!-- Text viewer (log / command) -->
+<dialog id="dlg-text" class="dialog wide">
+  <form method="dialog" class="dialog-inner">
+    <header class="dialog-head">
+      <h2 id="text-title">Log</h2>
+      <div class="grow"></div>
+      <button class="btn sm" type="button" id="btn-copy" data-i18n>Copy</button>
+      <button class="btn icon ghost" value="cancel" data-i18n-title="Close"><svg><use href="#i-x"/></svg></button>
+    </header>
+    <pre id="text-body" class="mono"></pre>
+  </form>
+</dialog>
+
+<!-- Settings -->
+<dialog id="dlg-settings" class="dialog wide">
+  <form method="dialog" class="dialog-inner">
+    <header class="dialog-head">
+      <h2 data-i18n>Settings</h2>
+      <button class="btn icon ghost" value="cancel" data-i18n-title="Close"><svg><use href="#i-x"/></svg></button>
+    </header>
+    <nav class="tabs" id="s-tabs">
+      <button type="button" data-tab="general" class="on" data-i18n>General</button>
+      <button type="button" data-tab="output" data-i18n>Output</button>
+      <button type="button" data-tab="processing" data-i18n>Processing</button>
+      <button type="button" data-tab="advanced" data-i18n>Advanced</button>
+      <button type="button" data-tab="updates" data-i18n>Updates &amp; components</button>
+    </nav>
+    <div class="dialog-body">
+      <section data-pane="general">
+        <div class="grid2">
+          <label class="field"><span data-i18n>Language</span><select id="s-lang"></select>
+            <small class="muted" data-i18n>Automatic = Italian on Italian systems/browsers, English otherwise.</small></label>
+          <label class="field"><span data-i18n>Theme</span><select id="s-theme"></select></label>
+        </div>
+        <label class="toggle"><input type="checkbox" id="s-autoupd"><span class="switch"></span><span data-i18n>Check for updates at startup</span></label>
+        <label class="toggle"><input type="checkbox" id="s-restore"><span class="switch"></span><span data-i18n>Restore the queue at the next start</span></label>
+        <div class="tools-box" id="about-box"></div>
+      </section>
+      <section data-pane="output" hidden>
+        <label class="field"><span data-i18n>Output folder</span>
+          <input id="s-output" data-i18n-ph="Same folder as the source file">
+          <small class="muted" data-i18n>Must be inside a media root. Empty = next to each source file. Existing files are never overwritten.</small>
+        </label>
+        <label class="field"><span data-i18n>File name template</span>
+          <input id="s-template" class="mono" placeholder="{name} [{label}]">
+          <small class="muted" data-i18n>Placeholders: {name} source name · {label} profile summary · {profile} · {codec} · {res} · {quality} · {date}</small>
+        </label>
+        <div class="field"><span data-i18n>Extensions imported from folders</span><div class="chips" id="s-ext"></div></div>
+      </section>
+      <section data-pane="processing" hidden>
+        <div class="grid2">
+          <label class="field"><span data-i18n>Process priority</span><select id="s-priority"></select>
+            <small class="muted" data-i18n>Below normal keeps the computer responsive while encoding.</small></label>
+          <label class="field"><span data-i18n>When the queue is finished</span><select id="s-post"></select>
+            <small class="muted" id="s-post-note"></small></label>
+          <label class="field"><span data-i18n>Stuck FFmpeg timeout (minutes)</span><input type="number" min="1" max="600" id="s-stall"></label>
+          <label class="field"><span data-i18n>Logs to keep</span><input type="number" min="10" max="100000" id="s-keeplogs"></label>
+          <label class="field"><span data-i18n>VA-API device</span><input id="s-vaapi" placeholder="/dev/dri/renderD128"></label>
+        </div>
+      </section>
+      <section data-pane="advanced" hidden>
+        <label class="field"><span data-i18n>FFmpeg path</span><input id="s-ffmpeg" data-i18n-ph="Auto-detect"></label>
+        <label class="field"><span data-i18n>Extra FFmpeg arguments</span><input id="s-extra" class="mono" placeholder="-x265-params …"></label>
+        <label class="field"><span data-i18n>Temporary folder</span><input id="s-temp" data-i18n-ph="Data folder">
+          <small class="muted" data-i18n>Subtitles, fonts, HDR metadata and previews. A fast SSD helps.</small></label>
+        <small class="muted" id="s-adv-note"></small>
+        <div class="tools-box" id="tools-box"></div>
+      </section>
+      <section data-pane="updates" hidden>
+        <div class="field">
+          <span data-i18n>KnA</span>
+          <div class="update-box" id="upd-box"><span class="muted small" data-i18n>Not checked yet.</span></div>
+          <div class="row"><button class="btn sm" type="button" id="btn-check-updates" data-i18n>Check for updates</button></div>
+        </div>
+        <div class="field">
+          <span data-i18n>Components</span>
+          <div id="comp-list" class="comp-list"><span class="muted small" data-i18n>Loading…</span></div>
+        </div>
+      </section>
+    </div>
+    <footer class="dialog-foot">
+      <div class="grow"></div>
+      <button class="btn" value="cancel" data-i18n>Cancel</button>
+      <button class="btn primary" type="button" id="btn-save-settings" data-i18n>Save</button>
+    </footer>
+  </form>
+</dialog>
+
+<div id="toasts" class="toasts" aria-live="polite"></div>
+<script src="app.js" type="module"></script>
+</body>
+</html>

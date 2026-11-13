@@ -1,0 +1,11 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/KnA.App/KnA.App.csproj" />
+    <Project Path="src/KnA.Core/KnA.Core.csproj" />
+    <Project Path="src/KnA.Server/KnA.Server.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/KnA.App.Tests/KnA.App.Tests.csproj" />
+    <Project Path="tests/KnA.Core.Tests/KnA.Core.Tests.csproj" />
+  </Folder>
+</Solution>

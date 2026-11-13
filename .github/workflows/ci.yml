@@ -14,14 +14,14 @@ jobs:
           dotnet-version: 10.0.x
       - name: Install FFmpeg
         run: sudo apt-get update && sudo apt-get install -y ffmpeg fonts-dejavu-core
-      - run: dotnet build TnA.slnx -c Release
-      - run: dotnet test TnA.slnx -c Release --no-build
+      - run: dotnet build KnA.slnx -c Release
+      - run: dotnet test KnA.slnx -c Release --no-build
 
   docker:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
-      - run: docker build -t tna .
+      - run: docker build -t kna .
 
   publish:
     needs: test
@@ -37,9 +37,9 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: 10.0.x
-      - run: dotnet publish src/TnA.App -c Release -r ${{ matrix.rid }} --self-contained -o out/desktop
-      - run: dotnet publish src/TnA.Server -c Release -r ${{ matrix.rid }} --self-contained -o out/server
+      - run: dotnet publish src/KnA.App -c Release -r ${{ matrix.rid }} --self-contained -o out/desktop
+      - run: dotnet publish src/KnA.Server -c Release -r ${{ matrix.rid }} --self-contained -o out/server
       - uses: actions/upload-artifact@v4
         with:
-          name: tna-${{ matrix.rid }}
+          name: kna-${{ matrix.rid }}
           path: out/
