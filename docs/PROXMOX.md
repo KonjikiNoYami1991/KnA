@@ -31,7 +31,7 @@ Each value is checked when you enter it (id already used by a container or a VM,
 | Line | What you set |
 |---|---|
 | ID / hostname | a free id (the next one is proposed) and the name |
-| System | Debian 12 / 13, Ubuntu 24.04; unprivileged (recommended) or privileged |
+| System | the newest Proxmox template of Debian, Ubuntu LTS, Ubuntu, Fedora or Arch Linux (older ones still offered are listed too), with the exact template shown; unprivileged (recommended) or privileged |
 | CPU / RAM / swap | defaults: half of the host's cores (all of them on small hosts), 4 GB, 512 MB |
 | Disk | storage (with its free space) and size, 16 GB by default |
 | Template | storage the OS template is downloaded to |
@@ -66,8 +66,8 @@ bash kna-lxc.sh --unattended
 | Variable | Default | Meaning |
 |---|---|---|
 | `KNA_CT_ID` | next free id | Container id |
+| `KNA_CT_OS` | `debian` | `debian`, `ubuntu-lts`, `ubuntu`, `fedora`, `archlinux` (newest template of each) or a precise one such as `debian-12`, `ubuntu-24.04`, `fedora-43` |
 | `KNA_CT_HOSTNAME` | `kna` | Hostname |
-| `KNA_CT_OS` | `debian-12` | `debian-12`, `debian-13` or `ubuntu-24.04` |
 | `KNA_CT_CORES` · `KNA_CT_RAM` · `KNA_CT_SWAP` · `KNA_CT_DISK` | half the cores · 4096 · 512 · 16 | Cores, MB, MB, GB |
 | `KNA_CT_STORAGE` · `KNA_CT_TEMPLATE_STORAGE` | first active | Storage for the disk and for the template |
 | `KNA_CT_BRIDGE` · `KNA_CT_IP` · `KNA_CT_GW` · `KNA_CT_VLAN` | first bridge · `dhcp` | Network (`KNA_CT_IP` in CIDR form when static) |
@@ -83,7 +83,7 @@ bash kna-lxc.sh --unattended
 
 ## 2. Installing inside an existing container, VM or server
 
-On Debian 12+ / Ubuntu 22.04+ (amd64 or arm64), as root:
+On Debian 12+, Ubuntu 22.04+, Fedora 41+, Arch Linux and their derivatives (x86_64 or aarch64), as root:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/KonjikiNoYami1991/KnA/master/deploy/install-linux.sh | bash
@@ -123,6 +123,7 @@ bash install-linux.sh --unattended
 | `KNA_FFMPEG_SOURCE` | `btbn` | `btbn` (newest static build) or `distro` |
 | `KNA_COMPONENTS` | `anime4k fsrcnnx dovi_tool hdr10plus_tool` | Also `ai-runtime` (Python + PyTorch, several GB); empty for none |
 | `KNA_UID` · `KNA_GID` | system ids | Ids of the `kna` user |
+| `KNA_RPMFUSION` | `auto` | Fedora: `yes` enables RPM Fusion for the full AMD/Intel VA-API drivers (H.264/HEVC); `auto` = yes when an AMD/Intel GPU is used |
 
 ### Updating, settings, removal
 

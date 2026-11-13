@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# KnA web edition: native installer for Debian / Ubuntu (Proxmox LXC, VM or bare metal). No Docker.
+# KnA web edition: native installer for Debian, Ubuntu, Fedora, Arch Linux and their derivatives
+# (Proxmox LXC, VM or bare metal). No Docker.
 #
 #   Install (wizard):   curl -fsSL https://raw.githubusercontent.com/KonjikiNoYami1991/KnA/master/deploy/install-linux.sh | sudo bash
 #   Unattended:         sudo KNA_MEDIA_ROOTS="/srv/videos" KNA_PASSWORD='secret' bash install-linux.sh --unattended
@@ -17,6 +18,7 @@
 #   KNA_GPU            auto | none | "intel amd nvidia"   KNA_FFMPEG_SOURCE btbn | distro
 #   KNA_COMPONENTS     "anime4k fsrcnnx dovi_tool hdr10plus_tool ai-runtime" (subset)
 #   KNA_UID / KNA_GID  ids of the service user (match the owner of your video files / bind mounts)
+#   KNA_RPMFUSION      Fedora only: auto | yes | no — RPM Fusion for the full AMD/Intel VA-API drivers (H.264/HEVC)
 # shellcheck disable=SC1090  # settings files are read at run time
 set -euo pipefail
 
@@ -65,8 +67,18 @@ done
 [[ $EUID -eq 0 ]] || die "$(t "Run as root (sudo)." "Esegui come root (sudo).")"
 [[ -r /etc/os-release ]] || die "/etc/os-release missing"
 . /etc/os-release
-[[ "$ID" == debian || "$ID" == ubuntu || "${ID_LIKE:-}" == *debian* ]] \
-  || die "$(t "Only Debian, Ubuntu and their derivatives are supported." "Sono supportate solo Debian, Ubuntu e derivate.")"
+# Package manager family: apt (Debian, Ubuntu…), dnf (Fedora…), pacman (Arch…).
+case " $ID ${ID_LIKE:-} " in
+  *" debian "*|*" ubuntu "*) PM=apt ;;
+  *" fedora "*) PM=dnf ;;
+  *" arch "*|*" archlinux "*) PM=pacman ;;
+  *) PM="" ;;
+esac
+[[ $PM == apt ]] && ! command -v apt-get >/dev/null && PM=""
+[[ $PM == dnf ]] && ! command -v dnf >/dev/null && PM=""
+[[ $PM == pacman ]] && ! command -v pacman >/dev/null && PM=""
+[[ -n $PM ]] || die "$(t "Supported: Debian, Ubuntu, Fedora, Arch Linux and their derivatives (found: ${PRETTY_NAME:-$ID})." \
+                       "Supportate: Debian, Ubuntu, Fedora, Arch Linux e derivate (trovato: ${PRETTY_NAME:-$ID}).")"
 export DEBIAN_FRONTEND=noninteractive
 HAVE_SYSTEMD=0; [[ -d /run/systemd/system ]] && HAVE_SYSTEMD=1
 
@@ -87,10 +99,10 @@ if [[ $MODE == uninstall ]]; then
   exit 0
 fi
 
-case "$(dpkg --print-architecture)" in
-  amd64) RID=linux-x64 ;;
-  arm64) RID=linux-arm64 ;;
-  *) die "$(t "Unsupported CPU architecture: $(dpkg --print-architecture) (amd64 and arm64 only)." "Architettura non supportata: $(dpkg --print-architecture) (solo amd64 e arm64).")" ;;
+case "$(uname -m)" in
+  x86_64|amd64) RID=linux-x64 ;;
+  aarch64|arm64) RID=linux-arm64 ;;
+  *) die "$(t "Unsupported CPU architecture: $(uname -m) (x86_64 and aarch64 only)." "Architettura non supportata: $(uname -m) (solo x86_64 e aarch64).")" ;;
 esac
 
 # ---------------------------------------------------------------- current settings (reconfigure / update)
@@ -109,6 +121,7 @@ KNA_FFMPEG_SOURCE="${KNA_FFMPEG_SOURCE:-btbn}"
 KNA_COMPONENTS="${KNA_COMPONENTS-anime4k fsrcnnx dovi_tool hdr10plus_tool}"
 KNA_UID="${KNA_UID:-}"
 KNA_GID="${KNA_GID:-}"
+KNA_RPMFUSION="${KNA_RPMFUSION:-auto}"
 
 # GPU vendors visible in this machine / container (PCI vendor of each render node).
 detect_gpus() {
@@ -122,13 +135,53 @@ detect_gpus() {
   printf '%s\n' "${found[@]}" | sort -u | tr '\n' ' ' | sed 's/ $//'
 }
 
+# ---------------------------------------------------------------- package manager
+pm_has() { # does the package exist in the repositories?
+  case $PM in
+    apt) apt-cache show "$1" >/dev/null 2>&1 ;;
+    dnf) dnf -q list --available "$1" >/dev/null 2>&1 || rpm -q "$1" >/dev/null 2>&1 ;;
+    pacman) pacman -Si "$1" >/dev/null 2>&1 || pacman -Q "$1" >/dev/null 2>&1 ;;
+  esac
+}
+pm_install() { # install packages, failing if one is missing
+  ((${#@})) || return 0
+  case $PM in
+    apt) apt-get install -y --no-install-recommends "$@" ;;
+    dnf) dnf install -y --setopt=install_weak_deps=False --allowerasing "$@" ;;
+    pacman) pacman -S --noconfirm --needed "$@" ;;
+  esac
+}
+pm_try() { # install what exists, never fail on a missing optional package
+  local p ok=(); for p in "$@"; do [[ -n $p ]] && pm_has "$p" && ok+=("$p"); done
+  ((${#ok[@]})) && pm_install "${ok[@]}" || true
+}
+pick_pkg() { # first package name that exists in the repositories
+  local p; for p in "$@"; do pm_has "$p" && { echo "$p"; return; }; done
+}
+pm_refresh() {
+  case $PM in
+    apt) apt-get update -qq ;;
+    dnf) dnf -q makecache >/dev/null ;;
+    pacman)
+      # Fresh containers (e.g. the Proxmox archlinux-base template) may ship without an initialised keyring.
+      if ! pacman-key --list-keys >/dev/null 2>&1; then pacman-key --init >/dev/null && pacman-key --populate >/dev/null; fi
+      pacman -Sy --noconfirm --needed archlinux-keyring >/dev/null
+      # Arch supports only full upgrades: installing on top of an old system would be a partial upgrade.
+      pacman -Su --noconfirm ;;
+  esac
+}
+
 # ---------------------------------------------------------------- wizard
 INTERACTIVE=0
 if ((!UNATTENDED)) && [[ $MODE == install ]] && (exec </dev/tty) 2>/dev/null; then INTERACTIVE=1; fi
 
 if ((INTERACTIVE)) && ! command -v whiptail >/dev/null; then
   log "$(t "Installing whiptail for the wizard…" "Installazione di whiptail per il wizard…")"
-  apt-get update -qq && apt-get install -y -qq whiptail >/dev/null
+  case $PM in
+    apt) apt-get update -qq && apt-get install -y -qq whiptail >/dev/null ;;
+    dnf) dnf install -y -q newt >/dev/null ;;
+    pacman) pacman -Sy --noconfirm --needed libnewt >/dev/null ;;
+  esac
 fi
 
 wt() { whiptail --title "$TITLE" "$@" 3>&1 1>&2 2>&3 </dev/tty; }
@@ -217,6 +270,15 @@ La codifica hardware richiede la GPU passata a questo container/VM.")" 15 78 3 \
     nvidia "$(t "NVIDIA: NVENC (driver must match the host, see the guide)" "NVIDIA: NVENC (il driver deve coincidere con l'host, vedi guida)")" "$(on nvidia)") || cancelled
   KNA_GPU=$(echo "$gpus" | tr -d '"'); KNA_GPU=${KNA_GPU:-none}
 
+  if [[ $PM == dnf && ( " $KNA_GPU " == *" amd "* || " $KNA_GPU " == *" intel "* ) ]]; then
+    if wt $([[ $KNA_RPMFUSION == no ]] && echo --defaultno) --yesno "$(t "Fedora's own VA-API drivers have H.264 and HEVC removed (patents): hardware encoding of those codecs needs the drivers from RPM Fusion (mesa-va-drivers-freeworld for AMD, intel-media-driver for Intel).
+
+Enable the RPM Fusion free and nonfree repositories and use them?" \
+"I driver VA-API di Fedora non hanno H.264 e HEVC (brevetti): per la codifica hardware di questi codec servono i driver di RPM Fusion (mesa-va-drivers-freeworld per AMD, intel-media-driver per Intel).
+
+Abilitare i repository RPM Fusion free e nonfree e usarli?")" 14 78; then KNA_RPMFUSION=yes; else KNA_RPMFUSION=no; fi
+  fi
+
   KNA_FFMPEG_SOURCE=$(wt --default-item "$KNA_FFMPEG_SOURCE" --menu "$(t "FFmpeg build:" "Build di FFmpeg:")" 12 78 2 \
     btbn "$(t "Newest static build (recommended, updatable from KnA)" "Build statica più recente (consigliata, aggiornabile da KnA)")" \
     distro "$(t "Package of $PRETTY_NAME (older, fewer encoders)" "Pacchetto di $PRETTY_NAME (più vecchio, meno encoder)")") || cancelled
@@ -264,13 +326,6 @@ done
 [[ $KNA_GPU == auto ]] && { KNA_GPU=$(detect_gpus); KNA_GPU=${KNA_GPU:-none}; }
 
 # ---------------------------------------------------------------- packages
-pick_pkg() { # first package name that exists in the repositories
-  local p; for p in "$@"; do apt-cache show "$p" >/dev/null 2>&1 && { echo "$p"; return; }; done
-}
-apt_try() { # install what exists, never fail on a missing optional package
-  local p ok=(); for p in "$@"; do [[ -n $p ]] && apt-cache show "$p" >/dev/null 2>&1 && ok+=("$p"); done
-  ((${#ok[@]})) && apt-get install -y --no-install-recommends "${ok[@]}" || true
-}
 add_components() { # add apt components (non-free, multiverse…) to every source line of a file
   local f=$1; shift
   awk -v want="$*" '
@@ -282,28 +337,79 @@ add_components() { # add apt components (non-free, multiverse…) to every sourc
     }
     { print }' "$f" > "$f.kna-tmp" && cat "$f.kna-tmp" > "$f" && rm -f "$f.kna-tmp"
 }
+has_gpu() { [[ " $KNA_GPU " == *" $1 "* ]]; }
 
 log "$(t "Installing packages for $PRETTY_NAME…" "Installazione dei pacchetti per $PRETTY_NAME…")"
-if [[ " $KNA_GPU " == *" intel "* ]]; then
-  # Intel's full media driver is in Debian non-free / Ubuntu multiverse.
-  if [[ $ID == debian ]]; then comps="contrib non-free non-free-firmware"; else comps="multiverse"; fi
-  for f in /etc/apt/sources.list /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources; do
-    [[ -f $f ]] && grep -Eq "(debian|ubuntu)" "$f" && add_components "$f" $comps
-  done
+case $PM in
+apt)
+  if has_gpu intel; then
+    # Intel's full media driver is in Debian non-free / Ubuntu multiverse.
+    if [[ $ID == debian || " ${ID_LIKE:-} " != *" ubuntu "* && $ID != ubuntu ]]; then comps="contrib non-free non-free-firmware"; else comps="multiverse"; fi
+    for f in /etc/apt/sources.list /etc/apt/sources.list.d/*.list /etc/apt/sources.list.d/*.sources; do
+      [[ -f $f ]] && grep -Eq "(debian|ubuntu)" "$f" && add_components "$f" $comps
+    done
+  fi
+  pm_refresh
+  # Runtime libraries of self-contained .NET (ICU, OpenSSL), fonts for subtitles, Vulkan (libplacebo) and vainfo.
+  base=(ca-certificates curl unzip xz-utils tar fontconfig fonts-dejavu-core libvulkan1 mesa-vulkan-drivers vainfo)
+  icu=$(apt-cache pkgnames libicu 2>/dev/null | grep -E '^libicu[0-9]+$' | sort -V | tail -1 || true)
+  ssl=$(pick_pkg libssl3t64 libssl3 libssl1.1)
+  [[ -n $icu ]] && base+=("$icu")
+  [[ -n $ssl ]] && base+=("$ssl")
+  pm_install "${base[@]}"
+  has_gpu intel && pm_try "$(pick_pkg intel-media-va-driver-non-free intel-media-va-driver)" i965-va-driver libvpl2 libmfx-gen1.2 libmfx-gen1
+  # Newer releases ship the VA driver inside mesa-libgallium; mesa-va-drivers is then a transitional package.
+  has_gpu amd && pm_try mesa-va-drivers
+  PY_PKGS=(python3 python3-venv python3-pip)
+  ;;
+dnf)
+  pm_refresh
+  pm_install ca-certificates curl unzip xz tar findutils shadow-utils util-linux procps-ng fontconfig dejavu-sans-fonts \
+             libicu openssl-libs vulkan-loader mesa-vulkan-drivers libva-utils
+  if [[ $KNA_RPMFUSION == auto ]]; then
+    if has_gpu amd || has_gpu intel; then KNA_RPMFUSION=yes; else KNA_RPMFUSION=no; fi
+  fi
+  if [[ $KNA_RPMFUSION == yes ]] && ! rpm -q rpmfusion-free-release rpmfusion-nonfree-release >/dev/null 2>&1; then
+    log "$(t "Enabling RPM Fusion (free + nonfree) for the full VA-API drivers…" "Abilitazione di RPM Fusion (free + nonfree) per i driver VA-API completi…")"
+    fv=$(rpm -E %fedora)
+    dnf install -y "https://mirrors.rpmfusion.org/free/fedora/rpmfusion-free-release-$fv.noarch.rpm" \
+                   "https://mirrors.rpmfusion.org/nonfree/fedora/rpmfusion-nonfree-release-$fv.noarch.rpm" \
+      || { warn "$(t "RPM Fusion could not be enabled: using Fedora's drivers (no H.264/HEVC hardware encoding)." \
+                     "Impossibile abilitare RPM Fusion: uso i driver di Fedora (niente codifica hardware H.264/HEVC).")"; KNA_RPMFUSION=no; }
+    dnf -q makecache >/dev/null || true
+  fi
+  if has_gpu amd; then
+    if [[ $KNA_RPMFUSION == yes ]]; then
+      # Replaces Fedora's codec-stripped VA driver (where it is a separate package) with RPM Fusion's.
+      if rpm -q mesa-va-drivers >/dev/null 2>&1; then dnf swap -y mesa-va-drivers mesa-va-drivers-freeworld || true
+      else pm_try mesa-va-drivers-freeworld; fi
+    else
+      pm_try mesa-va-drivers
+      warn "$(t "AMD on Fedora without RPM Fusion: H.264/HEVC hardware encoding is not available (AV1 is)." \
+                "AMD su Fedora senza RPM Fusion: la codifica hardware H.264/HEVC non è disponibile (AV1 sì).")"
+    fi
+  fi
+  if has_gpu intel; then
+    if [[ $KNA_RPMFUSION == yes ]]; then pm_try intel-media-driver; else pm_try intel-media-driver-free; fi
+    pm_try libvpl "$(pick_pkg intel-vpl-gpu-rt oneVPL-intel-gpu)" libva-intel-driver
+  fi
+  PY_PKGS=(python3 python3-pip)
+  ;;
+pacman)
+  pm_refresh
+  # The VA-API driver for AMD (and the other Mesa drivers) is part of the mesa package.
+  pm_install ca-certificates curl unzip xz tar fontconfig ttf-dejavu icu openssl vulkan-icd-loader mesa libva-utils
+  has_gpu amd && pm_try vulkan-radeon
+  has_gpu intel && pm_try intel-media-driver vpl-gpu-rt libvpl vulkan-intel
+  PY_PKGS=(python python-pip)
+  ;;
+esac
+if [[ $KNA_FFMPEG_SOURCE == distro ]]; then
+  # Fedora's own build is ffmpeg-free; with RPM Fusion the full one is called ffmpeg.
+  pm_install "$(pick_pkg ffmpeg ffmpeg-free)"
 fi
-apt-get update -qq
-# Runtime libraries of self-contained .NET (ICU, OpenSSL), fonts for subtitles, Vulkan (libplacebo) and vainfo.
-base=(ca-certificates curl unzip xz-utils tar fontconfig fonts-dejavu-core libvulkan1 mesa-vulkan-drivers vainfo)
-icu=$(apt-cache pkgnames libicu 2>/dev/null | grep -E '^libicu[0-9]+$' | sort -V | tail -1 || true)
-ssl=$(pick_pkg libssl3t64 libssl3 libssl1.1)
-[[ -n $icu ]] && base+=("$icu")
-[[ -n $ssl ]] && base+=("$ssl")
-apt-get install -y --no-install-recommends "${base[@]}"
-[[ " $KNA_GPU " == *" intel "* ]] && apt_try "$(pick_pkg intel-media-va-driver-non-free intel-media-va-driver)" i965-va-driver libvpl2 libmfx-gen1.2 libmfx-gen1
-[[ " $KNA_GPU " == *" amd "* ]] && apt_try mesa-va-drivers
-[[ $KNA_FFMPEG_SOURCE == distro ]] && apt-get install -y --no-install-recommends ffmpeg
-[[ " $KNA_COMPONENTS " == *" ai-runtime "* ]] && apt-get install -y --no-install-recommends python3 python3-venv python3-pip
-[[ " $KNA_GPU " == *" nvidia "* ]] && ! command -v nvidia-smi >/dev/null && warn "$(t \
+[[ " $KNA_COMPONENTS " == *" ai-runtime "* ]] && pm_install "${PY_PKGS[@]}"
+has_gpu nvidia && ! command -v nvidia-smi >/dev/null && warn "$(t \
   "NVIDIA: the user-space driver (same version as the host) must be installed here by hand; see docs/PROXMOX.md." \
   "NVIDIA: il driver user-space (stessa versione dell'host) va installato qui a mano; vedi docs/PROXMOX.it.md.")"
 
@@ -349,7 +455,7 @@ if [[ $MODE == install ]]; then
   SERVICE_USER=kna
   if [[ -n $KNA_UID ]] && u=$(getent passwd "$KNA_UID" | cut -d: -f1) && [[ -n $u ]]; then SERVICE_USER=$u; fi
   id -u "$SERVICE_USER" >/dev/null 2>&1 || useradd ${KNA_UID:+--uid "$KNA_UID"} ${KNA_UID:---system} --gid "$SERVICE_GROUP" \
-    --home-dir "$DATA_DIR" --no-create-home --shell /usr/sbin/nologin "$SERVICE_USER"
+    --home-dir "$DATA_DIR" --no-create-home --shell "$(command -v nologin || echo /usr/sbin/nologin)" "$SERVICE_USER"
   for g in render video; do getent group "$g" >/dev/null && usermod -aG "$g" "$SERVICE_USER"; done
 
   mkdir -p "$DATA_DIR" "$CONF_DIR"
@@ -395,6 +501,7 @@ if [[ $MODE == install ]]; then
   {
     echo "# Installer choices, reused by kna-update"
     q KNA_GPU "$KNA_GPU"; q KNA_FFMPEG_SOURCE "$KNA_FFMPEG_SOURCE"; q KNA_COMPONENTS "$KNA_COMPONENTS"
+    [[ $PM == dnf ]] && q KNA_RPMFUSION "$KNA_RPMFUSION"
     q KNA_UID "$(id -u "$SERVICE_USER")"; q KNA_GID "$(getent group "$SERVICE_GROUP" | cut -d: -f3)"
     q SERVICE_USER "$SERVICE_USER"; q SERVICE_GROUP "$SERVICE_GROUP"
   } > "$INSTALL_CONF"
@@ -491,7 +598,7 @@ elif [[ $MODE == install ]]; then
       warn "  ✗ $id ($code): $(head -c 300 /tmp/kna-component.json 2>/dev/null)"
       if [[ $id == ffmpeg ]]; then
         warn "$(t "Falling back to the FFmpeg package of $PRETTY_NAME." "Ripiego sul pacchetto FFmpeg di $PRETTY_NAME.")"
-        apt-get install -y --no-install-recommends ffmpeg || true
+        pm_install "$(pick_pkg ffmpeg ffmpeg-free)" || true
       fi
     fi
   done

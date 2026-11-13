@@ -11,7 +11,9 @@
 #
 # Unattended (every variable optional; KNA_PORT, KNA_PASSWORD, KNA_FFMPEG_SOURCE, KNA_COMPONENTS are passed
 # to the installer inside the container):
-#   KNA_CT_ID  KNA_CT_HOSTNAME  KNA_CT_OS (debian-12|debian-13|ubuntu-24.04)  KNA_CT_CORES  KNA_CT_RAM (MB)
+#   KNA_CT_ID  KNA_CT_HOSTNAME  KNA_CT_CORES  KNA_CT_RAM (MB)
+#   KNA_CT_OS   debian | ubuntu-lts | ubuntu | fedora | archlinux (newest template of each),
+#               or a precise one: debian-12, ubuntu-24.04, fedora-43…
 #   KNA_CT_SWAP (MB)  KNA_CT_DISK (GB)  KNA_CT_STORAGE  KNA_CT_TEMPLATE_STORAGE  KNA_CT_BRIDGE
 #   KNA_CT_IP (dhcp | 192.0.2.10/24)  KNA_CT_GW  KNA_CT_VLAN  KNA_CT_UNPRIVILEGED (1|0)
 #   KNA_CT_GPU      auto | none | "renderD128 renderD129"
@@ -99,10 +101,51 @@ id_free() {
 gpu_label() { local i; for i in "${!GPU_NODES[@]}"; do [[ ${GPU_NODES[$i]} == "$1" ]] && { echo "${GPU_LABELS[$i]}"; return; }; done; echo "$1"; }
 cut_to() { local s=$2; ((${#s} > $1)) && s="${s:0:$(($1 - 1))}…"; printf '%s' "$s"; }
 
+# OS templates: what pveam offers plus what is already downloaded. "debian", "ubuntu", "fedora"… mean the newest.
+AVAIL_TEMPLATES=() TEMPLATES_LOADED=0
+load_templates() {
+  ((TEMPLATES_LOADED)) && return 0
+  TEMPLATES_LOADED=1
+  log "$(t "Reading the list of OS templates…" "Lettura dell'elenco dei template…")"
+  timeout 90 pveam update >/dev/null 2>&1 || warn "$(t "pveam update failed: only templates already known are offered." "pveam update non riuscito: propongo solo i template già noti.")"
+  local s
+  mapfile -t AVAIL_TEMPLATES < <({
+    pveam available --section system 2>/dev/null | awk '{print $2}'
+    for s in "${TMPL_STORAGES[@]}"; do pveam list "$s" 2>/dev/null | awk 'NR>1 {sub(/.*\//, "", $1); print $1}'; done
+  } | grep -v '^$' | sort -u)
+}
+os_pattern() {
+  case "$1" in
+    debian) echo '^debian-[0-9]+-standard_' ;;
+    debian-[0-9]*) echo "^$1-standard_" ;;
+    ubuntu) echo '^ubuntu-[0-9]+\.[0-9]+-standard_' ;;
+    ubuntu-lts) echo '^ubuntu-[0-9]*[02468]\.04-standard_' ;;
+    ubuntu-[0-9]*) echo "^${1//./\\.}-standard_" ;;
+    fedora) echo '^fedora-[0-9]+-default_' ;;
+    fedora-[0-9]*) echo "^$1-default_" ;;
+    arch|archlinux) echo '^archlinux-base_' ;;
+    *) return 1 ;;
+  esac
+}
+os_template() { # newest template matching a KNA_CT_OS value (empty when none)
+  local p; p=$(os_pattern "$1") || return 0
+  printf '%s\n' "${AVAIL_TEMPLATES[@]}" | grep -E "$p" | sort -V | tail -1 || true
+}
+os_name() {
+  case "$1" in
+    debian) t "Debian (newest stable)" "Debian (ultima stabile)" ;;
+    ubuntu-lts) t "Ubuntu LTS (newest)" "Ubuntu LTS (ultima)" ;;
+    ubuntu) t "Ubuntu (newest, also non-LTS)" "Ubuntu (ultima, anche non LTS)" ;;
+    fedora) t "Fedora (newest)" "Fedora (ultima)" ;;
+    arch|archlinux) echo "Arch Linux" ;;
+    *) echo "$1" ;;
+  esac
+}
+
 # ---------------------------------------------------------------- defaults
 CT_ID="${KNA_CT_ID:-$NEXT_ID}"
 CT_HOSTNAME="${KNA_CT_HOSTNAME:-kna}"
-CT_OS="${KNA_CT_OS:-debian-12}"
+CT_OS="${KNA_CT_OS:-debian}"
 CT_CORES="${KNA_CT_CORES:-$(( HOST_CORES > 4 ? HOST_CORES / 2 : HOST_CORES ))}"
 CT_RAM="${KNA_CT_RAM:-4096}"
 CT_SWAP="${KNA_CT_SWAP:-512}"
@@ -153,6 +196,7 @@ problems() {
   local i v
   [[ $CT_ID =~ ^[0-9]+$ ]] && ((CT_ID >= 100)) || echo "$(t "Container ID must be a number ≥ 100" "L'ID del container deve essere un numero ≥ 100"): $CT_ID"
   [[ $CT_ID =~ ^[0-9]+$ ]] && ! id_free "$CT_ID" && echo "$(t "ID $CT_ID is already used by a container or VM" "L'ID $CT_ID è già usato da un container o una VM")"
+  [[ -n $(os_template "$CT_OS") ]] || echo "$(t "No template for '$CT_OS' (try debian, ubuntu-lts, ubuntu, fedora, archlinux)" "Nessun template per '$CT_OS' (prova debian, ubuntu-lts, ubuntu, fedora, archlinux)")"
   [[ $CT_HOSTNAME =~ ^[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?$ ]] || echo "Hostname: $CT_HOSTNAME"
   for v in CT_CORES CT_RAM CT_SWAP CT_DISK; do [[ ${!v} =~ ^[0-9]+$ ]] || echo "$v: ${!v}"; done
   [[ $CT_CORES =~ ^[0-9]+$ ]] && ((CT_CORES < 1 || CT_CORES > HOST_CORES)) && echo "$(t "Cores: 1 to $HOST_CORES" "Core: da 1 a $HOST_CORES")"
@@ -193,7 +237,10 @@ remarks() {
   return 0
 }
 
-describe_os() { case "$CT_OS" in debian-12) echo "Debian 12" ;; debian-13) echo "Debian 13" ;; ubuntu-24.04) echo "Ubuntu 24.04" ;; *) echo "$CT_OS" ;; esac; }
+describe_os() {
+  local tp; tp=$(os_template "$CT_OS")
+  if [[ -n $tp ]]; then echo "${tp%%_amd64*}"; else echo "$CT_OS: $(t "no template" "nessun template")"; fi
+}
 describe_priv() { ((CT_UNPRIV)) && t unprivileged "non privilegiato" || t privileged privilegiato; }
 describe_disk() { local f; f=$(storage_free "$CT_STORAGE"); echo "$CT_DISK GB $(t on su) $CT_STORAGE${f:+ ($f GB $(t free liberi))}"; }
 describe_net() { echo "$CT_BRIDGE, $( [[ $CT_IP == dhcp ]] && echo DHCP || echo "$CT_IP${CT_GW:+ gw $CT_GW}")${CT_VLAN:+, VLAN $CT_VLAN}"; }
@@ -259,8 +306,19 @@ edit_id() {
 
 edit_os() {
   local v
-  v=$(wt --default-item "$CT_OS" --menu "$(t "Operating system of the container:" "Sistema operativo del container:")" 12 60 3 \
-    debian-12 "Debian 12 (bookworm)" debian-13 "Debian 13 (trixie)" ubuntu-24.04 "Ubuntu 24.04 LTS") || return 0
+  local o tp items=()
+  for o in debian ubuntu-lts ubuntu fedora archlinux; do
+    tp=$(os_template "$o"); [[ -n $tp ]] && items+=("$o" "$(printf '%-30s %s' "$(os_name "$o")" "${tp%%_amd64*}")")
+  done
+  # Older releases still offered by Proxmox, e.g. the previous Debian or Ubuntu LTS.
+  while read -r tp; do
+    o=${tp%%-standard_*}; o=${o%%-default_*}
+    [[ $o == "$tp" || " ${items[*]} " == *" $o "* ]] && continue
+    [[ $(os_template debian) == "$tp" || $(os_template ubuntu) == "$tp" || $(os_template ubuntu-lts) == "$tp" || $(os_template fedora) == "$tp" ]] && continue
+    items+=("$o" "$(printf '%-30s %s' "$o" "${tp%%_amd64*}")")
+  done < <(printf '%s\n' "${AVAIL_TEMPLATES[@]}" | grep -E '^(debian-[0-9]+-standard|ubuntu-[0-9.]+-standard|fedora-[0-9]+-default)_' | sort -V)
+  ((${#items[@]})) || { oops "$(t "No OS template is available (pveam update failed?)." "Nessun template disponibile (pveam update non riuscito?).")"; return 0; }
+  v=$(wt --default-item "$CT_OS" --menu "$(t "Operating system of the container (Proxmox template):" "Sistema operativo del container (template Proxmox):")" 18 78 10 "${items[@]}") || return 0
   CT_OS=$v
   if wt --yes-button "$(t Unprivileged "Non privilegiato")" --no-button "$(t Privileged Privilegiato)" \
        $( ((CT_UNPRIV)) || echo --defaultno ) --yesno "$(t "Unprivileged (recommended): safer; GPU and host folders work, writable host folders may need the user mapping.
@@ -290,7 +348,7 @@ edit_disk() {
   for s in "${ROOT_STORAGES[@]}"; do items+=("$s" "$(pvesm status -storage "$s" 2>/dev/null | awk 'NR==2 {print $2}')  $(storage_free "$s") GB $(t free liberi)"); done
   v=$(wt --default-item "$CT_STORAGE" --menu "$(t "Storage for the container disk:" "Storage per il disco del container:")" 16 70 8 "${items[@]}") || return 0
   CT_STORAGE=$v
-  while v=$(ask "$(t "Root disk size in GB (temporary files and AI models live here, ≥ 8):" "Dimensione del disco root in GB (qui vanno file temporanei e modelli AI, ≥ 8):")" "$CT_DISK"); do
+  while v=$(ask "$(t "Root disk size in GB, ≥ 8 (system, KnA, temporary files; +6–10 GB if you add the AI upscaler, PyTorch):" "Dimensione del disco root in GB, ≥ 8 (sistema, KnA, file temporanei; +6–10 GB se aggiungi l'upscaler AI, PyTorch):")" "$CT_DISK"); do
     [[ $v =~ ^[0-9]+$ ]] && ((v >= 8)) && { CT_DISK=$v; break; }; oops "≥ 8"
   done
   return 0
@@ -559,6 +617,7 @@ edit_kna() {
   KNA_COMPONENTS=$(echo "$v" | tr -d '"')
 }
 
+load_templates
 if ((INTERACTIVE)); then
   wt --msgbox "$(t "This creates ONE new LXC container and installs the KnA web edition in it (systemd service, no Docker).
 
@@ -651,18 +710,10 @@ trap on_exit EXIT
 
 # ---------------------------------------------------------------- template
 STAGE=$(t "downloading the template" "download del template")
-case "$CT_OS" in
-  debian-12) pattern='^debian-12-standard_' ;;
-  debian-13) pattern='^debian-13-standard_' ;;
-  ubuntu-24.04) pattern='^ubuntu-24\.04-standard_' ;;
-  *) die "KNA_CT_OS: $CT_OS" ;;
-esac
-TEMPLATE=$(pveam list "$CT_TSTORAGE" 2>/dev/null | awk 'NR>1 {sub(/.*\//, "", $1); print $1}' | grep -E "$pattern" | sort -V | tail -1 || true)
-if [[ -z $TEMPLATE ]]; then
-  log "$(t "Downloading the $CT_OS template…" "Download del template $CT_OS…")"
-  pveam update >/dev/null || warn "pveam update failed"
-  TEMPLATE=$(pveam available --section system | awk '{print $2}' | grep -E "$pattern" | sort -V | tail -1 || true)
-  [[ -n $TEMPLATE ]] || die "$(t "No $CT_OS template available from pveam." "Nessun template $CT_OS disponibile da pveam.")"
+TEMPLATE=$(os_template "$CT_OS")
+[[ -n $TEMPLATE ]] || die "$(t "No $CT_OS template available from pveam." "Nessun template $CT_OS disponibile da pveam.")"
+if ! pveam list "$CT_TSTORAGE" 2>/dev/null | awk 'NR>1 {sub(/.*\//, "", $1); print $1}' | grep -qxF "$TEMPLATE"; then
+  log "$(t "Downloading the template $TEMPLATE…" "Download del template $TEMPLATE…")"
   pveam download "$CT_TSTORAGE" "$TEMPLATE"
 fi
 
