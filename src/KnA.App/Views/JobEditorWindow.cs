@@ -516,19 +516,23 @@ public sealed class JobEditorWindow : Window
         var frameTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(250) };
 
         void Layout() => stamp.Text = $"{L.T("Playhead")}: {Ui.Stamp(_playhead)}";
+        CancellationTokenSource? frameCts = null;
         frameTimer.Tick += async (_, _) =>
         {
             frameTimer.Stop();
             spin.IsVisible = true;
+            // Latest request wins: the frame for a position the playhead already left is cancelled (its FFmpeg killed).
+            frameCts?.Cancel();
+            var mine = frameCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
             try
             {
                 var t = _playhead; var fin = _final;
-                var path = await Task.Run(() => _queue.Preview.FrameAsync(_job.Id, t, fin, 1280, ct), ct);
-                if (!ct.IsCancellationRequested) img.Source = Load(path);
+                var path = await Task.Run(() => _queue.Preview.FrameAsync(_job.Id, t, fin, 1280, mine.Token), mine.Token);
+                if (!mine.IsCancellationRequested) img.Source = Load(path);
             }
             catch (Exception ex) when (ex is not OperationCanceledException) { stamp.Text = ex.Message; }
             catch (OperationCanceledException) { }
-            finally { spin.IsVisible = false; }
+            finally { if (frameCts == mine) spin.IsVisible = false; }
         };
         void LoadFrame() { frameTimer.Stop(); frameTimer.Start(); }
 
@@ -900,15 +904,18 @@ public sealed class JobEditorWindow : Window
         var status = Ui.Muted("");
         var slider = new Slider { Minimum = 0, Maximum = dur, Value = Math.Clamp(_playhead, 0, dur) };
         var timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(300) };
+        CancellationTokenSource? frameCts = null;
         timer.Tick += async (_, _) =>
         {
             timer.Stop();
             status.Text = L.T("Rendering…");
+            frameCts?.Cancel();
+            var mine = frameCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
             try
             {
                 var t = _playhead;
-                var path = await Task.Run(() => _queue.Preview.FrameAsync(_job.Id, t, true, 1600, ct), ct);
-                if (!ct.IsCancellationRequested) { img.Source = Load(path); status.Text = $"{L.T("Position")}: {Ui.Stamp(t)}"; }
+                var path = await Task.Run(() => _queue.Preview.FrameAsync(_job.Id, t, true, 1600, mine.Token), mine.Token);
+                if (!mine.IsCancellationRequested) { img.Source = Load(path); status.Text = $"{L.T("Position")}: {Ui.Stamp(t)}"; }
             }
             catch (OperationCanceledException) { }
             catch (Exception ex) { status.Text = L.T("The preview could not be generated.") + " " + ex.Message; }

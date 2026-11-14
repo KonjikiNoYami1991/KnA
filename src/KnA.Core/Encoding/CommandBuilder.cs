@@ -21,6 +21,7 @@ public sealed record BuildOptions
     public string? OutputDirectory { get; init; }
     public string NameTemplate { get; init; } = OutputNaming.DefaultTemplate;
     public string? VaapiDevice { get; init; }
+    public Settings.HardwareDecoding HardwareDecoding { get; init; } = Settings.HardwareDecoding.Auto;
     /// <summary>Extra arguments appended before the output (power users).</summary>
     public IReadOnlyList<string> ExtraArguments { get; init; } = [];
     public string AppVersion { get; init; } = "3.0";
@@ -82,7 +83,16 @@ public sealed record UpscaleEnvironment
 }
 
 public enum PreviewKind { Frame, Clip }
-public sealed record ChunkRequest(double Start, double End);
+public sealed record ChunkRequest(double Start, double End)
+{
+    /// <summary>
+    /// Resumable single-pass encode: the video is written as pieces of this length (segment muxer, a forced IDR
+    /// at every cut); <see cref="SegmentList"/> (CSV) lists every piece once it is complete.
+    /// </summary>
+    public double? SegmentSeconds { get; init; }
+    public int SegmentStartNumber { get; init; }
+    public string? SegmentList { get; init; }
+}
 public sealed record ConcatVideo(string ListFile, double Offset);
 public sealed record PreviewRequest(PreviewKind Kind, double Time, double ClipSeconds = 6, int MaxWidth = 1280);
 
@@ -270,6 +280,10 @@ public static class CommandBuilder
         // Orientation: FFmpeg rotates the frames itself (autorotate) from the display matrix we set here;
         // with stream copy only the matrix changes (lossless fix of wrong rotation flags).
         if (vin >= 0 && !neural) inputs.AddOptions(vin, FilterBuilder.OrientationInputArgs(video, s.VideoFilters));
+        // GPU decoding of the source (frames are copied back to memory, so every filter keeps working).
+        if (vin >= 0 && !neural && !copyVideo && concat is null && !Frameserver.IsVapourSynth(videoTrack.File))
+            inputs.AddOptions(vin, VideoEncoders.HwDecodeArgs(ctx.Options.HardwareDecoding,
+                p.AllowsHardware ? s.EffectiveBackend : EncoderBackend.Software, ctx.Options.VaapiDevice));
         var backend = preview is null ? (p.Kind == ProfileKind.RemuxMp4 ? s.EffectiveBackend : s.EffectiveBackend) : EncoderBackend.Software;
         bool tenBit = preview is null && s.EffectiveTenBit && hdr.Action != HdrAction.ToneMap;
 
@@ -378,7 +392,7 @@ public static class CommandBuilder
         if (preview?.Kind != PreviewKind.Frame && !p.IsImages && concat is null && !restOnly) body.AddRange(hdr.ColorArgs);
 
         // ------------------------------------------------------------ audio / subtitles / attachments
-        int outIndex = 1;
+        int outIndex = ctx.RestOnly ? 0 : 1;   // the intermediate audio/subtitle file has no video stream
         int audioOut = 0, subOut = 0;
         if (preview?.Kind == PreviewKind.Clip)
         {
@@ -398,7 +412,7 @@ public static class CommandBuilder
                     issues.Add(Containers.Warning("Audio track {0} of {1} not found: skipped.", t.Stream, Path.GetFileName(t.File)));
                     continue;
                 }
-                var aplan = AudioPlanner.Plan(ast, AudioPlanner.ForTrack(t, s), restOnly ? "mkv" : container, ctx.Options.AudioEncoders);
+                var aplan = AudioPlanner.Plan(ast, AudioPlanner.ForTrack(t, s), container, ctx.Options.AudioEncoders);   // the final container decides, also for the intermediate file
                 if (aplan.Issue is { } ai) issues.Add(ai);
                 if (ctx.PreEncodedAudio.GetValueOrDefault($"{t.File}|{t.Stream}") is { } pre)
                 {
@@ -483,14 +497,26 @@ public static class CommandBuilder
         {
             // Same fast-seek + original timestamps technique as previews: the filters and burned subtitles
             // see exactly the timeline of a single-pass encode, and trim= keeps the segment's frames.
-            const double preroll = 5;
+            // The input seek is exact (frames before it never reach the filters, -copyts keeps the timeline):
+            // only temporal filters need a little history to look the same across segment borders.
+            double preroll = s.VideoFilters.Denoise != FilterStrength.Off || s.VideoFilters.Deinterlace == DeinterlaceMode.Force
+                || (s.VideoFilters.Deinterlace == DeinterlaceMode.Auto && video.IsInterlaced) ? 1 : 0;
             a2.AddRange(inputs.ToArgs(delay => Math.Max(0, chunk.Start - delay - preroll)));
             a2.Add("-copyts");
             a2.AddRange(body);
             a2.AddRange(["-an", "-sn", "-dn", "-max_muxing_queue_size", "4096"]);
             a2.AddRange(ctx.Options.ExtraArguments);
             a2.AddRange(ProgressArgs);
-            a2.AddRange(["-f", "matroska", ctx.ForcedOutputPath ?? "chunk.mkv"]);
+            if (chunk.SegmentSeconds is { } pieceLength)
+            {
+                var piece = Sec(pieceLength);
+                a2.AddRange(["-force_key_frames", $"expr:gte(t,n_forced*{piece})"]);
+                if (ForcedIdrEncoder(ResolvedEncoder(body))) a2.AddRange(["-forced-idr", "1"]);
+                a2.AddRange(["-f", "segment", "-segment_format", "matroska", "-segment_time", piece,
+                    "-segment_start_number", chunk.SegmentStartNumber.ToString(CultureInfo.InvariantCulture), "-reset_timestamps", "1",
+                    "-segment_list", chunk.SegmentList ?? "pieces.csv", "-segment_list_type", "csv", ctx.ForcedOutputPath ?? "piece_%05d.mkv"]);
+            }
+            else a2.AddRange(["-f", "matroska", ctx.ForcedOutputPath ?? "chunk.mkv"]);
             return new CompiledJob(new EncodePlan(a2, ctx.ForcedOutputPath ?? "chunk.mkv"), issues, hdr, tracks, "mkv",
                 TimeSpan.FromSeconds(chunk.End - chunk.Start)) { Pipe = inputs.Pipe };
         }
@@ -498,7 +524,9 @@ public static class CommandBuilder
         if (preview is not null)
         {
             // Fast seek on every input but keep original timestamps, then cut exactly at the requested time.
-            const double preroll = 8;
+            // Exact input seek: only the frames from the requested time on are filtered (a long preroll made every
+            // still frame tone-map, scale and burn ~200 frames first). Clips keep a second of audio/filters history.
+            double preroll = preview.Kind == PreviewKind.Clip ? 1 : 0;
             a2.AddRange(inputs.ToArgs(delay => Math.Max(0, preview.Time - delay - preroll)));
             a2.Add("-copyts");
         }
@@ -506,7 +534,8 @@ public static class CommandBuilder
 
         a2.AddRange(body);
         a2.AddRange(["-max_muxing_queue_size", "4096"]);
-        if (copyVideo || container is "mkv" or "mp4" or "mov") a2.AddRange(["-avoid_negative_ts", "make_zero"]);
+        // Not in the intermediate audio/subtitle file: without video, "make_zero" would move a delayed track to 0.
+        if (!restOnly && (copyVideo || container is "mkv" or "mp4" or "mov")) a2.AddRange(["-avoid_negative_ts", "make_zero"]);
 
         var duration = ctx.Source.Duration;
         if (preview is not null)
@@ -585,6 +614,19 @@ public static class CommandBuilder
         SampleAspectRatio = v.SampleAspectRatio, FrameRate = v.FrameRate, FrameRateRational = v.FrameRateRational, FrameCount = v.FrameCount,
         PixelFormat = "rgb48le", BitDepth = 16, Hdr = v.Hdr, ColorTransfer = v.ColorTransfer, ColorPrimaries = v.ColorPrimaries,
     };
+
+    /// <summary>The video encoder of an argument list ("-c:v name").</summary>
+    public static string? ResolvedEncoder(IReadOnlyList<string> args)
+    {
+        for (int i = 0; i < args.Count - 1; i++) if (args[i] is "-c:v" or "-codec:v" or "-vcodec") return args[i + 1];
+        return null;
+    }
+
+    /// <summary>Encoders whose forced keyframes can be made IDR (-forced-idr 1): needed to cut a resumable encode cleanly.</summary>
+    public static bool ForcedIdrEncoder(string? encoder) => encoder is "libx264" or "libx265" or "h264_nvenc" or "hevc_nvenc" or "av1_nvenc";
+
+    /// <summary>Encoders a resumable (pieces) encode supports: forced IDR, or keyframes that are always closed.</summary>
+    public static bool ResumableEncoder(string? encoder) => ForcedIdrEncoder(encoder) || encoder is "libsvtav1" or "libvpx-vp9" or "libaom-av1";
 
     /// <summary>Output-side trim (after every filter and import). Returns null when not trimmed.</summary>
     public static (List<string> Args, TimeSpan Duration)? TrimArgs(JobEdit edit, TimeSpan sourceDuration, List<ValidationIssue> issues)

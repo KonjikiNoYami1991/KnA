@@ -384,6 +384,13 @@ public sealed class QueueService : IDisposable
     {
         if (IsRunning) return;
         if (RefreshTools() is null) throw new InvalidOperationException(L.T("FFmpeg was not found. Configure it in Settings."));
+        // Stopped jobs continue: segmented and resumable encodes pick up where they were, without asking.
+        lock (_lock)
+            foreach (var j in _jobs.Where(j => j.Status == JobStatus.Stopped).ToList())
+            {
+                j.ResetForRun();
+                JobChanged?.Invoke(j);
+            }
         _runCts = new CancellationTokenSource();
         _processes = new ProcessGroup();
         IsPaused = false;

@@ -126,6 +126,8 @@ public static class JobRunner
             bool videoCopied = compiled.Tracks.FirstOrDefault(t => t.Include && t.Kind == "video")?.CopyVideo == true;
             int exit = job.Edit.IsMultiSegment
                 ? await RunSegmentsAsync(job, ctx, baseCtx with { Burn = subs, HdrFiles = sideFiles }, compiled, workDir, ct)
+                : ResumableEncoder.CanUse(job, compiled, ctx.Settings)
+                ? await ResumableEncoder.RunAsync(job, ctx, baseCtx with { Burn = subs, HdrFiles = sideFiles }, compiled, workDir, ct)
                 : s.Chunks.Enabled && p.EncodesVideo && !videoCopied
                 ? await ChunkedEncoder.RunAsync(job, ctx, baseCtx with { Burn = subs, HdrFiles = sideFiles }, compiled, workDir, ct)
                 : await RunFfmpegWithProgressAsync(job, compiled.Plan.Arguments, workDir, compiled.OutputDuration, ctx, ct, compiled.Pipe);
@@ -261,6 +263,7 @@ public static class JobRunner
                 OutputDirectory = settings.OutputDirectory,
                 NameTemplate = settings.OutputNameTemplate,
                 VaapiDevice = settings.VaapiDevice,
+                HardwareDecoding = settings.HardwareDecoding,
                 ExtraArguments = SplitArgs(settings.ExtraArguments),
                 AppVersion = AppInfo.Version,
                 Capabilities = caps,

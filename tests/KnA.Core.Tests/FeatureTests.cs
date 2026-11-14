@@ -390,6 +390,9 @@ public class ChunkTests(FeatureFixture fx) : IClassFixture<FeatureFixture>
         var kf = new List<double> { 0, 4, 9, 13, 21, 30, 38, 45, 52, 59 };
         Assert.Equal([0, 13, 30, 45, 60], ChunkedEncoder.SplitPoints(kf, 0, 60, 10));
         Assert.Equal([5, 15, 25, 35], ChunkedEncoder.SplitPoints([], 5, 35, 10));
+        // Keyframes found by seeking near each step (no full scan): at least half a step apart, last part not tiny.
+        Assert.Equal([0, 9.6, 19.8, 30.2, 40], ChunkedEncoder.BoundsFromKeyframes([9.6, 19.8, 22, 30.2, 39.9], 0, 40, 10));
+        Assert.Equal([0, 10, 20, 30], ChunkedEncoder.BoundsFromKeyframes([], 0, 30, 10));
     }
 
     [Fact]

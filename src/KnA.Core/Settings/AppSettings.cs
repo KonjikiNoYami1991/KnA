@@ -8,6 +8,16 @@ namespace KnA.Core.Settings;
 
 public enum ProcessPriority { Normal, BelowNormal, Idle }
 
+/// <summary>Decoding the source on the GPU (NVDEC, D3D11VA, VA-API, VideoToolbox): frames come back to system memory.</summary>
+public enum HardwareDecoding
+{
+    /// <summary>With GPU encoders (the source decoder then matches the encoder's GPU).</summary>
+    Auto,
+    /// <summary>Also with CPU encoders and previews (FFmpeg picks the GPU).</summary>
+    Always,
+    Off,
+}
+
 public sealed class AppSettings
 {
     // ---- general
@@ -36,6 +46,13 @@ public sealed class AppSettings
     /// <summary>User-chosen companion programs: ffprobe, fdkaac, dovi_tool, hdr10plus_tool, vspipe, scxvid, python.</summary>
     public Dictionary<string, string> ToolPaths { get; set; } = [];
     public string? VaapiDevice { get; set; }
+    /// <summary>
+    /// Decode the source on the GPU. A UHD HEVC remux decoded on the CPU limits a GPU encode to the CPU's speed
+    /// (and every parallel segment decodes its own part): NVDEC & co. remove that bottleneck.
+    /// </summary>
+    public HardwareDecoding HardwareDecoding { get; set; } = HardwareDecoding.Auto;
+    /// <summary>Video encodes are written in pieces, so a stopped or crashed encode continues where it was (see ResumableEncoder).</summary>
+    public bool ResumableEncoding { get; set; } = true;
     /// <summary>null = write next to the source file.</summary>
     public string? OutputDirectory { get; set; }
     public JobSettings Defaults { get; set; } = new();

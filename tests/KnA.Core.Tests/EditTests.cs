@@ -263,3 +263,51 @@ public class ToneMapTests
         Assert.EndsWith(HdrPlanner.StripHdrSideData, zs.Filter);
     }
 }
+
+public class ResumeTests(FeatureFixture fx) : IClassFixture<FeatureFixture>
+{
+    [Fact]
+    public async Task Stopped_encode_resumes_where_it_was_with_every_frame()
+    {
+        if (fx.Tools is null) return;
+        var src = Path.Combine(fx.Dir, "long.mkv");
+        if (!File.Exists(src))
+        {
+            var g = await ProcessRunner.RunAsync(fx.Tools.Ffmpeg, ["-v", "error", "-y", "-f", "lavfi", "-i", "testsrc2=size=1280x720:rate=25:duration=60",
+                "-f", "lavfi", "-i", "sine=duration=60", "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac", src]);
+            Assert.Equal(0, g.ExitCode);
+        }
+        ResumableEncoder.PieceSeconds = 4;
+        try
+        {
+            using var q = new QueueService(new SettingsStore(Path.Combine(fx.Dir, "data-resume")), restoreQueue: false);
+            var job = Assert.Single(q.AddPaths([src], new JobSettings
+            {
+                Profile = ProfileKind.UniversalMkv, Codec = VideoCodec.HEVC, Quality = QualityLevel.Normal, Resolution = 0, Subtitles = SubtitleMode.None,
+            }));
+            q.Start();
+            var dir = ResumableEncoder.Folder(job, q.Store);
+            var sw = System.Diagnostics.Stopwatch.StartNew();
+            while (!File.Exists(Path.Combine(dir, "piece_00002.mkv")) && sw.Elapsed < TimeSpan.FromMinutes(2)) await Task.Delay(50);
+            await q.StopAsync();
+            Assert.Equal(JobStatus.Stopped, job.Status);
+            double kept = ResumableEncoder.ResumablePart(job, q.Store);
+            Assert.InRange(kept, 7.9, 59);   // at least two finished pieces survived the stop
+
+            var done = new TaskCompletionSource();
+            q.QueueChanged += () => { if (!q.IsRunning) done.TrySetResult(); };
+            q.Start();   // no question asked: the stopped job continues
+            await done.Task.WaitAsync(TimeSpan.FromMinutes(4));
+            Assert.True(job.Status is JobStatus.Done or JobStatus.Warning, job.Message + "\n" + job.Log);
+            Assert.Contains("Resuming:", job.Log);
+            var frames = await ProcessRunner.RunAsync(fx.Tools.Ffprobe, ["-v", "error", "-count_frames", "-select_streams", "v:0",
+                "-show_entries", "stream=nb_read_frames", "-of", "csv=p=0", job.OutputPath!]);
+            Assert.True(1500 == int.Parse(frames.StdOut.Trim().TrimEnd(','), System.Globalization.CultureInfo.InvariantCulture), frames.StdOut + "\n" + job.Log);
+            var m = await new MediaProber(fx.Tools.Ffprobe).ProbeAsync(job.OutputPath!);
+            Assert.Single(m.Audio);
+            Assert.InRange(m.Duration.TotalSeconds, 59.8, 60.3);
+            Assert.False(Directory.Exists(dir));   // pieces removed after success
+        }
+        finally { ResumableEncoder.PieceSeconds = 60; }
+    }
+}

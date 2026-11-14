@@ -397,6 +397,27 @@ public static class VideoEncoders
 
     public const string DefaultVaapiDevice = "/dev/dri/renderD128";
 
+    /// <summary>
+    /// Input options that decode on the GPU of <paramref name="backend"/> and copy the frames back to memory
+    /// (no -hwaccel_output_format), so CPU filters, libplacebo and burned subtitles keep working. FFmpeg falls
+    /// back to the CPU by itself when the GPU cannot decode that format.
+    /// </summary>
+    public static List<string> HwDecodeArgs(Settings.HardwareDecoding mode, EncoderBackend backend, string? vaapiDevice)
+    {
+        if (mode == Settings.HardwareDecoding.Off) return [];
+        List<string> forBackend = backend switch
+        {
+            EncoderBackend.Nvenc => ["-hwaccel", "cuda"],
+            EncoderBackend.VideoToolbox => ["-hwaccel", "videotoolbox"],
+            EncoderBackend.Qsv or EncoderBackend.Amf when OperatingSystem.IsWindows() => ["-hwaccel", "d3d11va"],
+            EncoderBackend.Qsv or EncoderBackend.Amf or EncoderBackend.Vaapi when OperatingSystem.IsLinux() =>
+                ["-hwaccel", "vaapi", "-hwaccel_device", vaapiDevice ?? DefaultVaapiDevice],
+            _ => [],
+        };
+        if (forBackend.Count > 0) return forBackend;
+        return mode == Settings.HardwareDecoding.Always ? ["-hwaccel", "auto"] : [];
+    }
+
     private static readonly Dictionary<VideoCodec, double[]> VaapiQp = new()
     {
         [VideoCodec.H264] = [17, 19, 21, 23, 25, 28, 31, 38],

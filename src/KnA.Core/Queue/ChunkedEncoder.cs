@@ -58,8 +58,10 @@ public static class ChunkedEncoder
             foreach (var f in Directory.GetFiles(dir)) File.Delete(f);
             job.Stage = L.T("Finding split points");
             ctx.Changed(job);
-            var keyframes = await KeyframesAsync(ctx, videoTrack.File, video.Index, ct);
-            var bounds = SplitPoints(keyframes.Select(k => k + delay).ToList(), start, end, Math.Max(5, s.Chunks.TargetSeconds));
+            double target = Math.Max(5, s.Chunks.TargetSeconds);
+            var keyframes = await KeyframesNearAsync(ctx, videoTrack.File, video.Index,
+                StepTimes(start - delay, end - delay, target).ToList(), ct);
+            var bounds = BoundsFromKeyframes(keyframes.Select(k => k + delay).ToList(), start, end, target);
             manifest = new Manifest(key, bounds, Enumerable.Repeat(false, bounds.Count - 1).ToList());
             job.AppendLog($"Chunks: {manifest.Done.Count} segments ({(keyframes.Count > 1 ? "keyframe aligned" : "fixed length")}), {s.Chunks.Workers} worker(s).");
         }
@@ -162,30 +164,69 @@ public static class ChunkedEncoder
         ct.ThrowIfCancellationRequested();
 
         // ------------------------------------------------------------ assemble
+        int code = await AssembleAsync(job, ctx, baseCtx, final, dir, Enumerable.Range(0, count).Select(i => ChunkPath(dir, i)).ToList(),
+            manifest.Bounds[0], workDir, ct);
+        if (code == 0)
+        {
+            try { Directory.Delete(dir, true); } catch (IOException) { }
+        }
+        return code;
+    }
+
+    /// <summary>
+    /// Joins encoded video segments (concat, no re-encoding) with the audio, subtitles, attachments and chapters,
+    /// made in a separate pass on the final timeline. <paramref name="firstBound"/> = start of the first segment.
+    /// </summary>
+    /// <summary>
+    /// Step A of the assembly: audio, subtitles, attachments, chapters on the final timeline, trimmed last, in
+    /// dir/rest.mkv. Kept with a marker so a resumed encode doesn't redo it. Returns (exit code, has tracks).
+    /// </summary>
+    internal static async Task<(int Exit, bool HasRest)> BuildRestAsync(QueueJob job, RunnerContext ctx, CompileContext baseCtx, string dir,
+        string workDir, CancellationToken ct)
+    {
+        var rest = Path.Combine(dir, "rest.mkv");
+        var marker = rest + ".done";
+        var restPlan = CommandBuilder.Compile(baseCtx with { RestOnly = true, ForcedOutputPath = rest });
+        bool hasRest = restPlan.Plan.Arguments.Contains("-map");
+        if (!hasRest) return (0, false);
+        if (File.Exists(marker) && File.Exists(rest)) return (0, true);
+        TryDelete(rest);
+        TryDelete(marker);
+        job.AppendLog("Assemble (audio/subtitles): " + restPlan.Plan.CommandLine(ctx.Tools.Ffmpeg));
+        int rc = await JobRunner.RunStreamingAsync(ctx.Tools.Ffmpeg, restPlan.Plan.Arguments, workDir, ctx.Processes, ctx.Settings.Priority,
+            null, line => { lock (job) job.AppendLog(line); }, ct);
+        if (rc == 0) File.WriteAllText(marker, "");
+        return (rc, true);
+    }
+
+    internal static async Task<int> AssembleAsync(QueueJob job, RunnerContext ctx, CompileContext baseCtx, CompiledJob final, string dir,
+        IReadOnlyList<string> segments, double firstBound, string workDir, CancellationToken ct, Task<(int Exit, bool HasRest)>? restTask = null)
+    {
+        var s = job.Settings;
         job.Stage = L.T("Joining segments");
         ctx.Changed(job);
         var list = Path.Combine(dir, "concat.txt");
-        File.WriteAllLines(list, Enumerable.Range(0, count).Select(i => "file '" + ChunkPath(dir, i).Replace("'", "'\\''") + "'"));
-        // Step A: audio, subtitles, attachments, chapters on the final timeline, trimmed last (output options).
+        File.WriteAllLines(list, segments.Select(f => "file '" + f.Replace("'", "'\\''") + "'"));
         var rest = Path.Combine(dir, "rest.mkv");
-        TryDelete(rest);
-        var restPlan = CommandBuilder.Compile(baseCtx with { RestOnly = true, ForcedOutputPath = rest });
-        bool hasRest = restPlan.Plan.Arguments.Contains("-map");
-        if (hasRest)
-        {
-            job.AppendLog("Assemble (audio/subtitles): " + restPlan.Plan.CommandLine(ctx.Tools.Ffmpeg));
-            int rc = await JobRunner.RunStreamingAsync(ctx.Tools.Ffmpeg, restPlan.Plan.Arguments, workDir, ctx.Processes, ctx.Settings.Priority,
-                null, line => job.AppendLog(line), ct);
-            if (rc != 0) return rc;
-        }
+        var (rc, hasRest) = await (restTask ?? BuildRestAsync(job, ctx, baseCtx, dir, workDir, ct));
+        if (rc != 0) return rc;
 
         // Step B: concatenated video + step A, pure stream copy without any seek (no lost GOP, no shifted audio).
         double cut = job.Edit.TrimStart is > 0 and var ts ? ts : 0;
         var container = final.Container;
-        var args = new List<string> { "-hide_banner", "-nostdin", "-n", "-f", "concat", "-safe", "0" };
-        if (Math.Abs(manifest.Bounds[0] - cut) >= 0.0005) args.AddRange(["-itsoffset", CommandBuilder.Sec(manifest.Bounds[0] - cut)]);
+        // -copyts: FFmpeg would otherwise move each input to start at 0, i.e. lose a delay of the intermediate tracks
+        // (an audio track starting at 2 s would start with the video).
+        var args = new List<string> { "-hide_banner", "-nostdin", "-n", "-copyts", "-f", "concat", "-safe", "0" };
+        if (Math.Abs(firstBound - cut) >= 0.0005) args.AddRange(["-itsoffset", CommandBuilder.Sec(firstBound - cut)]);
         args.AddRange(["-i", list]);
-        if (hasRest) args.AddRange(["-i", rest]);
+        if (hasRest)
+        {
+            // Tracks moved earlier than the video were shifted to 0 in the intermediate file (Matroska has no negative
+            // times): move them back, the final muxer then shifts everything together like a single-pass encode.
+            double earliest = final.Tracks.Where(t => t.Include && t.Kind is "audio" or "subtitle").Select(t => t.DelaySeconds).DefaultIfEmpty(0).Min();
+            if (earliest < -0.0005) args.AddRange(["-itsoffset", CommandBuilder.Sec(earliest)]);
+            args.AddRange(["-i", rest]);
+        }
         args.AddRange(["-map", "0:v:0", "-c:v", "copy"]);
         if (s.EffectiveCodec == VideoCodec.HEVC && container is "mp4" or "mov") args.AddRange(["-tag:v", "hvc1"]);
         if (hasRest)
@@ -208,15 +249,11 @@ public static class ChunkedEncoder
         args.Add(final.Plan.OutputPath);
         job.AppendLog("Assemble (join): " + new EncodePlan(args, "").CommandLine(ctx.Tools.Ffmpeg));
         var ap = new ProgressParser(final.OutputDuration);
-        int code = await JobRunner.RunStreamingAsync(ctx.Tools.Ffmpeg, args, workDir, ctx.Processes, ctx.Settings.Priority,
+        return await JobRunner.RunStreamingAsync(ctx.Tools.Ffmpeg, args, workDir, ctx.Processes, ctx.Settings.Priority,
             line => { if (ap.Feed(line) is { } pr) { job.Progress = pr; ctx.Changed(job); } },
             line => job.AppendLog(line), ct);
-        if (code == 0)
-        {
-            try { Directory.Delete(dir, true); } catch (IOException) { }
-        }
-        return code;
     }
+
 
     /// <summary>Split points between start and end: keyframes at least <paramref name="target"/> apart, or fixed steps.</summary>
     public static List<double> SplitPoints(IReadOnlyList<double> keyframes, double start, double end, double target)
@@ -237,25 +274,64 @@ public static class ChunkedEncoder
         return bounds;
     }
 
-    private static async Task<List<double>> KeyframesAsync(RunnerContext ctx, string file, int stream, CancellationToken ct)
+    private static IEnumerable<double> StepTimes(double from, double to, double step)
     {
-        var args = new List<string> { "-v", "error" };
-        args.AddRange(MediaProber.RobustInputArgs(file).Where(a => a is not "-fflags" and not "+genpts+discardcorrupt" and not "-err_detect" and not "ignore_err"));
-        args.AddRange(["-select_streams", stream.ToString(CultureInfo.InvariantCulture), "-skip_frame", "nokey",
-            "-show_entries", "frame=best_effort_timestamp_time", "-of", "csv=p=0", file]);
-        var r = await ProcessRunner.RunAsync(ctx.Tools.Ffprobe, args, timeout: TimeSpan.FromMinutes(20), ct: ct);
-        return r.StdOut.Split('\n')
-            .Select(l => double.TryParse(l.Trim().TrimEnd(','), NumberStyles.Float, CultureInfo.InvariantCulture, out var v) ? v : double.NaN)
-            .Where(v => !double.IsNaN(v)).ToList();
+        for (double t = from + step; to - t >= step * 0.3; t += step) yield return t;
+    }
+
+    /// <summary>
+    /// Split points from keyframes found near each wanted time: [start, keyframes at least half a step apart, end].
+    /// Fixed steps when the file gave none (intra-only, unreadable index…): still frame-exact thanks to trim=.
+    /// </summary>
+    public static List<double> BoundsFromKeyframes(IReadOnlyList<double> keyframes, double start, double end, double target)
+    {
+        var bounds = new List<double> { start };
+        foreach (var k in keyframes.Where(k => k > start + 0.5 && k < end - 0.5).Order())
+            if (k - bounds[^1] >= target * 0.5 && end - k >= target * 0.3) bounds.Add(k);
+        if (bounds.Count == 1) bounds.AddRange(StepTimes(start, end, target));
+        bounds.Add(end);
+        return bounds;
+    }
+
+    /// <summary>
+    /// The keyframe at or before each time, found by seeking (one keyframe decoded per point, a few probes at a time).
+    /// Scanning the whole file instead meant reading tens of GB of a UHD remux before the first segment could start.
+    /// </summary>
+    private static async Task<List<double>> KeyframesNearAsync(RunnerContext ctx, string file, int stream, List<double> times, CancellationToken ct)
+    {
+        var found = new ConcurrentBag<double>();
+        using var gate = new SemaphoreSlim(4);
+        await Task.WhenAll(times.Select(async t =>
+        {
+            await gate.WaitAsync(ct);
+            try
+            {
+                var args = new List<string> { "-v", "error" };
+                args.AddRange(MediaProber.RobustInputArgs(file).Where(a => a is not "-fflags" and not "+genpts+discardcorrupt" and not "-err_detect" and not "ignore_err"));
+                args.AddRange(["-select_streams", stream.ToString(CultureInfo.InvariantCulture), "-skip_frame", "nokey",
+                    "-read_intervals", CommandBuilder.Sec(Math.Max(0, t)) + "%+#1",
+                    "-show_entries", "frame=best_effort_timestamp_time", "-of", "csv=p=0", file]);
+                var r = await ProcessRunner.RunAsync(ctx.Tools.Ffprobe, args, timeout: TimeSpan.FromMinutes(1), ct: ct);
+                foreach (var l in r.StdOut.Split('\n'))
+                    if (double.TryParse(l.Trim().TrimEnd(','), NumberStyles.Float, CultureInfo.InvariantCulture, out var v)) found.Add(v);
+            }
+            catch (Exception ex) when (ex is not OperationCanceledException) { }
+            finally { gate.Release(); }
+        }));
+        return [.. found.Distinct().Order()];
     }
 
     /// <summary>Everything that changes the encoded video must change the key.</summary>
-    private static string Key(QueueJob job)
+    internal static string Key(QueueJob job)
     {
-        var fi = new FileInfo(job.SourcePath);
+        // Disc titles ("…::title=3") are not files: the disc folder/image identifies them.
+        var real = KnA.Core.Media.Discs.DiscSource.ParseTitlePath(job.SourcePath) is { } t ? t.Disc.Root : job.SourcePath;
+        var fi = new FileInfo(real);
+        long length = fi.Exists ? fi.Length : 0;
+        var when = fi.Exists ? fi.LastWriteTimeUtc : Directory.Exists(real) ? Directory.GetLastWriteTimeUtc(real) : DateTime.MinValue;
         var data = JsonSerializer.Serialize(new
         {
-            job.SourcePath, fi.Length, fi.LastWriteTimeUtc,
+            job.SourcePath, Length = length, LastWriteTimeUtc = when,
             Settings = job.Settings with { Chunks = job.Settings.Chunks with { Workers = 0 }, PresetName = null },
             Edit = job.Edit with { OutputFolder = null, KeepChapters = true },
         }, SettingsStore.Json);

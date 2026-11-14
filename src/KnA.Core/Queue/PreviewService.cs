@@ -19,7 +19,10 @@ namespace KnA.Core.Queue;
 /// </summary>
 public sealed class PreviewService(QueueService queue)
 {
-    private readonly SemaphoreSlim _gate = new(3);
+    // Frames and clips (what the user is looking at) never wait behind the timeline strip and the waveform,
+    // which can take minutes on a long film.
+    private readonly SemaphoreSlim _gate = new(2);
+    private readonly SemaphoreSlim _bgGate = new(2);
     private readonly ConcurrentDictionary<string, SemaphoreSlim> _keyLocks = new();
 
     private string JobDir(Guid id) => Path.Combine(queue.Store.TempDirectory, "preview", id.ToString("N"));
@@ -77,7 +80,7 @@ public sealed class PreviewService(QueueService queue)
                 args.AddRange(MediaProber.RobustInputArgs(job.SourcePath));
                 args.AddRange(["-ss", CommandBuilder.Sec(Math.Max(0, seconds)), .. KnA.Core.Media.Discs.DiscSource.InputArgs(job.SourcePath), "-map", "0:v:0", "-frames:v", "1",
                     "-vf", $"scale={width}:-2", "-q:v", "5", "-update", "1", path]);
-                try { await Run(args, dir, ct); } catch (InvalidOperationException) when (keyOnly) { }
+                try { await Run(args, dir, ct, background: true); } catch (InvalidOperationException) when (keyOnly) { }
                 if (File.Exists(path) && new FileInfo(path).Length > 0) return;
             }
         }, ct);
@@ -104,7 +107,7 @@ public sealed class PreviewService(QueueService queue)
             args.AddRange([.. KnA.Core.Media.Discs.DiscSource.InputArgs(file), "-filter_complex",
                 $"[0:{stream}]aformat=channel_layouts=mono,showwavespic=s={width}x{height}:colors=#9B7CFF[w]",
                 "-map", "[w]", "-frames:v", "1", "-update", "1", path]);
-            await Run(args, dir, ct, TimeSpan.FromMinutes(5));
+            await Run(args, dir, ct, TimeSpan.FromMinutes(20), background: true);
         }, ct);
     }
 
@@ -265,18 +268,19 @@ public sealed class PreviewService(QueueService queue)
         return await JobRunner.RenderScriptAudioAsync(tracks, Path.Combine(dir, "script-audio"), ctx, job, ct);
     }
 
-    private async Task Run(IEnumerable<string> args, string dir, CancellationToken ct, TimeSpan? timeout = null)
+    private async Task Run(IEnumerable<string> args, string dir, CancellationToken ct, TimeSpan? timeout = null, bool background = false)
     {
         var tools = queue.Tools ?? throw new InvalidOperationException(L.T("FFmpeg was not found. Configure it in Settings."));
-        await _gate.WaitAsync(ct);
+        var gate = background ? _bgGate : _gate;
+        await gate.WaitAsync(ct);
         try
         {
             var list = args.ToList();
             try { File.WriteAllText(Path.Combine(dir, "last-command.txt"), new EncodePlan(list, "").CommandLine(tools.Ffmpeg)); } catch (IOException) { }
-            var r = await ProcessRunner.RunAsync(tools.Ffmpeg, list, workingDirectory: dir, timeout: timeout ?? TimeSpan.FromSeconds(90), ct: ct);
+            var r = await ProcessRunner.RunAsync(tools.Ffmpeg, list, workingDirectory: dir, timeout: timeout ?? TimeSpan.FromSeconds(180), ct: ct);
             if (r.ExitCode != 0) throw new InvalidOperationException(JobRunner.LastError(r.StdErr) ?? r.StdErr.Trim());
         }
-        finally { _gate.Release(); }
+        finally { gate.Release(); }
     }
 
     private async Task<string> Cached(QueueJob job, string key, Func<string, string, Task> produce, CancellationToken ct)
