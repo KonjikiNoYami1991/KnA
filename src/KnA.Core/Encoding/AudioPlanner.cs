@@ -6,10 +6,17 @@ namespace KnA.Core.Encoding;
 
 /// <summary>
 /// The audio encoders a given FFmpeg build offers, and the best one for each codec.
-/// AAC: libfdk_aac (custom builds) → aac_at (macOS AudioToolbox) → external fdkaac program → FFmpeg's own aac.
+/// AAC: qaac (Apple's encoder on Windows, when its CoreAudioToolbox files are there) → libfdk_aac (custom builds)
+/// → aac_at (macOS AudioToolbox, the same Apple encoder) → external fdkaac program → FFmpeg's own aac.
 /// </summary>
 public sealed record AudioEncoderSet(IReadOnlyCollection<string> Compiled, bool ExternalFdkaac = false)
 {
+    /// <summary>qaac with Apple's CoreAudioToolbox is usable (Windows).</summary>
+    public bool ExternalQaac { get; init; }
+
+    /// <summary>Pseudo encoder name: AAC made by qaac (ffmpeg → WAV pipe → qaac64).</summary>
+    public const string Qaac = "qaac";
+
     /// <summary>What a typical GPL FFmpeg build has (used before detection or in tests).</summary>
     public static AudioEncoderSet Default { get; } = new(
         ["aac", "libopus", "opus", "libmp3lame", "libvorbis", "vorbis", "ac3", "eac3", "flac", "alac", "wavpack", "truehd", "dca",
@@ -20,8 +27,8 @@ public sealed record AudioEncoderSet(IReadOnlyCollection<string> Compiled, bool 
 
     public string? Best(AudioCodec c) => c switch
     {
-        AudioCodec.Aac => First("libfdk_aac", "aac_at") ?? (ExternalFdkaac ? Fdkaac : null) ?? First("aac"),
-        AudioCodec.HeAac => First("libfdk_aac", "aac_at") ?? (ExternalFdkaac ? Fdkaac : null),
+        AudioCodec.Aac => (ExternalQaac ? Qaac : null) ?? First("libfdk_aac", "aac_at") ?? (ExternalFdkaac ? Fdkaac : null) ?? First("aac"),
+        AudioCodec.HeAac => (ExternalQaac ? Qaac : null) ?? First("libfdk_aac", "aac_at") ?? (ExternalFdkaac ? Fdkaac : null),
         AudioCodec.Opus => First("libopus", "opus"),
         AudioCodec.Mp3 => First("libmp3lame"),
         AudioCodec.Vorbis => First("libvorbis", "vorbis"),
@@ -43,7 +50,7 @@ public sealed record AudioEncoderSet(IReadOnlyCollection<string> Compiled, bool 
     /// <summary>Codec name of the stream an encoder produces (for container checks).</summary>
     public static string OutputCodec(string encoder) => encoder switch
     {
-        "libfdk_aac" or "aac_at" or Fdkaac or "aac" => "aac",
+        "libfdk_aac" or "aac_at" or Fdkaac or Qaac or "aac" => "aac",
         "libopus" or "opus" => "opus",
         "libmp3lame" => "mp3",
         "libvorbis" or "vorbis" => "vorbis",
@@ -69,7 +76,7 @@ public sealed record AudioTrackPlan
     public ValidationIssue? Issue { get; init; }
 
     public bool IsCopy => Encoder is null;
-    public bool IsExternal => Encoder == AudioEncoderSet.Fdkaac;
+    public bool IsExternal => Encoder is AudioEncoderSet.Fdkaac or AudioEncoderSet.Qaac;
 }
 
 /// <summary>Decides, per audio track, whether to copy it or how to re-encode it.</summary>
@@ -236,6 +243,20 @@ public static class AudioPlanner
         }
         if (AudioEncoderSet.IsExperimental(encoder)) l.AddRange([$"-strict:a:{n}", "experimental"]);
         if (FilterBuilder.Audio(filters, encoder, plan.Channels) is { } af) l.AddRange([$"-filter:a:{n}", af]);
+        return l;
+    }
+
+    /// <summary>
+    /// qaac arguments (reads a WAV from stdin): constrained VBR at the planned bitrate (true VBR q91 without one),
+    /// HE-AAC with --he. Apple's encoder: the best AAC there is, LC and HE.
+    /// </summary>
+    public static List<string> QaacArgs(AudioTrackPlan plan, string output)
+    {
+        var l = new List<string> { "--ignorelength", "--silent", "--no-delay" };
+        if (plan.HeAac) l.Add("--he");
+        if (plan.Kbps is { } k) l.AddRange(["--cvbr", k.ToString(CultureInfo.InvariantCulture)]);
+        else l.AddRange(["--tvbr", "91"]);
+        l.AddRange(["-o", output, "-"]);
         return l;
     }
 

@@ -27,9 +27,42 @@
   import and export; **apply only some parts** (video, audio, subtitles, picture filters, track selection) to the selected files,
   or to the open file from the editor.
 
-**Portable**
-- One executable plus a few native libraries; the portable package contains **FFmpeg** (tools\ffmpeg) and fdkaac (tools\fdkaac);
-  components updated from the app, the AI runtime (ai\) and all data (data\) stay in the program folder.
+**rigaya's GPU encoders: NVEncC, QSVEncC, VCEEncC** (Windows and Linux x64)
+- New *Encoder program* in the advanced encoder settings: FFmpeg or NVEncC (NVIDIA) / QSVEncC (Intel) / VCEEncC (AMD).
+- When no FFmpeg filter is needed (a plain resize at most) the encoder reads the source itself with GPU decoding (--avhw),
+  resizes on the GPU, copies **Dolby Vision (profile 8.1) and HDR10+** and, with *parallel encoding* on, splits the file between
+  the GPU's encoder engines (--parallel): the StaxRip way. Otherwise FFmpeg decodes, filters, burns subtitles and trims, and
+  sends y4m frames to the encoder. If the GPU reader refuses a file, the FFmpeg path runs by itself.
+- Installed from Settings → Components (Windows .7z, Linux .deb unpacked in tools\); a GPU whose FFmpeg encoder fails
+  (old driver) can still be chosen when its rigaya encoder is installed. macOS keeps VideoToolbox (rigaya has no macOS builds).
+
+**Audio: qaac**
+- **qaac** (Apple Core Audio AAC / HE-AAC, Windows) is the first AAC choice, then libfdk_aac / fdkaac, then FFmpeg's own.
+  Apple's CoreAudioToolbox is extracted on your PC from the official iTunes x64 installer (makeportable2 method); KnA never
+  redistributes Apple's files.
+
+**Models**
+- Settings → Components lists the **Real-ESRGAN upscale models** (download / reinstall, also while the queue runs) and the
+  **assistant models** (qwen3, qwen2.5-vl, qwen3-vl, gemma3) pulled through **Ollama** with progress; the first pulled text /
+  vision model becomes the assistant's model when none is set.
+
+**CPU**
+- x86-64 level detection (v2 / v3 AVX2 / v4 AVX-512), shown with the hardware info; on v4 CPUs (Ryzen 7000/9000, Intel with
+  AVX-512) x265 runs its AVX-512 kernels (asm=avx512). .NET, FFmpeg, SVT-AV1 and dav1d pick AVX2/AVX-512 by themselves.
+
+**Previews: no rendering while zapping**
+- While the playhead or a trim handle is dragged only the nearest timeline thumbnail is shown; the real frame is rendered when
+  the pointer is released (desktop and web). Keyboard steps still render after a short pause.
+
+**Portable, Docker, Proxmox**
+- One executable plus a few native libraries. The portable packages (desktop **and now server**) contain FFmpeg, fdkaac,
+  NVEncC / QSVEncC / VCEEncC, qaac (without Apple's files), **VapourSynth portable with embedded Python, BestSource and
+  L-SMASH-Works** (Windows), dovi_tool, hdr10plus_tool, the Anime4K / FSRCNNX shaders and the five Real-ESRGAN models; they are
+  filled by KnA's own component manager (`kna-server --bundle`). PyTorch stays a download (its build depends on the GPU).
+- Docker image: NVEncC / QSVEncC / VCEEncC installed with their dependencies (build argument RIGAYA); docker-compose has an
+  optional **Ollama** service (`--profile llm`).
+- Linux / Proxmox installers: rigaya encoders for the GPUs found, the AnimeVideo v3 model, and the system libraries they need.
+
 
 **HDR → SDR**
 - The SDR picture was too bright: libplacebo measured every scene (dynamic peak detection) and stretched dim ones towards white,
@@ -76,9 +109,42 @@
   importa ed esporta; **applica solo alcune parti** (video, audio, sottotitoli, filtri immagine, selezione tracce) ai file selezionati,
   o al file aperto dall'editor.
 
-**Portable**
-- Un solo eseguibile più poche librerie native; il pacchetto portable contiene **FFmpeg** (tools\ffmpeg) e fdkaac (tools\fdkaac);
-  componenti aggiornati dall'app, runtime AI (ai\) e tutti i dati (data\) restano nella cartella del programma.
+**Encoder GPU di rigaya: NVEncC, QSVEncC, VCEEncC** (Windows e Linux x64)
+- Nuovo *Programma di codifica* nelle impostazioni dell'encoder avanzato: FFmpeg oppure NVEncC (NVIDIA) / QSVEncC (Intel) / VCEEncC (AMD).
+- Quando non serve alcun filtro FFmpeg (al massimo un ridimensionamento) l'encoder legge da solo la sorgente con decodifica GPU
+  (--avhw), ridimensiona sulla GPU, copia **Dolby Vision (profilo 8.1) e HDR10+** e, con la *codifica parallela* attiva, divide il file
+  tra i motori di codifica della GPU (--parallel): il metodo di StaxRip. Altrimenti FFmpeg decodifica, filtra, imprime i sottotitoli e
+  taglia, e passa all'encoder i fotogrammi y4m. Se il lettore GPU rifiuta un file, parte da solo il percorso FFmpeg.
+- Si installano da Impostazioni → Componenti (Windows .7z, Linux .deb estratto in tools\); una GPU il cui encoder FFmpeg fallisce
+  (driver vecchio) si può scegliere lo stesso se il suo encoder rigaya è installato. Su macOS resta VideoToolbox (rigaya non ha build macOS).
+
+**Audio: qaac**
+- **qaac** (AAC / HE-AAC di Apple Core Audio, Windows) è la prima scelta per l'AAC, poi libfdk_aac / fdkaac, poi l'encoder di FFmpeg.
+  CoreAudioToolbox di Apple viene estratto sul tuo PC dall'installer ufficiale di iTunes x64 (metodo makeportable2); KnA non
+  ridistribuisce mai i file di Apple.
+
+**Modelli**
+- Impostazioni → Componenti elenca i **modelli di upscale Real-ESRGAN** (scarica / reinstalla, anche con la coda in corso) e i
+  **modelli per l'assistente** (qwen3, qwen2.5-vl, qwen3-vl, gemma3) scaricati tramite **Ollama** con avanzamento; il primo modello
+  testo / visivo scaricato diventa quello dell'assistente se non ce n'è uno impostato.
+
+**CPU**
+- Rilevamento del livello x86-64 (v2 / v3 AVX2 / v4 AVX-512), mostrato con le informazioni hardware; sulle CPU v4 (Ryzen 7000/9000,
+  Intel con AVX-512) x265 usa i suoi kernel AVX-512 (asm=avx512). .NET, FFmpeg, SVT-AV1 e dav1d scelgono AVX2/AVX-512 da soli.
+
+**Anteprime: nessun rendering durante lo zapping**
+- Mentre si trascina la testina o una maniglia del taglio si vede solo la miniatura più vicina della timeline; il fotogramma vero
+  viene generato al rilascio del puntatore (desktop e web). I passi da tastiera generano il fotogramma dopo una breve pausa.
+
+**Portable, Docker, Proxmox**
+- Un solo eseguibile più poche librerie native. I pacchetti portable (desktop **e ora anche server**) contengono FFmpeg, fdkaac,
+  NVEncC / QSVEncC / VCEEncC, qaac (senza i file di Apple), **VapourSynth portable con Python incorporato, BestSource e
+  L-SMASH-Works** (Windows), dovi_tool, hdr10plus_tool, gli shader Anime4K / FSRCNNX e i cinque modelli Real-ESRGAN; li riempie il
+  gestore componenti di KnA stesso (`kna-server --bundle`). PyTorch resta da scaricare (la build dipende dalla GPU).
+- Immagine Docker: NVEncC / QSVEncC / VCEEncC installati con le loro dipendenze (argomento di build RIGAYA); docker-compose ha un
+  servizio **Ollama** facoltativo (`--profile llm`).
+- Installer Linux / Proxmox: encoder rigaya per le GPU trovate, il modello AnimeVideo v3 e le librerie di sistema che servono.
+
 
 **HDR → SDR**
 - L'immagine SDR era troppo luminosa: libplacebo misurava ogni scena (rilevamento dinamico del picco) e spingeva quelle scure verso il bianco,

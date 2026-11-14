@@ -64,7 +64,15 @@ public sealed class QueueService : IDisposable
         RefreshTools();
         Presets = new PresetStore(store.DataDirectory);
         Preview = new PreviewService(this);
-        Components = new ComponentManager(store.DataDirectory) { FfmpegChannel = Settings.FfmpegChannel };
+        Components = new ComponentManager(store.DataDirectory) { FfmpegChannel = Settings.FfmpegChannel, AiSettings = () => Settings.Ai };
+        Components.LlmPulled = (name, vision) =>
+        {
+            var ai = Settings.Ai;
+            if (vision && string.IsNullOrWhiteSpace(ai.VisionModel)) Settings.Ai = ai with { VisionModel = name };
+            else if (!vision && string.IsNullOrWhiteSpace(ai.Model)) Settings.Ai = ai with { Model = name };
+            else return;
+            SaveSettings();
+        };
         _saveTimer = new Timer(_ => SaveQueue(), null, Timeout.Infinite, Timeout.Infinite);
         JobChanged += _ => ScheduleSave();
         QueueChanged += ScheduleSave;

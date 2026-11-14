@@ -20,9 +20,9 @@ public sealed class SettingsForm : StackPanel
 
     public event Action<JobSettings>? Changed;
 
-    public SettingsForm(JobSettings settings, Func<FfmpegCapabilities?> caps, bool full, Func<bool>? fdkaac = null)
+    public SettingsForm(JobSettings settings, Func<FfmpegCapabilities?> caps, bool full, Func<FfmpegTools?>? tools = null)
     {
-        FdkaacAvailable = fdkaac;
+        _tools = tools;
         _s = settings;
         _caps = caps;
         _full = full;
@@ -55,14 +55,16 @@ public sealed class SettingsForm : StackPanel
     private string AacNote()
     {
         var builds = _caps()?.Builds ?? [];
+        var tools = _tools?.Invoke();
+        if (tools?.Qaac is not null) return L.T("AAC: qaac (Apple Core Audio, best quality); libfdk_aac / fdkaac as fallback.");
         if (builds.Any(b => b.Has("libfdk_aac"))) return L.T("AAC: libfdk_aac (Fraunhofer, best quality).");
         if (builds.Any(b => b.Has("aac_at"))) return L.T("AAC: Apple AudioToolbox (excellent quality).");
-        if (FdkaacAvailable?.Invoke() == true) return L.T("AAC: fdkaac program (Fraunhofer, best quality).");
+        if (tools?.Fdkaac is not null) return L.T("AAC: fdkaac program (Fraunhofer, best quality).");
         return L.T("AAC: FFmpeg's own encoder. Install fdkaac in Settings → Components for better quality.");
     }
 
-    /// <summary>Whether the standalone fdkaac was found (given by the window).</summary>
-    private readonly Func<bool>? FdkaacAvailable;
+    /// <summary>External programs found (qaac, fdkaac, rigaya encoders), given by the window.</summary>
+    private readonly Func<FfmpegTools?>? _tools;
 
     public void Rebuild()
     {
@@ -92,9 +94,13 @@ public sealed class SettingsForm : StackPanel
                 if (!p.AllowsHardware && b != EncoderBackend.Software) continue;
                 if (VideoEncoders.EncoderName(codec, b) is null) continue;
                 bool ok = caps is null || caps.IsUsable(codec, b, tenBit);
-                string note = ok ? "" : caps!.Find(codec, b) is { Compiled: false } ? L.T("not in this FFmpeg build")
+                // The FFmpeg encoder may fail (old driver, missing SDK) where rigaya's encoder works.
+                bool rigayaOnly = !ok && RigayaEncoders.Supports(codec, b) && _tools is not null && KnA.Core.Queue.JobRunner.RigayaFor(_tools()).ContainsKey(b);
+                string note = ok ? "" : rigayaOnly ? L.T("only with {0}", RigayaEncoders.DisplayName(b))
+                    : caps!.Find(codec, b) is { Compiled: false } ? L.T("not in this FFmpeg build")
                     : tenBit && caps.IsUsable(codec, b, false) ? L.T("8-bit only") : L.T("no compatible GPU/driver");
-                items.Add((b, b.Display() + (ok ? "" : " — " + note), ok));
+                ok |= rigayaOnly;
+                items.Add((b, b.Display() + (note.Length == 0 ? "" : " — " + note), ok));
             }
             var current = items.FirstOrDefault(i => i.Item1 == s.Backend && i.Item3).Item1;
             if (!items.Any(i => i.Item1 == s.Backend && i.Item3))
@@ -245,17 +251,29 @@ public sealed class SettingsForm : StackPanel
     private Control AdvancedEncoder(JobSettings s, VideoCodec codec)
     {
         var o = s.Encoder;
-        var enc = VideoEncoders.EncoderName(codec, s.EffectiveBackend) ?? "";
+        bool rigaya = RigayaEncoders.Wanted(s);
+        var enc = rigaya ? RigayaEncoders.ToolId(s.Backend)! : VideoEncoders.EncoderName(codec, s.EffectiveBackend) ?? "";
+        (string Option, double Min, double Max, string Label)? quality = rigaya ? RigayaEncoders.QualityOption(enc, codec) : VideoEncoders.QualityOption(enc);
         void SetO(Func<EncoderOverrides, EncoderOverrides> f, bool rebuild = false) => Set(_s with { Encoder = f(_s.Encoder) }, rebuild);
         static string? Clean(string v) => string.IsNullOrWhiteSpace(v) ? null : v.Trim();
         var box = new StackPanel { Spacing = 10 };
-        box.Children.Add(Ui.Muted(L.T("Encoder: {0}. Empty fields keep KnA's values for the chosen quality.", enc)));
+        if (RigayaEncoders.Supports(codec, s.EffectiveBackend))
+        {
+            var name = RigayaEncoders.DisplayName(s.EffectiveBackend);
+            box.Children.Add(Ui.Field("Encoder program", Ui.Combo(
+                [(EncoderProgram.FFmpeg, L.T("FFmpeg ({0})", VideoEncoders.EncoderName(codec, s.EffectiveBackend) ?? "")), (EncoderProgram.Rigaya, name + " (rigaya)")],
+                o.Program, v => SetO(x => x with { Program = v, Speed = null, Tune = null, Extra = null }, true)),
+                L.T("{0} reads the source with GPU decoding, resizes on the GPU and copies Dolby Vision / HDR10+ when no FFmpeg filter is needed (otherwise FFmpeg decodes and filters, and sends the frames to it). Install it in Settings → Components.", name)));
+            if (rigaya && _tools is not null && !KnA.Core.Queue.JobRunner.RigayaFor(_tools()).ContainsKey(s.Backend))
+                box.Children.Add(Ui.Muted("⚠ " + L.T("{0} is not installed: add it in Settings → Components, or choose FFmpeg as the encoder program.", name)));
+        }
+        box.Children.Add(Ui.Muted(L.T("Encoder: {0}. Empty fields keep KnA's values for the chosen quality.", rigaya ? RigayaEncoders.DisplayName(s.Backend) : enc)));
 
         var rc = new List<(RateControl, string)> { (RateControl.Auto, L.T("From the quality level")) };
-        if (VideoEncoders.QualityOption(enc) is { } qo) rc.Add((RateControl.Quality, L.T("Constant quality ({0})", qo.Label)));
+        if (quality is { } qo) rc.Add((RateControl.Quality, L.T("Constant quality ({0})", qo.Label)));
         rc.Add((RateControl.Bitrate, L.T("Average bitrate")));
         box.Children.Add(Ui.Field("Rate control", Ui.Combo(rc, o.RateControl, v => SetO(x => x with { RateControl = v }, true))));
-        if (o.RateControl == RateControl.Quality && VideoEncoders.QualityOption(enc) is { } q)
+        if (o.RateControl == RateControl.Quality && quality is { } q)
             box.Children.Add(Ui.Field(L.T("{0} value ({1}–{2})", q.Label, q.Min, q.Max),
                 Ui.Number(o.QualityValue ?? Math.Round((q.Min + q.Max) / 2.5), q.Min, q.Max, 0.5, v => SetO(x => x with { QualityValue = v }))));
         if (o.RateControl == RateControl.Bitrate)
@@ -264,9 +282,10 @@ public sealed class SettingsForm : StackPanel
                 Ui.Field("Maximum (kb/s, 0 = none)", Ui.Number(o.MaxBitrateKbps ?? 0, 0, 1000000, 100, v => SetO(x => x with { MaxBitrateKbps = v > 0 ? (int)v : null }), "0"))));
 
         var speed = new List<(string?, string)> { (null, L.T("From the quality level")) };
-        if (VideoEncoders.SpeedOption(enc) is { } so) speed.AddRange(so.Values.Select(v => ((string?)v, v)));
+        if (rigaya) speed.AddRange(RigayaEncoders.SpeedValues(enc).Select(v => ((string?)v, v)));
+        else if (VideoEncoders.SpeedOption(enc) is { } so) speed.AddRange(so.Values.Select(v => ((string?)v, v)));
         var tunes = new List<(string?, string)> { (null, L.T("None")) };
-        tunes.AddRange(VideoEncoders.TuneValues(enc).Select(t => ((string?)t, t)));
+        tunes.AddRange((rigaya ? RigayaEncoders.TuneValues(enc, codec) : VideoEncoders.TuneValues(enc)).Select(t => ((string?)t, t)));
         box.Children.Add(Ui.Columns(
             Ui.Field(L.T("Speed preset (fastest → slowest)"), Ui.Combo(speed, o.Speed, v => SetO(x => x with { Speed = v }))),
             Ui.Field("Tune", Ui.Combo(tunes, o.Tune, v => SetO(x => x with { Tune = v })))));
@@ -274,8 +293,9 @@ public sealed class SettingsForm : StackPanel
             Ui.Field("Keyframe every (s, 0 = auto)", Ui.Number(o.KeyframeSeconds ?? 0, 0, 60, 0.5, v => SetO(x => x with { KeyframeSeconds = v > 0 ? v : null }))),
             Ui.Field("B-frames (−1 = auto)", Ui.Number(o.BFrames ?? -1, -1, 16, 1, v => SetO(x => x with { BFrames = v >= 0 ? (int)v : null }), "0")),
             Ui.Field("Lookahead (frames, −1 = auto)", Ui.Number(o.Lookahead ?? -1, -1, 250, 1, v => SetO(x => x with { Lookahead = v >= 0 ? (int)v : null }), "0"))));
-        box.Children.Add(Ui.Field("Extra encoder options", Ui.Text(o.Extra, v => SetO(x => x with { Extra = Clean(v) }), "-x265-params psy-rd=2:aq-strength=0.8", mono: true),
-            L.T("FFmpeg syntax, applied last (they replace KnA's values).")));
+        box.Children.Add(Ui.Field("Extra encoder options", Ui.Text(o.Extra, v => SetO(x => x with { Extra = Clean(v) }),
+                rigaya ? "--aq-temporal --bref-mode each" : "-x265-params psy-rd=2:aq-strength=0.8", mono: true),
+            rigaya ? L.T("{0} options (see its documentation), applied last.", RigayaEncoders.DisplayName(s.Backend)) : L.T("FFmpeg syntax, applied last (they replace KnA's values).")));
         if (!o.IsEmpty)
             box.Children.Add(Ui.Button(L.T("Back to automatic"), () => Set(_s with { Encoder = new() })));
         return new Expander { Header = L.T("Advanced encoder") + (o.IsEmpty ? "" : " ●"), Content = box, IsExpanded = !o.IsEmpty, HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Stretch };

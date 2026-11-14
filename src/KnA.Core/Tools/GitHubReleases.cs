@@ -28,13 +28,29 @@ public static class GitHubReleases
 
     private static HttpClient CreateClient()
     {
-        var c = new HttpClient { Timeout = TimeSpan.FromSeconds(30) };
+        var c = new HttpClient(new GitHubToken(new HttpClientHandler())) { Timeout = TimeSpan.FromSeconds(30) };
         c.DefaultRequestHeaders.UserAgent.ParseAdd("KnA-Autoencoder");
         c.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/vnd.github+json"));
         return c;
     }
 
     public static HttpClient Client => Http;
+
+    /// <summary>
+    /// CI (release packaging): $KNA_GITHUB_TOKEN is sent to api.github.com only, so shared runners don't hit the
+    /// 60 requests/hour limit of anonymous calls.
+    /// </summary>
+    private sealed class GitHubToken(HttpMessageHandler inner) : DelegatingHandler(inner)
+    {
+        private static readonly string? Token = Environment.GetEnvironmentVariable("KNA_GITHUB_TOKEN");
+
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
+        {
+            if (Token is { Length: > 0 } && request.RequestUri?.Host == "api.github.com" && request.Headers.Authorization is null)
+                request.Headers.Authorization = new AuthenticationHeaderValue("Bearer", Token);
+            return base.SendAsync(request, ct);
+        }
+    }
 
     /// <returns>The latest release, or null when the repository has none.</returns>
     public static async Task<ReleaseInfo?> LatestAsync(string ownerRepo, CancellationToken ct = default) =>

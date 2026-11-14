@@ -345,11 +345,14 @@ public sealed partial class MainViewModel : ObservableObject
         var others = caps.Encoders.Where(e => e.Usable && e.Codec is not (VideoCodec.H264 or VideoCodec.HEVC or VideoCodec.AV1))
             .GroupBy(e => e.Codec).Select(g => $"{g.Key.Short()} ({string.Join("/", g.Select(e => e.Backend.Short()).Distinct())})");
         var main = caps.Main;
-        string aac = caps.Builds.Any(b => b.Has("libfdk_aac")) ? "libfdk_aac" : caps.Builds.Any(b => b.Has("aac_at")) ? "AudioToolbox" : Queue.Tools?.Fdkaac is not null ? "fdkaac" : "FFmpeg";
+        string aac = Queue.Tools?.Qaac is not null ? "qaac" : caps.Builds.Any(b => b.Has("libfdk_aac")) ? "libfdk_aac" : caps.Builds.Any(b => b.Has("aac_at")) ? "AudioToolbox" : Queue.Tools?.Fdkaac is not null ? "fdkaac" : "FFmpeg";
         HardwareInfo = $"{caps.Version.Replace("ffmpeg version ", "FFmpeg ").Split(" Copyright")[0]}"
                        + (caps.Builds.Count > 1 ? " + " + L.T("{0} custom build(s)", caps.Builds.Count - 1) : "")
                        + $" · libass {(caps.HasLibass ? "✓" : "✕")} · libplacebo {(caps.HasLibplacebo ? "✓" : "✕")}"
                        + $" · Blu-ray {(main?.HasBluray == true ? "✓" : "✕")} · DVD {(main?.HasDvdVideo == true ? "✓" : "✕")} · AAC {aac}"
+                       + $" · CPU {KnA.Core.Tools.CpuFeatures.Description}"
+                       + (KnA.Core.Queue.JobRunner.RigayaFor(Queue.Tools) is { Count: > 0 } rig
+                           ? " · rigaya: " + string.Join(", ", rig.Keys.Select(KnA.Core.Encoding.RigayaEncoders.DisplayName)) : "")
                        + "\n" + L.T("Also: {0}", string.Join(", ", others));
     }
 

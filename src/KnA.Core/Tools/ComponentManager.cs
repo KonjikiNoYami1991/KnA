@@ -28,7 +28,7 @@ public sealed record ComponentStatus(
 ///  • dovi_tool and hdr10plus_tool (quietvoid) for Dolby Vision / HDR10+ passthrough: every platform.
 /// Installed copies live in the data folder and take precedence over the system ones.
 /// </summary>
-public sealed class ComponentManager(string dataDirectory)
+public sealed partial class ComponentManager(string dataDirectory)
 {
     /// <summary>"release" = newest FFmpeg release branch (default), "master" = nightly master.</summary>
     public string FfmpegChannel { get; set; } = "release";
@@ -139,6 +139,8 @@ public sealed class ComponentManager(string dataDirectory)
             list.Add(new ComponentStatus(id, name, desc, inst, path,
                 path?.StartsWith(dataDirectory, StringComparison.OrdinalIgnoreCase) ?? false, latest, update, QuietvoidTarget() is not null, note));
         }
+        list.AddRange(await CheckExternalAsync(tools, online, ct));
+        list.AddRange(await CheckModelsAsync(ct));
         return list;
     }
 
@@ -154,6 +156,10 @@ public sealed class ComponentManager(string dataDirectory)
             else if (id == "fsrcnnx") await InstallFsrcnnxAsync(progress, log, ct);
             else if (id == "ai-runtime") await InstallAiRuntimeAsync(temp, progress, log, ct);
             else if (id is "dovi_tool" or "hdr10plus_tool") await InstallQuietvoidAsync(id, temp, progress, log, ct);
+            else if (id is "nvencc" or "qsvencc" or "vceencc") await InstallRigayaAsync(id, temp, progress, log, ct);
+            else if (id == "qaac") await InstallQaacAsync(temp, progress, log, ct);
+            else if (id == "vapoursynth") await InstallVapourSynthAsync(temp, progress, log, ct);
+            else if (id.StartsWith("model:", StringComparison.Ordinal) || id.StartsWith("llm:", StringComparison.Ordinal)) await InstallModelAsync(id, progress, log, ct);
             else throw new ArgumentException("Unknown component " + id);
         }
         finally
@@ -358,14 +364,14 @@ public sealed class ComponentManager(string dataDirectory)
     /// <summary>
     /// Picks "cpython-3.12.N+TAG-triple-install_only.tar.gz" (newest patch of the preferred minor) from release file names.
     /// </summary>
-    public static string? PickPortablePython(IEnumerable<string> names, string triple)
+    public static string? PickPortablePython(IEnumerable<string> names, string triple, int? onlyMinor = null)
     {
         var rx = new System.Text.RegularExpressions.Regex(
             $@"^cpython-3\.(\d+)\.(\d+)\+\d+-{System.Text.RegularExpressions.Regex.Escape(triple)}-install_only\.tar\.gz$");
         var found = names.Select(n => (n, m: rx.Match(n))).Where(x => x.m.Success)
             .Select(x => (x.n, minor: int.Parse(x.m.Groups[1].Value, System.Globalization.CultureInfo.InvariantCulture),
                 patch: int.Parse(x.m.Groups[2].Value, System.Globalization.CultureInfo.InvariantCulture))).ToList();
-        foreach (var minor in PythonMinors)
+        foreach (var minor in onlyMinor is { } om ? [om] : PythonMinors)
             if (found.Where(x => x.minor == minor).OrderByDescending(x => x.patch).FirstOrDefault() is { n: { } name }) return name;
         return null;
     }
@@ -387,6 +393,22 @@ public sealed class ComponentManager(string dataDirectory)
     /// <summary>Downloads the portable Python (python-build-standalone, with pip and venv) into the data folder.</summary>
     private async Task<string> InstallPortablePythonAsync(string temp, IProgress<double>? progress, IProgress<string>? log, CancellationToken ct)
     {
+        var root = await DownloadPortablePythonAsync(temp, null, progress, log, ct);
+        var target = Path.Combine(KnA.Core.Settings.AppPaths.Ai(dataDirectory), "python");
+        if (Directory.Exists(target)) Directory.Delete(target, true);
+        Directory.CreateDirectory(Path.GetDirectoryName(target)!);
+        Directory.Move(root, target);
+        var exe = PortablePython(dataDirectory);
+        if (!OperatingSystem.IsWindows() && File.Exists(exe))
+            File.SetUnixFileMode(exe, File.GetUnixFileMode(exe) | UnixFileMode.UserExecute | UnixFileMode.GroupExecute | UnixFileMode.OtherExecute);
+        var v = await PythonVersionAsync(exe, ct) ?? throw new InvalidOperationException(L.T("The installed program does not start: {0}", exe));
+        log?.Report(L.T("Portable Python {0} ready.", v));
+        return exe;
+    }
+
+    /// <summary>Downloads and unpacks a portable Python (python-build-standalone); returns its folder ("python").</summary>
+    internal static async Task<string> DownloadPortablePythonAsync(string temp, int? minor, IProgress<double>? progress, IProgress<string>? log, CancellationToken ct)
+    {
         var triple = PortablePythonTriple() ?? throw new PlatformNotSupportedException(L.T("Install Python 3.11–3.14 first (python.org, your package manager, or the Docker image)."));
         string? tag = null, name = null, sha = null;
         // The release has hundreds of files: the API may not list them all, SHA256SUMS always does (and gives the checksum).
@@ -394,7 +416,7 @@ public sealed class ComponentManager(string dataDirectory)
         {
             var rel = await GitHubReleases.LatestAsync(PythonRepo, ct);
             tag = rel?.Tag;
-            if (rel is not null) name = PickPortablePython(rel.Assets.Select(a => a.Name), triple);
+            if (rel is not null) name = PickPortablePython(rel.Assets.Select(a => a.Name), triple, minor);
         }
         catch (Exception ex) when (ex is HttpRequestException or JsonException or InvalidOperationException or TaskCanceledException) { log?.Report(ex.Message); }
         if (tag is null)
@@ -411,7 +433,7 @@ public sealed class ComponentManager(string dataDirectory)
             var lines = sums.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
                 .Select(l => l.Split((char[])[' ', '\t'], 2, StringSplitOptions.RemoveEmptyEntries)).Where(x => x.Length == 2)
                 .ToDictionary(x => x[1].TrimStart('*'), x => x[0], StringComparer.Ordinal);
-            name ??= PickPortablePython(lines.Keys, triple);
+            name ??= PickPortablePython(lines.Keys, triple, minor);
             if (name is not null) sha = lines.GetValueOrDefault(name);
         }
         catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException) { log?.Report(ex.Message); }
@@ -426,20 +448,11 @@ public sealed class ComponentManager(string dataDirectory)
             var hash = Convert.ToHexString(await System.Security.Cryptography.SHA256.HashDataAsync(fs, ct));
             if (!hash.Equals(sha, StringComparison.OrdinalIgnoreCase)) throw new InvalidDataException(L.T("Checksum mismatch for {0}.", name));
         }
-        var extracted = Path.Combine(temp, "py");
+        var extracted = Path.Combine(temp, "py" + (minor?.ToString(System.Globalization.CultureInfo.InvariantCulture) ?? ""));
         await ExtractAsync(archive, extracted, ct);
         var root = Path.Combine(extracted, "python");
         if (!Directory.Exists(root)) throw new InvalidDataException(L.T("The archive did not contain {0}.", "python"));
-        var target = Path.Combine(KnA.Core.Settings.AppPaths.Ai(dataDirectory), "python");
-        if (Directory.Exists(target)) Directory.Delete(target, true);
-        Directory.CreateDirectory(Path.GetDirectoryName(target)!);
-        Directory.Move(root, target);
-        var exe = PortablePython(dataDirectory);
-        if (!OperatingSystem.IsWindows() && File.Exists(exe))
-            File.SetUnixFileMode(exe, File.GetUnixFileMode(exe) | UnixFileMode.UserExecute | UnixFileMode.GroupExecute | UnixFileMode.OtherExecute);
-        var v = await PythonVersionAsync(exe, ct) ?? throw new InvalidOperationException(L.T("The installed program does not start: {0}", exe));
-        log?.Report(L.T("Portable Python {0} ready.", v));
-        return exe;
+        return root;
     }
 
     private static readonly string[] FallbackCuda = ["cu130", "cu128", "cu126"];

@@ -28,6 +28,18 @@ public sealed class TrimTimeline : Grid
     /// <summary>(start, end) after a handle drag; null = no cut on that side.</summary>
     public event Action<double?, double?>? TrimChanged;
     public event Action<double>? PlayheadChanged;
+    /// <summary>The pointer was released after a drag: the moment to render the real frame.</summary>
+    public event Action? ScrubEnded;
+    /// <summary>A handle or the playhead is being dragged (previews show thumbnails only meanwhile).</summary>
+    public bool Scrubbing => _overlay.Dragging;
+
+    /// <summary>The strip thumbnail closest to <paramref name="t"/>, if loaded.</summary>
+    public IImage? ThumbAt(double t)
+    {
+        if (_thumbs.Children.Count == 0) return null;
+        int i = Math.Clamp((int)(t / Duration * ThumbCount), 0, _thumbs.Children.Count - 1);
+        return (_thumbs.Children[i] as Image)?.Source;
+    }
 
     public TrimTimeline(double duration, double? start, double? end, double playhead)
     {
@@ -70,6 +82,7 @@ public sealed class TrimTimeline : Grid
         private static readonly IBrush Other = new SolidColorBrush(Color.Parse("#FBBF24"));
         private readonly TrimTimeline _t;
         private string? _drag;
+        public bool Dragging => _drag is not null;
 
         public Overlay(TrimTimeline t) { _t = t; Cursor = new Cursor(StandardCursorType.Hand); }
 
@@ -116,8 +129,10 @@ public sealed class TrimTimeline : Grid
         protected override void OnPointerReleased(PointerReleasedEventArgs e)
         {
             if (_drag is "start" or "end") _t.TrimChanged?.Invoke(_t.Start, _t.End);
+            bool was = _drag is not null;
             _drag = null;
             e.Pointer.Capture(null);
+            if (was) _t.ScrubEnded?.Invoke();
         }
 
         private void Move(double x)

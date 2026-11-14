@@ -121,6 +121,8 @@ public enum RateControl
 /// <summary>Encoder parameters set by hand; empty fields keep KnA's choice for the quality level.</summary>
 public sealed record EncoderOverrides
 {
+    /// <summary>FFmpeg's encoders, or rigaya's NVEncC / QSVEncC / VCEEncC for the GPU backends.</summary>
+    public EncoderProgram Program { get; init; }
     public RateControl RateControl { get; init; }
     /// <summary>CRF / CQ / QP value (lower = better).</summary>
     public double? QualityValue { get; init; }
@@ -138,7 +140,7 @@ public sealed record EncoderOverrides
     public string? Extra { get; init; }
 
     [JsonIgnore]
-    public bool IsEmpty => RateControl == RateControl.Auto && Speed is null && Tune is null && KeyframeSeconds is null
+    public bool IsEmpty => Program == EncoderProgram.FFmpeg && RateControl == RateControl.Auto && Speed is null && Tune is null && KeyframeSeconds is null
                            && BFrames is null && Lookahead is null && string.IsNullOrWhiteSpace(Extra);
 }
 

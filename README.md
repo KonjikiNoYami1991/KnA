@@ -19,6 +19,9 @@ with **HDR10 / HDR10+ / Dolby Vision**, resumable segmented encoding, **GPU and 
   **track selection rules** in presets, and a **preset manager** that applies only the parts you choose.
 - **HDR → SDR** with stable brightness, a choice of tone-mapping curve and no HDR metadata left in SDR files.
 - **Truly portable**: one executable, FFmpeg included, every dependency in its own subfolder.
+- **NVEncC / QSVEncC / VCEEncC** (rigaya) as encoder program: GPU decoding, GPU resize, Dolby Vision / HDR10+ copy, parallel parts.
+- **qaac** (Apple AAC) first, libfdk_aac / fdkaac as fallback; **Real-ESRGAN and Ollama models** downloadable from Components.
+- **x86-64-v3/v4** aware (AVX-512 for x265); previews render on release instead of while zapping.
 
 ### New in 3.1
 - **Tracks tab lists everything** (audio included, Demux too) and lets you **copy or convert each track** right from the list.
@@ -233,10 +236,15 @@ each kind of thing in its own subfolder:
 KnA\
   KnA.exe            one executable (+ the native libraries of the UI)
   portable.txt
-  tools\ffmpeg\      FFmpeg + FFprobe (BtbN GPL build) · tools\fdkaac\ · tools\dovi_tool\ … · tools\shaders\
-  ai\                AI upscaler: script, portable Python, PyTorch environment, models
+  tools\ffmpeg\      FFmpeg + FFprobe (BtbN GPL build) · tools\fdkaac\ · tools\dovi_tool\ · tools\hdr10plus_tool\ · tools\shaders\
+  tools\nvencc\ tools\qsvencc\ tools\vceencc\   rigaya's GPU encoders (Windows / Linux x64)
+  tools\qaac\       qaac (Windows; Apple's files are extracted on your PC: Components → qaac → Install)
+  tools\vapoursynth\ VapourSynth portable + embedded Python + BestSource + L-SMASH-Works (Windows x64)
+  ai\                AI upscaler: script, Real-ESRGAN models (portable Python + PyTorch from Components)
   data\              settings, presets, queue, logs, temporary files
 ```
+
+The server edition has the same portable package: `KnA-server-portable-<rid>` (zip on Windows, tar.gz on Linux).
 
 Components installed or updated from the app go to the same folders. Delete `portable.txt` to use
 the per-user folder instead. If the folder is read-only (e.g. Program Files) KnA falls back to the per-user folder.

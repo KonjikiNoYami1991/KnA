@@ -533,7 +533,8 @@ public sealed class JobEditorWindow : Window
 
         void Layout() => stamp.Text = $"{L.T("Playhead")}: {Ui.Stamp(_playhead)}";
         CancellationTokenSource? frameCts = null;
-        frameTimer.Tick += async (_, _) =>
+        frameTimer.Tick += async (_, _) => await RenderFrame();
+        async Task RenderFrame()
         {
             frameTimer.Stop();
             spin.IsVisible = true;
@@ -549,7 +550,7 @@ public sealed class JobEditorWindow : Window
             catch (Exception ex) when (ex is not OperationCanceledException) { stamp.Text = ex.Message; }
             catch (OperationCanceledException) { }
             finally { if (frameCts == mine) spin.IsVisible = false; }
-        };
+        }
         void LoadFrame() { frameTimer.Stop(); frameTimer.Start(); }
 
         void SetTrim(double? s, double? e)
@@ -634,7 +635,20 @@ public sealed class JobEditorWindow : Window
         void SetPlayhead(double t) { _playhead = Math.Clamp(t, 0, dur); tl.SetPlayhead(_playhead); Layout(); LoadFrame(); }
 
         tl.TrimChanged += SetTrim;
-        tl.PlayheadChanged += t => { _playhead = t; Layout(); LoadFrame(); };
+        // Zapping: while a handle or the playhead is dragged only the nearest strip thumbnail is shown (rendering every
+        // position would queue FFmpeg runs and lag behind); the real frame is rendered once the pointer is released.
+        tl.PlayheadChanged += t =>
+        {
+            _playhead = t; Layout();
+            if (tl.Scrubbing)
+            {
+                frameTimer.Stop();
+                frameCts?.Cancel();
+                if (tl.ThumbAt(t) is { } thumb) img.Source = thumb;
+            }
+            else LoadFrame();
+        };
+        tl.ScrubEnded += () => _ = RenderFrame();
         TrimSegment? Cur() => _parts.Count > 0 ? _parts[_seg] : null;
         startBox.LostFocus += (_, _) => { var v = Ui.ParseStamp(startBox.Text); if (v != (Cur() is { Start: > 0.0005 } c ? c.Start : null)) SetTrim(v ?? 0, Cur()?.End); };
         endBox.LostFocus += (_, _) => { var v = Ui.ParseStamp(endBox.Text); if (v != Cur()?.End) SetTrim(Cur()?.Start ?? 0, v); };
@@ -842,7 +856,7 @@ public sealed class JobEditorWindow : Window
     private Control OutputTab()
     {
         var p = _settings.ProfileDefinition;
-        var form = new SettingsForm(_settings, () => _queue.Settings.Capabilities, full: true, () => _queue.Tools?.Fdkaac is not null) { AllowedContainers = _a!.AllowedContainers };
+        var form = new SettingsForm(_settings, () => _queue.Settings.Capabilities, full: true, () => _queue.Tools) { AllowedContainers = _a!.AllowedContainers };
         form.Changed += s => { _settings = s; Save(true); };
 
         var right = new StackPanel { Spacing = 14 };
@@ -968,7 +982,20 @@ public sealed class JobEditorWindow : Window
             catch (OperationCanceledException) { }
             catch (Exception ex) { status.Text = L.T("The preview could not be generated.") + " " + ex.Message; }
         };
-        slider.ValueChanged += (_, e) => { _playhead = e.NewValue; timer.Stop(); timer.Start(); };
+        // Zapping: nothing is rendered while the slider is dragged; the frame comes when the pointer is released
+        // (keyboard and clicks still render after a short pause).
+        bool dragging = false;
+        slider.AddHandler(PointerPressedEvent, (_, _) => dragging = true, Avalonia.Interactivity.RoutingStrategies.Tunnel, handledEventsToo: true);
+        void Released() { if (!dragging) return; dragging = false; timer.Stop(); timer.Start(); }
+        slider.AddHandler(PointerReleasedEvent, (_, _) => Released(), Avalonia.Interactivity.RoutingStrategies.Tunnel, handledEventsToo: true);
+        slider.AddHandler(PointerCaptureLostEvent, (_, _) => Released(), Avalonia.Interactivity.RoutingStrategies.Bubble, handledEventsToo: true);
+        slider.ValueChanged += (_, e) =>
+        {
+            _playhead = e.NewValue;
+            timer.Stop();
+            if (dragging) { frameCts?.Cancel(); status.Text = $"{L.T("Position")}: {Ui.Stamp(e.NewValue)} · {L.T("release to render")}"; }
+            else timer.Start();
+        };
         var play = Ui.Button("▶ " + L.T("Play a 6 s clip of the result"), async () =>
         {
             status.Text = L.T("Rendering…");

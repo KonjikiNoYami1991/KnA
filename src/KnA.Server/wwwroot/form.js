@@ -6,6 +6,8 @@ function backendStatus(codec, backend, tenBit) {
   if (!state.settings.capabilities) return { ok: true, text: "" };
   if (!c) return { ok: false, text: t("not available for this codec") };
   if (tenBit ? c.works10Bit : c.works8Bit) return { ok: true, text: "" };
+  const rig = state.options.rigayaEncoders?.[`${codec}|${backend}`];
+  if (rig && state.tools?.rigaya?.includes(backend)) return { ok: true, text: t("only with {0}", rig.name) };
   if (!c.compiled) return { ok: false, text: t("not in this FFmpeg build") };
   return { ok: false, text: tenBit && c.works8Bit ? t("8-bit only") : t("no compatible GPU/driver") };
 }
@@ -24,7 +26,7 @@ export function renderSettingsForm(root, s, opts = {}) {
   if (!p.allowsHardware) s.backend = "Software";
   const backends = o.backends.map(b => {
     const st = backendStatus(codec, b.value, s.tenBit && tenBitPossible);
-    return { value: b.value, label: b.label + (st.ok ? "" : " — " + st.text), disabled: !st.ok };
+    return { value: b.value, label: b.label + (st.text ? " — " + st.text : ""), disabled: !st.ok };
   });
   if (backends.find(b => b.value === s.backend)?.disabled) s.backend = backends.find(b => !b.disabled)?.value ?? "Software";
 
@@ -141,6 +143,7 @@ export function renderSettingsForm(root, s, opts = {}) {
     if (["encoder.speed", "encoder.tune", "encoder.extra", "trackRules.audioLanguages", "trackRules.subtitleLanguages"].includes(k)) v = String(v).trim() || null;
 
     if (k === "upscale.method") s.upscale = { ...s.upscale, model: null };
+    if (k === "encoder.program") s.encoder = { ...s.encoder, speed: null, tune: null, extra: null };
     const [a, b] = k.split(".");
     if (b) s[a] = { ...s[a], [b]: v }; else s[a] = v;
     if (k === "profile") { s.container = null; }
@@ -156,12 +159,20 @@ export function renderSettingsForm(root, s, opts = {}) {
 /** Hand-set encoder parameters (full form only); empty = KnA's values for the quality level. */
 function advancedEncoder(s, codec) {
   const o = state.options, e = s.encoder ?? {};
-  const enc = o.encoderNames?.[`${codec}|${s.backend ?? "Software"}`] ?? "";
-  const info = o.encoders?.[enc] ?? { speeds: [], tunes: [] };
+  const ffEnc = o.encoderNames?.[`${codec}|${s.backend ?? "Software"}`] ?? "";
+  const rig = o.rigayaEncoders?.[`${codec}|${s.backend ?? "Software"}`];
+  const useRig = !!rig && e.program === "Rigaya";
+  const enc = useRig ? rig.name : ffEnc;
+  const info = (useRig ? rig.info : o.encoders?.[ffEnc]) ?? { speeds: [], tunes: [] };
   const rc = e.rateControl ?? "Auto";
   const opt = (v, l, cur) => `<option value="${esc(v)}" ${String(cur ?? "") === v ? "selected" : ""}>${esc(l)}</option>`;
-  const empty = rc === "Auto" && !e.speed && !e.tune && e.keyframeSeconds == null && e.bFrames == null && e.lookahead == null && !e.extra;
+  const empty = (e.program ?? "FFmpeg") === "FFmpeg" && rc === "Auto" && !e.speed && !e.tune && e.keyframeSeconds == null && e.bFrames == null && e.lookahead == null && !e.extra;
+  const installed = !rig || (state.tools?.rigaya ?? []).includes(s.backend);
   return `<details class="upscale" ${empty ? "" : "open"}><summary>${esc(t("Advanced encoder"))}${empty ? "" : " ●"}</summary>
+    ${rig ? `<label class="field"><span>${esc(t("Encoder program"))}</span><select data-k="encoder.program">
+      ${opt("FFmpeg", t("FFmpeg ({0})", ffEnc), e.program ?? "FFmpeg")}${opt("Rigaya", rig.name + " (rigaya)", e.program)}</select>
+      <small class="muted">${esc(t("{0} reads the source with GPU decoding, resizes on the GPU and copies Dolby Vision / HDR10+ when no FFmpeg filter is needed (otherwise FFmpeg decodes and filters, and sends the frames to it). Install it in Settings → Components.", rig.name))}</small>
+      ${useRig && !installed ? `<small class="warn">${esc(t("{0} is not installed: add it in Settings → Components, or choose FFmpeg as the encoder program.", rig.name))}</small>` : ""}</label>` : ""}
     <small class="muted">${esc(t("Encoder: {0}. Empty fields keep KnA's values for the chosen quality.", enc))}</small>
     <label class="field"><span>${esc(t("Rate control"))}</span><select data-k="encoder.rateControl">
       ${opt("Auto", t("From the quality level"), rc)}${info.qualityLabel ? opt("Quality", t("Constant quality ({0})", info.qualityLabel), rc) : ""}${opt("Bitrate", t("Average bitrate"), rc)}</select></label>
@@ -178,8 +189,8 @@ function advancedEncoder(s, codec) {
       <label class="field"><span>${esc(t("B-frames (−1 = auto)"))}</span><input type="number" min="-1" max="16" data-k="encoder.bFrames" value="${e.bFrames ?? -1}"></label>
       <label class="field"><span>${esc(t("Lookahead (frames, −1 = auto)"))}</span><input type="number" min="-1" max="250" data-k="encoder.lookahead" value="${e.lookahead ?? -1}"></label>
     </div>
-    <label class="field"><span>${esc(t("Extra encoder options"))}</span><input class="mono" data-k="encoder.extra" value="${esc(e.extra ?? "")}" placeholder="-x265-params psy-rd=2:aq-strength=0.8">
-      <small class="muted">${esc(t("FFmpeg syntax, applied last (they replace KnA's values)."))}</small></label>
+    <label class="field"><span>${esc(t("Extra encoder options"))}</span><input class="mono" data-k="encoder.extra" value="${esc(e.extra ?? "")}" placeholder="${useRig ? "--aq-temporal --bref-mode each" : "-x265-params psy-rd=2:aq-strength=0.8"}">
+      <small class="muted">${esc(useRig ? t("{0} options (see its documentation), applied last.", rig.name) : t("FFmpeg syntax, applied last (they replace KnA's values)."))}</small></label>
     ${empty ? "" : `<button type="button" class="btn sm ghost" data-reset="encoder">${esc(t("Back to automatic"))}</button>`}
   </details>`;
 }
@@ -204,6 +215,7 @@ function aacNote() {
   const builds = state.settings.capabilities?.builds ?? [];
   if (builds.some(b => b.encoders.includes("libfdk_aac"))) return t("AAC: libfdk_aac (Fraunhofer, best quality).");
   if (builds.some(b => b.encoders.includes("aac_at"))) return t("AAC: Apple AudioToolbox (excellent quality).");
+  if (state.tools?.qaac) return t("AAC: qaac (Apple Core Audio, best quality); libfdk_aac / fdkaac as fallback.");
   if (state.tools?.fdkaac) return t("AAC: fdkaac program (Fraunhofer, best quality).");
   return t("AAC: FFmpeg's own encoder. Install fdkaac in Settings → Components for better quality.");
 }

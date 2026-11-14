@@ -162,9 +162,10 @@ function renderHardware() {
   el.innerHTML = html;
   const main = caps.builds?.find(b => !b.isCustom);
   const extra = (caps.builds ?? []).filter(b => b.isCustom).length;
-  $("#hw-info").textContent = `${caps.version.replace("ffmpeg version ", "FFmpeg ").split(" Copyright")[0]}${extra ? " + " + t("{0} custom build(s)", extra) : ""} · libass ${caps.hasLibass ? "✓" : "✕"} · zscale ${caps.hasZscale ? "✓" : "✕"} · libplacebo ${caps.hasLibplacebo ? "✓" : "✕"} · Blu-ray ${main?.hasBluray ? "✓" : "✕"} · DVD ${main?.hasDvdVideo ? "✓" : "✕"} · AAC ${aacName(caps)}`;
+  $("#hw-info").textContent = `${caps.version.replace("ffmpeg version ", "FFmpeg ").split(" Copyright")[0]}${extra ? " + " + t("{0} custom build(s)", extra) : ""} · libass ${caps.hasLibass ? "✓" : "✕"} · zscale ${caps.hasZscale ? "✓" : "✕"} · libplacebo ${caps.hasLibplacebo ? "✓" : "✕"} · Blu-ray ${main?.hasBluray ? "✓" : "✕"} · DVD ${main?.hasDvdVideo ? "✓" : "✕"} · AAC ${aacName(caps)}${state.tools?.rigaya?.length ? " · rigaya: " + state.tools.rigaya.map(b => ({ Nvenc: "NVEncC", Qsv: "QSVEncC", Amf: "VCEEncC" })[b] ?? b).join(", ") : ""}`;
 }
 function aacName(caps) {
+  if (state.tools?.qaac) return "qaac";
   if (caps.builds?.some(b => b.encoders.includes("libfdk_aac"))) return "libfdk_aac";
   if (caps.builds?.some(b => b.encoders.includes("aac_at"))) return "AudioToolbox";
   return state.tools?.fdkaac ? "fdkaac" : "FFmpeg";
@@ -604,7 +605,7 @@ $("#comp-list").onclick = guard(async e => {
   const b = e.target.closest("[data-install]"); if (!b) return;
   b.disabled = true; b.textContent = t("Downloading…");
   try {
-    await post(`/api/components/${b.dataset.install}/install`);
+    await post(`/api/components/${encodeURIComponent(b.dataset.install)}/install`);
     toast(t("{0} installed", b.dataset.install), "ok");
     state.tools = (await api("GET", "/api/state")).tools;
     renderToolsBox();
@@ -632,7 +633,7 @@ function connect() {
     } else if (type === "presets") {
       state.presets = payload; renderPresets();
     } else if (type === "component") {
-      const b = $(`[data-install="${payload.id}"]`);
+      const b = $(`[data-install="${CSS.escape(payload.id)}"]`);
       if (b && payload.percent != null) b.textContent = `${t("Downloading…")} ${payload.percent}%`;
     } else if (type === "watch") {
       const i = watch.status.findIndex(x => x.id === payload.id);

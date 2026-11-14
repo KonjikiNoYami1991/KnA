@@ -8,6 +8,11 @@ using KnA.Core.Settings;
 using KnA.Core.Tools;
 using KnA.Server;
 
+// Release packaging: KnA.Server --bundle <portable folder> ffmpeg,nvencc,model:realesr-animevideov3,…
+if (args is ["--bundle", var bundleRoot, var bundleIds])
+    return await ComponentManager.BundleAsync(Path.GetFullPath(bundleRoot),
+        bundleIds.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries), Console.Out);
+
 var builder = WebApplication.CreateBuilder(new WebApplicationOptions
 {
     Args = args,
@@ -431,7 +436,8 @@ app.MapGet("/api/components", async (CancellationToken ct) =>
 app.MapPost("/api/components/{id}/install", async (string id, CancellationToken ct) =>
 {
     if (componentsLocked) return Results.Problem(L.T("Component installation is disabled on this server (KNA_LOCK_COMPONENTS)."), statusCode: 403);
-    if (queue.IsRunning) return Results.Problem(L.T("Stop the queue before updating components."), statusCode: 409);
+    bool isModel = id.StartsWith("model:", StringComparison.Ordinal) || id.StartsWith("llm:", StringComparison.Ordinal);
+    if (queue.IsRunning && !isModel) return Results.Problem(L.T("Stop the queue before updating components."), statusCode: 409);
     var progress = new Progress<double>(p => hub.Broadcast("component", new { id, percent = Math.Round(p, 1) }));
     var logger = new Progress<string>(l => hub.Broadcast("component", new { id, line = l }));
     try
@@ -483,6 +489,7 @@ app.Lifetime.ApplicationStopping.Register(() =>
 });
 
 app.Run();
+return 0;
 
 static bool Env(string name) => AppEnv.Flag(name.StartsWith("KNA_") ? name[4..] : name);
 
@@ -516,6 +523,7 @@ async Task<IResult> Download(string path, HttpContext ctx, CancellationToken ct)
 static bool IsContainer() => File.Exists("/.dockerenv") || Environment.GetEnvironmentVariable("DOTNET_RUNNING_IN_CONTAINER") == "true";
 
 static string Platform() =>
-    (OperatingSystem.IsWindows() ? "Windows" : OperatingSystem.IsMacOS() ? "macOS" : "Linux") + (IsContainer() ? " (container)" : "");
+    (OperatingSystem.IsWindows() ? "Windows" : OperatingSystem.IsMacOS() ? "macOS" : "Linux") + (IsContainer() ? " (container)" : "")
+    + " · " + KnA.Core.Tools.CpuFeatures.Description;
 
 public partial class Program;

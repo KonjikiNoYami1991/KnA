@@ -4,14 +4,20 @@ public sealed record FfmpegTools(string Ffmpeg, string Ffprobe, string? Scxvid, 
 {
     /// <summary>Standalone Fraunhofer AAC encoder (shipped with KnA, or installed by the component manager).</summary>
     public string? Fdkaac { get; init; }
+    /// <summary>qaac64 (Windows), only when Apple's CoreAudioToolbox can be loaded by it.</summary>
+    public string? Qaac { get; init; }
+    /// <summary>rigaya's hardware encoders: NVEncC (NVIDIA), QSVEncC (Intel), VCEEncC (AMD).</summary>
+    public string? NvencC { get; init; }
+    public string? QsvencC { get; init; }
+    public string? VceencC { get; init; }
 }
 
 /// <summary>Tool ids accepted in <see cref="Settings.AppSettings.ToolPaths"/>.</summary>
 public static class ToolIds
 {
     public const string Ffprobe = "ffprobe", Fdkaac = "fdkaac", DoviTool = "dovi_tool", Hdr10PlusTool = "hdr10plus_tool",
-        VsPipe = "vspipe", Scxvid = "scxvid", Python = "python";
-    public static readonly string[] All = [Ffprobe, Fdkaac, DoviTool, Hdr10PlusTool, VsPipe, Scxvid, Python];
+        VsPipe = "vspipe", Scxvid = "scxvid", Python = "python", Qaac = "qaac", NvencC = "nvencc", QsvencC = "qsvencc", VceencC = "vceencc";
+    public static readonly string[] All = [Ffprobe, Fdkaac, DoviTool, Hdr10PlusTool, VsPipe, Scxvid, Python, Qaac, NvencC, QsvencC, VceencC];
 }
 
 /// <summary>
@@ -61,6 +67,10 @@ public static class FfmpegLocator
                     Custom(ToolIds.VsPipe) ?? LocateVsPipe())
                 {
                     Fdkaac = Custom(ToolIds.Fdkaac) ?? LocateFdkaac(dataDirectory, dir),
+                    Qaac = Custom(ToolIds.Qaac) ?? LocateQaac(dataDirectory),
+                    NvencC = Custom(ToolIds.NvencC) ?? LocateTool(["NVEncC64", "nvencc"], dataDirectory, Path.Combine(KnA.Core.Settings.AppPaths.Tools(dataDirectory), "nvencc")),
+                    QsvencC = Custom(ToolIds.QsvencC) ?? LocateTool(["QSVEncC64", "qsvencc"], dataDirectory, Path.Combine(KnA.Core.Settings.AppPaths.Tools(dataDirectory), "qsvencc")),
+                    VceencC = Custom(ToolIds.VceencC) ?? LocateTool(["VCEEncC64", "vceencc"], dataDirectory, Path.Combine(KnA.Core.Settings.AppPaths.Tools(dataDirectory), "vceencc")),
                 };
         }
         return null;
@@ -75,10 +85,32 @@ public static class FfmpegLocator
         return LocateTool(["fdkaac"], dataDirectory, ffmpegDir);
     }
 
+    /// <summary>
+    /// qaac64.exe (Windows only) when Apple's CoreAudioToolbox is reachable: QTfiles64 next to it (extracted from the
+    /// iTunes installer by the component manager), or an installed iTunes / Apple Application Support.
+    /// </summary>
+    public static string? LocateQaac(string dataDirectory)
+    {
+        if (!OperatingSystem.IsWindows()) return null;
+        var exe = LocateTool(["qaac64"], dataDirectory, Path.Combine(KnA.Core.Settings.AppPaths.Tools(dataDirectory), "qaac"));
+        if (exe is null) return null;
+        var dir = Path.GetDirectoryName(exe)!;
+        var common = Environment.GetFolderPath(Environment.SpecialFolder.CommonProgramFiles);
+        var program = Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles);
+        bool coreAudio = new[]
+        {
+            Path.Combine(dir, "QTfiles64"), dir, Path.Combine(common, "Apple", "Apple Application Support"), Path.Combine(program, "iTunes"),
+        }.Any(d => File.Exists(Path.Combine(d, "CoreAudioToolbox.dll")));
+        return coreAudio ? exe : null;
+    }
+
     /// <summary>vspipe: PATH, $KNA_VSPIPE, the VapourSynth installer folders on Windows.</summary>
     public static string? LocateVsPipe()
     {
         if (KnA.Core.Settings.AppEnv.Get("VSPIPE") is { } env && File.Exists(env)) return env;
+        // VapourSynth portable bundled with KnA or installed by the component manager.
+        foreach (var root in new[] { Path.Combine(AppContext.BaseDirectory, "tools", "vapoursynth") })
+            if (File.Exists(Path.Combine(root, ExeName("vspipe")))) return Path.Combine(root, ExeName("vspipe"));
         var found = SearchPath("vspipe").FirstOrDefault() ?? SearchPath("VSPipe").FirstOrDefault();
         if (found is not null) return found;
         if (OperatingSystem.IsWindows())
@@ -96,6 +128,8 @@ public static class FfmpegLocator
         var dirs = new List<string>();
         foreach (var n in names) dirs.Add(ManagedDir(dataDirectory, n.ToLowerInvariant()));
         if (extraDir is not null) dirs.Add(extraDir);
+        // Programs shipped with an installed package or a Docker image: <program folder>/tools/<name>.
+        foreach (var n in names) dirs.Add(Path.Combine(AppContext.BaseDirectory, "tools", n.ToLowerInvariant()));
         dirs.Add(AppContext.BaseDirectory);
         dirs.Add(Path.Combine(dataDirectory, "ffmpeg"));
         foreach (var n in names) dirs.Add(Path.Combine(dataDirectory, "tools", n.ToLowerInvariant()));   // portable copies of KnA ≤ 3.1.1

@@ -54,6 +54,15 @@ public sealed record OptionsDto(
         .ToDictionary(n => n, n => new EncoderInfoDto(
             VideoEncoders.QualityOption(n)?.Label, VideoEncoders.QualityOption(n)?.Min, VideoEncoders.QualityOption(n)?.Max,
             VideoEncoders.SpeedOption(n)?.Values ?? [], VideoEncoders.TuneValues(n)));
+    /// <summary>rigaya encoders (NVEncC / QSVEncC / VCEEncC) for "Codec|Backend": name and hand-set parameters.</summary>
+    public IReadOnlyDictionary<string, RigayaInfoDto> RigayaEncoders { get; init; } =
+        (from c in Enum.GetValues<VideoCodec>() from b in Enum.GetValues<EncoderBackend>()
+         where KnA.Core.Encoding.RigayaEncoders.Supports(c, b)
+         let id = KnA.Core.Encoding.RigayaEncoders.ToolId(b)!
+         let q = KnA.Core.Encoding.RigayaEncoders.QualityOption(id, c)
+         select (Key: $"{c}|{b}", Value: new RigayaInfoDto(KnA.Core.Encoding.RigayaEncoders.DisplayName(b),
+             new EncoderInfoDto(q?.Label, q?.Min, q?.Max, KnA.Core.Encoding.RigayaEncoders.SpeedValues(id), KnA.Core.Encoding.RigayaEncoders.TuneValues(id, c)))))
+        .ToDictionary(x => x.Key, x => x.Value);
     public IReadOnlyList<OptionDto> ToneMapCurves { get; init; } = Enum.GetValues<ToneMapCurve>().Select(a => new OptionDto(a.ToString(), a.Display())).ToList();
     public IReadOnlyList<OptionDto> ChromaFormats { get; init; } = Enum.GetValues<ChromaFormat>().Select(a => new OptionDto(a.ToString(), a.Display())).ToList();
     public IReadOnlyList<OptionDto> UpscaleMethods { get; init; } = Enum.GetValues<UpscaleMethod>().Select(a => new OptionDto(a.ToString(), a.Display(), a.Description())).ToList();
@@ -88,9 +97,16 @@ public sealed record OptionsDto(
         Enum.GetValues<ImageMode>().Select(m => new OptionDto(m.ToString(), m.Display())).ToList());
 }
 
+public sealed record RigayaInfoDto(string Name, EncoderInfoDto Info);
+
 public sealed record EncoderInfoDto(string? QualityLabel, double? QualityMin, double? QualityMax, IReadOnlyList<string> Speeds, IReadOnlyList<string> Tunes);
 
-public sealed record ToolsDto(string? Ffmpeg, string? Ffprobe, string? Scxvid, string? DoviTool, string? Hdr10PlusTool, string Instructions, string? VsPipe = null, string? Fdkaac = null);
+public sealed record ToolsDto(string? Ffmpeg, string? Ffprobe, string? Scxvid, string? DoviTool, string? Hdr10PlusTool, string Instructions, string? VsPipe = null, string? Fdkaac = null)
+{
+    public string? Qaac { get; init; }
+    /// <summary>Backends with an installed rigaya encoder ("Nvenc", "Qsv", "Amf").</summary>
+    public IReadOnlyList<string> Rigaya { get; init; } = [];
+}
 
 public sealed record StateDto(string Version, string Platform, string Language, System.Text.Json.Nodes.JsonNode? Settings, OptionsDto Options, ToolsDto Tools,
     QueueStateDto Queue, IReadOnlyList<JobDto> Jobs, bool PowerActionsAllowed, IReadOnlyList<Preset> Presets);
@@ -161,7 +177,11 @@ public static class Mapping
 
     public static ToolsDto Tools(QueueService q) => new(q.Tools?.Ffmpeg, q.Tools?.Ffprobe, q.Tools?.Scxvid, q.Tools?.DoviTool, q.Tools?.Hdr10PlusTool,
         OperatingSystem.IsMacOS() ? L.T("On macOS update FFmpeg with Homebrew: brew upgrade ffmpeg")
-        : L.T("Install FFmpeg from Settings → Components, or with your package manager."), q.Tools?.VsPipe, q.Tools?.Fdkaac);
+        : L.T("Install FFmpeg from Settings → Components, or with your package manager."), q.Tools?.VsPipe, q.Tools?.Fdkaac)
+    {
+        Qaac = q.Tools?.Qaac,
+        Rigaya = KnA.Core.Queue.JobRunner.RigayaFor(q.Tools).Keys.Select(k => k.ToString()).ToList(),
+    };
 
     /// <summary>Settings as sent to browsers: the LLM API key never leaves the server.</summary>
     public static System.Text.Json.Nodes.JsonNode? PublicSettings(AppSettings s, System.Text.Json.JsonSerializerOptions o)

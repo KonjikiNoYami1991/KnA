@@ -16,6 +16,7 @@
 #   FFMPEG=btbn-master    BtbN nightly master
 #   FFMPEG=distro         Ubuntu's FFmpeg package
 #   FDKAAC=1              build the standalone fdkaac encoder (best AAC) into the image (default 1)
+#   RIGAYA=1              NVEncC / QSVEncC / VCEEncC (rigaya) in the image, amd64 (default 1)
 
 # ---------------------------------------------------------------- KnA (.NET)
 FROM ubuntu:24.04 AS build
@@ -66,6 +67,26 @@ print(max(r)[1] if r else 'ffmpeg-master-latest-'+t+'-gpl.tar.xz')")"; \
       && tar -xJf /tmp/ff.tar.xz -C /tmp && cp /tmp/ffmpeg-*/bin/ffmpeg /tmp/ffmpeg-*/bin/ffprobe /out/ && rm -rf /tmp/ff*; \
     fi
 
+# ---------------------------------------------------------------- rigaya encoders (NVEncC / QSVEncC / VCEEncC), amd64
+# The newest Ubuntu 24.04 .deb of each; installed with apt in the runtime image so their dependencies come along.
+FROM ubuntu:24.04 AS rigaya
+ARG DEBIAN_FRONTEND=noninteractive
+ARG TARGETARCH
+ARG RIGAYA=1
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl python3 && rm -rf /var/lib/apt/lists/*
+RUN set -e; mkdir -p /debs; \
+    if [ "$RIGAYA" = "1" ] && { [ "$TARGETARCH" = "amd64" ] || [ -z "$TARGETARCH" ]; }; then \
+      for r in NVEnc:nvencc QSVEnc:qsvencc VCEEnc:vceencc; do \
+        repo=${r%%:*}; id=${r##*:}; \
+        url="$( (curl -fsSL "https://api.github.com/repos/rigaya/$repo/releases/latest" || echo '{"assets":[]}') \
+          | python3 -c "import json,re,sys; a=json.load(sys.stdin)['assets']; \
+d=[(float(m.group(1) or 0),x['browser_download_url']) for x in a for m in [re.match(r'$id'+r'_[\d.]+(?:_Ubuntu(\d+\.\d+))?_amd64\.deb$',x['name'],re.I)] if m]; \
+p=[u for v,u in d if v==24.04] or [u for v,u in sorted(d,reverse=True)]; print(p[0] if p else '')")"; \
+        if [ -n "$url" ]; then echo "$id: $url"; curl -fsSL "$url" -o "/debs/$id.deb" || echo "$id: download failed"; \
+        else echo "$id: no .deb found (skipped)"; fi; \
+      done; \
+    fi
+
 # ---------------------------------------------------------------- runtime
 FROM ubuntu:24.04
 ARG DEBIAN_FRONTEND=noninteractive
@@ -86,6 +107,12 @@ RUN apt-get update \
 COPY --from=build /app /app
 COPY --from=ffmpeg /out/ /usr/local/bin/
 COPY --from=fdkaac /out/ /app/tools/
+# NVEncC (NVIDIA, with --gpus all), QSVEncC (Intel, with /dev/dri), VCEEncC (AMD AMF: needs AMD's proprietary
+# AMF runtime on top, so it usually stays unused in containers). A package that cannot be installed is skipped.
+COPY --from=rigaya /debs/ /tmp/debs/
+RUN set -e; if ls /tmp/debs/*.deb >/dev/null 2>&1; then apt-get update; \
+      for d in /tmp/debs/*.deb; do apt-get install -y --no-install-recommends "$d" || echo "skipped $d"; done; \
+      rm -rf /var/lib/apt/lists/*; fi; rm -rf /tmp/debs
 
 ENV KNA_DATA_DIR=/config \
     KNA_MEDIA_ROOTS=/media \

@@ -16,7 +16,8 @@
 #   KNA_MEDIA_ROOTS    read/write video folders, ';'      KNA_READONLY_ROOTS  read-only folders, ';'
 #   KNA_UPLOAD_DIR     browser uploads destination        KNA_PASSWORD      web UI password (no single quotes)
 #   KNA_GPU            auto | none | "intel amd nvidia"   KNA_FFMPEG_SOURCE btbn | distro
-#   KNA_COMPONENTS     "anime4k fsrcnnx dovi_tool hdr10plus_tool ai-runtime" (subset)
+#   KNA_COMPONENTS     "anime4k fsrcnnx dovi_tool hdr10plus_tool nvencc qsvencc vceencc model:realesr-animevideov3 ai-runtime" (subset)
+#   KNA_RIGAYA         auto | no — auto adds NVEncC / QSVEncC / VCEEncC for the GPUs found (x86-64)
 #   KNA_UID / KNA_GID  ids of the service user (match the owner of your video files / bind mounts)
 #   KNA_RPMFUSION      Fedora only: auto | yes | no — RPM Fusion for the full AMD/Intel VA-API drivers (H.264/HEVC)
 # shellcheck disable=SC1090  # settings files are read at run time
@@ -38,6 +39,7 @@ t() { if ((IT)); then printf '%s' "$2"; else printf '%s' "$1"; fi; }
 log() { printf '\033[1;35m[KnA]\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33m[KnA] %s\033[0m\n' "$*" >&2; }
 die() { printf '\033[1;31m[KnA] %s\033[0m\n' "$*" >&2; exit 1; }
+has_gpu() { [[ " ${KNA_GPU:-} " == *" $1 "* ]]; }
 
 usage() {
   cat <<EOF
@@ -119,6 +121,7 @@ KNA_PASSWORD="${KNA_PASSWORD:-}"
 KNA_GPU="${KNA_GPU:-auto}"
 KNA_FFMPEG_SOURCE="${KNA_FFMPEG_SOURCE:-btbn}"
 KNA_COMPONENTS="${KNA_COMPONENTS-anime4k fsrcnnx dovi_tool hdr10plus_tool}"
+KNA_RIGAYA="${KNA_RIGAYA:-auto}"
 KNA_UID="${KNA_UID:-}"
 KNA_GID="${KNA_GID:-}"
 KNA_RPMFUSION="${KNA_RPMFUSION:-auto}"
@@ -286,13 +289,18 @@ Abilitare i repository RPM Fusion free e nonfree e usarli?")" 14 78; then KNA_RP
 
   c() { [[ " $KNA_COMPONENTS " == *" $1 "* ]] && echo ON || echo OFF; }
   comps=$(wt --checklist "$(t "Optional components (they can also be installed later from Settings → Components):" \
-                             "Componenti opzionali (installabili anche dopo da Impostazioni → Componenti):")" 15 78 5 \
+                             "Componenti opzionali (installabili anche dopo da Impostazioni → Componenti):")" 19 78 9 \
     anime4k "Anime4K (GPU upscaling shaders)" "$(c anime4k)" \
     fsrcnnx "FSRCNNX (GPU upscaling shader)" "$(c fsrcnnx)" \
     dovi_tool "dovi_tool (Dolby Vision)" "$(c dovi_tool)" \
     hdr10plus_tool "hdr10plus_tool (HDR10+)" "$(c hdr10plus_tool)" \
+    nvencc "NVEncC (NVIDIA, rigaya)" "$(has_gpu nvidia && echo ON || c nvencc)" \
+    qsvencc "QSVEncC (Intel, rigaya)" "$(has_gpu intel && echo ON || c qsvencc)" \
+    vceencc "VCEEncC (AMD AMF, rigaya)" "$(c vceencc)" \
+    model:realesr-animevideov3 "$(t "AI upscale model AnimeVideo v3" "Modello di upscale AI AnimeVideo v3")" "$(c model:realesr-animevideov3)" \
     ai-runtime "$(t "AI upscaler: Python + PyTorch (several GB)" "Upscaler AI: Python + PyTorch (diversi GB)")" "$(c ai-runtime)") || cancelled
   KNA_COMPONENTS=$(echo "$comps" | tr -d '"')
+  KNA_RIGAYA=no   # chosen above
 
   if wt --defaultno --yesno "$(t "Choose the user/group ids of the 'kna' service user?
 
@@ -338,7 +346,11 @@ add_components() { # add apt components (non-free, multiverse…) to every sourc
     }
     { print }' "$f" > "$f.kna-tmp" && cat "$f.kna-tmp" > "$f" && rm -f "$f.kna-tmp"
 }
-has_gpu() { [[ " $KNA_GPU " == *" $1 "* ]]; }
+# rigaya's encoders for the GPUs found (x86-64 builds only; VCEEncC also needs AMD's AMF runtime).
+if [[ $KNA_RIGAYA == auto && $(uname -m) == x86_64 ]]; then
+  has_gpu nvidia && [[ " $KNA_COMPONENTS " != *" nvencc "* ]] && KNA_COMPONENTS="$KNA_COMPONENTS nvencc"
+  has_gpu intel && [[ " $KNA_COMPONENTS " != *" qsvencc "* ]] && KNA_COMPONENTS="$KNA_COMPONENTS qsvencc"
+fi
 
 log "$(t "Installing packages for $PRETTY_NAME…" "Installazione dei pacchetti per $PRETTY_NAME…")"
 case $PM in
@@ -361,6 +373,8 @@ apt)
   has_gpu intel && pm_try "$(pick_pkg intel-media-va-driver-non-free intel-media-va-driver)" i965-va-driver libvpl2 libmfx-gen1.2 libmfx-gen1
   # Newer releases ship the VA driver inside mesa-libgallium; mesa-va-drivers is then a transitional package.
   has_gpu amd && pm_try mesa-va-drivers
+  # Shared libraries the rigaya encoders (unpacked by KnA from their .deb) load from the system.
+  [[ $KNA_COMPONENTS =~ (nvencc|qsvencc|vceencc) ]] && pm_try "$(pick_pkg libass9 libass10)" libva2 libva-drm2 libdrm2 libvdpau1 libxml2
   PY_PKGS=(python3 python3-venv python3-pip)
   ;;
 dnf)

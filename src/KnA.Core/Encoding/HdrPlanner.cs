@@ -104,6 +104,13 @@ public static class HdrPlanner
                     "HDR10+ dynamic metadata is dropped (needs hdr10plus_tool, no trim and no frame-rate change); static HDR10 is kept."));
             }
         }
+        else if ((hdr.IsDolbyVision || hdr.HasHdr10Plus) && RigayaEncoders.Wanted(s) && codec is VideoCodec.HEVC or VideoCodec.AV1)
+        {
+            // NVEncC / QSVEncC / VCEEncC copy them from the source when they read it themselves (no FFmpeg filter, no trim).
+            if (!frameExact || cropped)
+                issues.Add(Containers.Warning("Dolby Vision / HDR10+ dynamic metadata is copied by {0} only without trim, crop and frame-rate change; static HDR is kept.",
+                    RigayaEncoders.DisplayName(backend)));
+        }
         else if (hdr.IsDolbyVision || hdr.HasHdr10Plus)
         {
             issues.Add(Containers.Warning(

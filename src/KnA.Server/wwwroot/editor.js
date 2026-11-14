@@ -390,9 +390,13 @@ function renderTrim(body) {
     if (drag === "start") setTrim(Math.min(tt, (curEnd() ?? dur) - 0.05), curEnd());
     else if (drag === "end") setTrim(curStart() ?? 0, Math.max(tt, (curStart() ?? 0) + 0.05));
     ed.playhead = tt;
-    layout(); loadFrame();
+    layout();
+    // Zapping: while dragging only the nearest strip thumbnail (already loaded) is shown; the real frame is
+    // rendered when the pointer is released.
+    const thumbs = tl.querySelectorAll(".thumbs img"), img = $("#pv-img");
+    if (thumbs.length && img) img.src = thumbs[Math.min(thumbs.length - 1, Math.floor(tt / dur * thumbs.length))].src;
   };
-  tl.onpointerup = () => { drag = null; };
+  tl.onpointerup = tl.onpointercancel = () => { if (drag) { drag = null; loadFrame(); } };
 
   body.onchange = e => {
     if (e.target.id === "in-start") setTrim(parseStamp(e.target.value) ?? 0, curEnd());
@@ -627,12 +631,14 @@ function renderPreview(body) {
     f.onload = f.onerror = () => { const s = $("#pv-fs"); if (s) s.hidden = true; };
     f.src = `/api/jobs/${ed.id}/preview/frame?t=${tt}&final=true&w=960&v=${Date.now() % 100000}`;
   }, 300);
+  // Zapping: dragging the slider only moves the time ("input"); the frames are rendered on release ("change",
+  // also sent by each keyboard step).
   body.oninput = e => {
     if (e.target.id !== "pv-range") return;
     ed.playhead = Number(e.target.value);
     $("#pv-t").textContent = fmtStamp(ed.playhead);
-    load();
   };
+  body.onchange = e => { if (e.target.id === "pv-range") load(); };
   body.onclick = e => {
     if (!e.target.closest("[data-a=clip]")) return;
     $("#clip-box").hidden = false;

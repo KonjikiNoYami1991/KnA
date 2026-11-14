@@ -126,6 +126,8 @@ public static class JobRunner
             bool videoCopied = compiled.Tracks.FirstOrDefault(t => t.Include && t.Kind == "video")?.CopyVideo == true;
             int exit = job.Edit.IsMultiSegment
                 ? await RunSegmentsAsync(job, ctx, baseCtx with { Burn = subs, HdrFiles = sideFiles }, compiled, workDir, ct)
+                : compiled.Rigaya is not null
+                ? await RigayaRunner.RunAsync(job, ctx, baseCtx with { Burn = subs, HdrFiles = sideFiles }, compiled, workDir, ct)
                 : ResumableEncoder.CanUse(job, compiled, ctx.Settings)
                 ? await ResumableEncoder.RunAsync(job, ctx, baseCtx with { Burn = subs, HdrFiles = sideFiles }, compiled, workDir, ct)
                 : s.Chunks.Enabled && p.EncodesVideo && !videoCopied
@@ -268,11 +270,23 @@ public static class JobRunner
                 AppVersion = AppInfo.Version,
                 Capabilities = caps,
                 AudioEncoders = AudioEncodersFor(caps, tools),
+                RigayaEncoders = RigayaFor(tools),
+                CpuLevel = CpuFeatures.X86Level,
             },
             Hdr = new HdrEnvironment(caps?.HasZscale ?? true, caps?.HasLibplacebo ?? false, tools?.DoviTool is not null, tools?.Hdr10PlusTool is not null),
             Upscale = dataDirectory is null ? null : UpscaleEnvironmentFor(job.Settings, settings, tools, dataDirectory),
             ChaptersFile = WriteChaptersFile(job, dataDirectory),
         };
+    }
+
+    /// <summary>Installed NVEncC / QSVEncC / VCEEncC by backend.</summary>
+    public static Dictionary<EncoderBackend, string> RigayaFor(FfmpegTools? tools)
+    {
+        var d = new Dictionary<EncoderBackend, string>();
+        if (tools?.NvencC is { } n) d[EncoderBackend.Nvenc] = n;
+        if (tools?.QsvencC is { } q) d[EncoderBackend.Qsv] = q;
+        if (tools?.VceencC is { } v) d[EncoderBackend.Amf] = v;
+        return d;
     }
 
     /// <summary>Shader file, Python, sidecar script and model of the job's upscaling method (null when not used).</summary>
@@ -298,7 +312,9 @@ public static class JobRunner
     {
         var build = caps?.Builds.FirstOrDefault(b => b.Path == tools?.Ffmpeg) ?? caps?.Main;
         bool fdk = tools?.Fdkaac is not null;
-        return build is { Encoders.Count: > 0 } ? new AudioEncoderSet(build.Encoders, fdk) : AudioEncoderSet.Default with { ExternalFdkaac = fdk };
+        bool qaac = tools?.Qaac is not null;
+        return build is { Encoders.Count: > 0 } ? new AudioEncoderSet(build.Encoders, fdk) { ExternalQaac = qaac }
+            : AudioEncoderSet.Default with { ExternalFdkaac = fdk, ExternalQaac = qaac };
     }
 
     /// <summary>
@@ -334,7 +350,7 @@ public static class JobRunner
         string workDir, RunnerContext ctx, CancellationToken ct)
     {
         var result = new Dictionary<string, string>();
-        if (ctx.Tools.Fdkaac is not { } fdkaac) return result;
+        if (ctx.Tools.Fdkaac is null && ctx.Tools.Qaac is null) return result;
         var media = new Dictionary<string, MediaInfo>(job.ExternalMedia) { [job.SourcePath] = job.Media! };
         int n = 0;
         foreach (var t in check.Tracks.Where(t => t.Include && t.Kind == "audio"))
@@ -342,30 +358,39 @@ public static class JobRunner
             if (TrackPlanner.Lookup(t, media) is not AudioStream ast) continue;
             var plan = AudioPlanner.Plan(ast, AudioPlanner.ForTrack(t, cc.Settings), check.Container, cc.Options.AudioEncoders);
             if (!plan.IsExternal) continue;
-            job.Stage = L.T("Encoding audio (fdkaac)");
+            bool useQaac = plan.Encoder == AudioEncoderSet.Qaac && ctx.Tools.Qaac is not null;
+            var tool = useQaac ? ctx.Tools.Qaac! : ctx.Tools.Fdkaac ?? throw new InvalidOperationException("fdkaac not found.");
+            var toolName = useQaac ? "qaac" : "fdkaac";
+            job.Stage = L.T("Encoding audio ({0})", toolName);
             ctx.Changed(job);
             string input = t.File;
             int index = ast.Index;
             if (Frameserver.IsVapourSynth(t.File) && cc.ScriptAudio.GetValueOrDefault($"{t.File}|{t.Stream}") is { } w64) { input = w64; index = 0; }
-            var output = Path.Combine(workDir, $"fdk{n++}.m4a");
+            var output = Path.Combine(workDir, $"{toolName}{n++}.m4a");
             var ff = new List<string> { "-hide_banner", "-nostdin", "-v", "error" };
             ff.AddRange(MediaProber.RobustInputArgs(input));
             ff.AddRange([.. KnA.Core.Media.Discs.DiscSource.InputArgs(input), "-map", $"0:{index}", "-vn", "-ac", plan.Channels.ToString(System.Globalization.CultureInfo.InvariantCulture)]);
             if (FilterBuilder.Audio(cc.Settings.AudioFilters, "fdkaac", plan.Channels) is { } af) ff.AddRange(["-af", af]);
             ff.AddRange(["-c:a", "pcm_s16le", "-f", "wav", "-"]);
-            var args = AudioPlanner.FdkaacArgs(plan, output);
-            job.AppendLog($"fdkaac: {Path.GetFileName(input)} #{index} → AAC{(plan.HeAac ? " HE" : "")} {plan.Kbps}k {plan.Channels}ch");
-            job.AppendLog("  " + new EncodePlan(ff, "-").CommandLine(ctx.Tools.Ffmpeg) + " | " + new EncodePlan(args, output).CommandLine(fdkaac));
-            try { await PipeAsync(ctx, ff, fdkaac, args, ct); }
+            var args = useQaac ? AudioPlanner.QaacArgs(plan, output) : AudioPlanner.FdkaacArgs(plan, output);
+            job.AppendLog($"{toolName}: {Path.GetFileName(input)} #{index} → AAC{(plan.HeAac ? " HE" : "")} {plan.Kbps}k {plan.Channels}ch");
+            job.AppendLog("  " + new EncodePlan(ff, "-").CommandLine(ctx.Tools.Ffmpeg) + " | " + new EncodePlan(args, output).CommandLine(tool));
+            try { await PipeAsync(ctx, ff, tool, args, ct); }
+            catch (InvalidOperationException ex) when (useQaac && ctx.Tools.Fdkaac is { } fallback)
+            {
+                // qaac failed (CoreAudioToolbox missing or broken): fdkaac (libfdk_aac) takes over.
+                job.AppendLog("Warning: qaac failed (" + ex.Message + "), fdkaac is used instead.");
+                await PipeAsync(ctx, ff, fallback, AudioPlanner.FdkaacArgs(plan, output), ct);
+            }
             catch (InvalidOperationException ex) when (plan.HeAac && ex.Message.Contains("unsupported profile", StringComparison.OrdinalIgnoreCase))
             {
                 // Some fdk-aac builds (e.g. distribution packages) leave HE-AAC out: fall back to AAC-LC.
                 var lc = plan with { HeAac = false, Kbps = Math.Max(96, (plan.Kbps ?? 64) * 2) };
                 job.AppendLog("Warning: this fdkaac has no HE-AAC, AAC-LC is used.");
                 job.Issues = [.. job.Issues, Containers.Warning("This fdkaac has no HE-AAC: AAC-LC was used.")];
-                await PipeAsync(ctx, ff, fdkaac, AudioPlanner.FdkaacArgs(lc, output), ct);
+                await PipeAsync(ctx, ff, tool, AudioPlanner.FdkaacArgs(lc, output), ct);
             }
-            if (!File.Exists(output) || new FileInfo(output).Length == 0) throw new InvalidOperationException("fdkaac produced no output.");
+            if (!File.Exists(output) || new FileInfo(output).Length == 0) throw new InvalidOperationException(toolName + " produced no output.");
             result[$"{t.File}|{t.Stream}"] = output;
         }
         return result;

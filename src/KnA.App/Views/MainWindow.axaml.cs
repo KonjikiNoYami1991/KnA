@@ -134,7 +134,7 @@ public partial class MainWindow : Window, IDialogService
         row.Children.Add(buttons);
         row.Children.Add(combo);
 
-        var form = new SettingsForm(vm.FormSettings, () => vm.Queue.Settings.Capabilities, full: false, () => vm.Queue.Tools?.Fdkaac is not null);
+        var form = new SettingsForm(vm.FormSettings, () => vm.Queue.Settings.Capabilities, full: false, () => vm.Queue.Tools);
         form.Changed += s =>
         {
             // Any manual change detaches the form from its preset.

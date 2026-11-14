@@ -12,6 +12,7 @@ services:
       args:
         FFMPEG: btbn-release      # btbn-release (newest stable branch) · btbn-master (nightly) · distro
         FDKAAC: "1"               # standalone Fraunhofer AAC encoder inside the image
+        RIGAYA: "1"               # NVEncC / QSVEncC / VCEEncC (amd64) inside the image
     image: kna:latest
     container_name: kna
     restart: unless-stopped
@@ -51,6 +52,7 @@ services:
       #   target: /opt/ffmpeg-custom
       #   read_only: true
     # LLMs on the host (Ollama, LM Studio, Unsloth Studio…): use http://host.docker.internal:<port>/v1
+    # or the "ollama" service below: http://ollama:11434/v1 (models are downloaded from Settings → Components).
     extra_hosts:
       - "host.docker.internal:host-gateway"
     # ---- Intel / AMD GPU (VA-API, Quick Sync, Vulkan): pass the render node
@@ -66,3 +68,17 @@ services:
     #         - driver: nvidia
     #           count: all
     #           capabilities: [gpu, video, compute, utility, graphics]
+
+  # ---- Optional local LLM for the assistant: docker compose --profile llm up -d
+  ollama:
+    image: ollama/ollama:latest
+    container_name: kna-ollama
+    profiles: ["llm"]
+    restart: unless-stopped
+    volumes:
+      - type: bind
+        source: ./ollama               # downloaded models
+        target: /root/.ollama
+        bind:
+          create_host_path: true
+    # NVIDIA: same "deploy" block as above; AMD: image ollama/ollama:rocm with /dev/kfd and /dev/dri

@@ -113,19 +113,22 @@ jobs:
         run: |
           (cd out/desktop && zip -qry "$GITHUB_WORKSPACE/KnA-desktop-${{ matrix.rid }}.zip" .)
           (cd out/server && zip -qry "$GITHUB_WORKSPACE/KnA-server-${{ matrix.rid }}.zip" .)
-      # Portable desktop edition: everything in one folder, each dependency in its own subfolder:
-      #   KnA(.exe) + native libs · portable.txt · tools/ffmpeg (FFmpeg + FFprobe, BtbN GPL build) · tools/fdkaac
-      #   · ai/ (sidecar; portable Python, PyTorch and models when installed) · data/ (settings, queue, logs, temp).
-      - name: Portable layout
+      # Portable editions (desktop and server): everything in one folder, each dependency in its own subfolder:
+      #   KnA(.exe) + native libs · portable.txt · tools/ffmpeg (BtbN GPL build) · tools/fdkaac · tools/nvencc,qsvencc,vceencc
+      #   (rigaya) · tools/qaac (without Apple's files: extracted from iTunes on the user's machine) · tools/vapoursynth
+      #   (portable, embedded Python, BestSource, L-SMASH) · tools/dovi_tool, hdr10plus_tool · tools/shaders · ai/models
+      #   (Real-ESRGAN) · data/ (settings, queue, logs, temp). PyTorch is not included: its build depends on the GPU
+      #   (CUDA / ROCm / XPU / CPU) and weighs several GB, Settings → Components installs the right one.
+      - name: Tools bundle
         if: runner.os != 'macOS'
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
+          KNA_GITHUB_TOKEN: ${{ github.token }}
         run: |
-          mkdir -p portable && cp -R out/desktop portable/KnA
-          k=portable/KnA
-          # fdkaac in its own folder (the plain packages keep it in tools/)
-          if [ -d "$k/tools" ]; then mkdir -p "$k/tools/fdkaac" && find "$k/tools" -maxdepth 1 -type f -exec mv {} "$k/tools/fdkaac/" \; ; fi
+          b=bundle
+          mkdir -p "$b/data" && touch "$b/portable.txt"
+          if [ -d fdk/out ]; then mkdir -p "$b/tools/fdkaac" && cp fdk/out/* "$b/tools/fdkaac/"; fi
           # FFmpeg: newest release-branch GPL build from BtbN for this platform
           case "${{ matrix.rid }}" in
             win-x64) t=win64 ;; win-arm64) t=winarm64 ;; linux-x64) t=linux64 ;; linux-arm64) t=linuxarm64 ;;
@@ -140,37 +143,70 @@ jobs:
             *.zip) if command -v unzip >/dev/null; then unzip -q "ffdl/$asset" -d ffx; else 7z x -offx "ffdl/$asset" >/dev/null; fi ;;
             *) tar -xJf "ffdl/$asset" -C ffx ;;
           esac
-          mkdir -p "$k/tools/ffmpeg"
+          mkdir -p "$b/tools/ffmpeg"
           for exe in ffmpeg ffprobe ffmpeg.exe ffprobe.exe; do
             f=$(find ffx -type f -name "$exe" | head -1)
-            if [ -n "$f" ]; then cp "$f" "$k/tools/ffmpeg/"; fi
+            if [ -n "$f" ]; then cp "$f" "$b/tools/ffmpeg/"; fi
           done
-          ls "$k/tools/ffmpeg" | grep -q '^ffmpeg' || { echo "::error::FFmpeg not found in $asset"; exit 1; }
+          ls "$b/tools/ffmpeg" | grep -q '^ffmpeg' || { echo "::error::FFmpeg not found in $asset"; exit 1; }
           lic=$(find ffx -maxdepth 2 -type f -name 'LICENSE*' | head -1)
-          if [ -n "$lic" ]; then cp "$lic" "$k/tools/ffmpeg/LICENSE.txt"; fi
+          if [ -n "$lic" ]; then cp "$lic" "$b/tools/ffmpeg/LICENSE.txt"; fi
           printf '%s\n' "FFmpeg $asset - https://github.com/BtbN/FFmpeg-Builds (build scripts) and https://ffmpeg.org (source code)." \
-            "GPL licensed: see LICENSE.txt. KnA runs it as a separate program." > "$k/tools/ffmpeg/SOURCE.txt"
-          cat > "$k/portable.txt" <<'EOF'
+            "GPL licensed: see LICENSE.txt. KnA runs it as a separate program." > "$b/tools/ffmpeg/SOURCE.txt"
+
+          # Everything else is installed by KnA's own component manager (same folders and checks as in the app).
+          models="model:realesr-animevideov3,model:RealESRGAN_x4plus_anime_6B,model:realesr-general-x4v3,model:RealESRGAN_x4plus,model:RealESRGAN_x2plus"
+          common="anime4k,fsrcnnx,$models"
+          case "${{ matrix.rid }}" in
+            win-x64)     ids="nvencc,qsvencc,vceencc,qaac,vapoursynth,dovi_tool,hdr10plus_tool,$common" ;;
+            linux-x64)   ids="nvencc,qsvencc,vceencc,dovi_tool,hdr10plus_tool,$common" ;;
+            linux-arm64) ids="dovi_tool,hdr10plus_tool,$common" ;;
+            *)           ids="$common" ;;   # win-arm64 is built on an x64 runner: only platform-neutral parts
+          esac
+          dotnet run --project src/KnA.Server -c Release -- --bundle "$b" "$ids" || echo "::warning::Some components could not be bundled for ${{ matrix.rid }} (see the log)"
+          rm -rf "$b/data/temp"
+          du -sh "$b"/tools/* "$b"/ai 2>/dev/null || true
+      - name: Portable layout
+        if: runner.os != 'macOS'
+        shell: bash
+        run: |
+          note() {
+            cat > "$1/portable.txt" <<'EOF'
           KnA portable: everything stays in this folder. data = settings, presets, queue, logs, temporary files;
-          tools = FFmpeg, fdkaac and the other programs (updates from Settings → Components go here too);
-          ai = the AI upscaler (portable Python, PyTorch, models) when installed.
+          tools = FFmpeg, fdkaac, NVEncC/QSVEncC/VCEEncC, qaac, VapourSynth and the other programs (updates from
+          Settings → Components go here too); ai = the AI upscaler (models included; PyTorch from Settings → Components).
+          qaac needs Apple's CoreAudioToolbox: Settings → Components → qaac → Install extracts it from the iTunes setup.
           Delete this file to use the per-user folder instead.
 
           KnA portable: tutto resta in questa cartella. data = impostazioni, preset, coda, log, file temporanei;
-          tools = FFmpeg, fdkaac e gli altri programmi (anche gli aggiornamenti da Impostazioni → Componenti);
-          ai = l'upscaler AI (Python portabile, PyTorch, modelli) quando installato.
+          tools = FFmpeg, fdkaac, NVEncC/QSVEncC/VCEEncC, qaac, VapourSynth e gli altri programmi (anche gli
+          aggiornamenti da Impostazioni → Componenti); ai = l'upscaler AI (modelli inclusi; PyTorch da Impostazioni → Componenti).
+          qaac ha bisogno di CoreAudioToolbox di Apple: Impostazioni → Componenti → qaac → Installa lo estrae dal setup di iTunes.
           Elimina questo file per usare la cartella dell'utente.
           EOF
-          sed -i.bak 's/^          //' "$k/portable.txt" && rm "$k/portable.txt.bak"
-          mkdir -p "$k/data"
-          ls -R "$k" | head -40
+            sed -i.bak 's/^          //' "$1/portable.txt" && rm "$1/portable.txt.bak"
+          }
+          for v in desktop server; do
+            k=portable-$v/KnA$([ $v = server ] && echo -server)
+            mkdir -p "$(dirname "$k")" && cp -R out/$v "$k"
+            rm -rf "$k/tools"   # the flat fdkaac copy of the plain package: the bundle has tools/fdkaac
+            cp -R bundle/tools "$k/tools"
+            if [ -d bundle/ai ]; then cp -R bundle/ai "$k/ai"; fi
+            mkdir -p "$k/data" && if [ -d bundle/data/tools ]; then cp -R bundle/data/tools "$k/data/tools"; fi
+            note "$k"
+            echo "== $k" && du -sh "$k"
+          done
       - name: Portable zip (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
-        run: Compress-Archive -Path portable/KnA -DestinationPath KnA-portable-${{ matrix.rid }}.zip
+        run: |
+          Compress-Archive -Path portable-desktop/KnA -DestinationPath KnA-portable-${{ matrix.rid }}.zip
+          Compress-Archive -Path portable-server/KnA-server -DestinationPath KnA-server-portable-${{ matrix.rid }}.zip
       - name: Portable tarball (Linux)
         if: runner.os == 'Linux'
-        run: tar -C portable -czf KnA-portable-${{ matrix.rid }}.tar.gz KnA
+        run: |
+          tar -C portable-desktop -czf KnA-portable-${{ matrix.rid }}.tar.gz KnA
+          tar -C portable-server -czf KnA-server-portable-${{ matrix.rid }}.tar.gz KnA-server
       - name: macOS app bundle (icon, Finder, Dock)
         if: runner.os == 'macOS'
         run: |

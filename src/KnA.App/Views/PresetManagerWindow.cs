@@ -172,7 +172,7 @@ public sealed class PresetManagerWindow : Window
         root.Children.Add(Ui.Card(apply));
 
         // ------------------------------------------------ every setting
-        var form = new SettingsForm(_edited, () => _queue.Settings.Capabilities, full: true, () => _queue.Tools?.Fdkaac is not null)
+        var form = new SettingsForm(_edited, () => _queue.Settings.Capabilities, full: true, () => _queue.Tools)
         {
             AllowedContainers = Containers.Allowed(_edited),
         };

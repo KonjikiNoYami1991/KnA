@@ -640,11 +640,15 @@ edit_kna() {
     KNA_PASSWORD=""
   fi
   c() { [[ " $KNA_COMPONENTS " == *" $1 "* ]] && echo ON || echo OFF; }
-  v=$(wt --checklist "$(t "Optional components:" "Componenti opzionali:")" 14 78 5 \
+  v=$(wt --checklist "$(t "Optional components:" "Componenti opzionali:")" 18 78 9 \
     anime4k "Anime4K (GPU upscaling shaders)" "$(c anime4k)" \
     fsrcnnx "FSRCNNX (GPU upscaling shader)" "$(c fsrcnnx)" \
     dovi_tool "dovi_tool (Dolby Vision)" "$(c dovi_tool)" \
     hdr10plus_tool "hdr10plus_tool (HDR10+)" "$(c hdr10plus_tool)" \
+    nvencc "NVEncC (NVIDIA, rigaya)" "$(c nvencc)" \
+    qsvencc "QSVEncC (Intel, rigaya)" "$(c qsvencc)" \
+    vceencc "VCEEncC (AMD AMF, rigaya)" "$(c vceencc)" \
+    model:realesr-animevideov3 "$(t "AI upscale model AnimeVideo v3" "Modello di upscale AI AnimeVideo v3")" "$(c model:realesr-animevideov3)" \
     ai-runtime "$(t "AI upscaler: Python + PyTorch (several GB)" "Upscaler AI: Python + PyTorch (diversi GB)")" "$(c ai-runtime)") || return 0
   KNA_COMPONENTS=$(echo "$v" | tr -d '"')
 }

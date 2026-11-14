@@ -323,7 +323,8 @@ public sealed class SettingsWindow : Window
                     if (c.InstalledVersion is null || c.UpdateAvailable) b.Classes.Add("primary");
                     b.Click += async (_, _) =>
                     {
-                        if (_queue.IsRunning) { line.Text = L.T("Stop the queue before updating components."); return; }
+                        bool model = c.Id.StartsWith("model:", StringComparison.Ordinal) || c.Id.StartsWith("llm:", StringComparison.Ordinal);
+                        if (_queue.IsRunning && !model) { line.Text = L.T("Stop the queue before updating components."); return; }
                         b.IsEnabled = false;
                         try
                         {

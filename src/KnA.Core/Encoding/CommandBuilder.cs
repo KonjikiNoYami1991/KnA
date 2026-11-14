@@ -29,6 +29,10 @@ public sealed record BuildOptions
     public Tools.FfmpegCapabilities? Capabilities { get; init; }
     /// <summary>Audio encoders of the FFmpeg build that runs the job.</summary>
     public AudioEncoderSet AudioEncoders { get; init; } = AudioEncoderSet.Default;
+    /// <summary>x86-64 level of the processor (see <see cref="Tools.CpuFeatures"/>); 4 = AVX-512 for x265.</summary>
+    public int CpuLevel { get; init; }
+    /// <summary>Installed rigaya encoders (NVEncC / QSVEncC / VCEEncC) by backend.</summary>
+    public IReadOnlyDictionary<EncoderBackend, string> RigayaEncoders { get; init; } = new Dictionary<EncoderBackend, string>();
 }
 
 /// <summary>Subtitles ready to be burned (prepared by the runner in the job working directory).</summary>
@@ -92,6 +96,8 @@ public sealed record ChunkRequest(double Start, double End)
     public double? SegmentSeconds { get; init; }
     public int SegmentStartNumber { get; init; }
     public string? SegmentList { get; init; }
+    /// <summary>Decoded, filtered frames as y4m on stdout (for an external encoder) instead of an encoded file.</summary>
+    public bool Y4m { get; init; }
 }
 public sealed record ConcatVideo(string ListFile, double Offset);
 public sealed record PreviewRequest(PreviewKind Kind, double Time, double ClipSeconds = 6, int MaxWidth = 1280);
@@ -106,6 +112,8 @@ public sealed record CompiledJob(
 {
     /// <summary>vspipe to start and connect to FFmpeg's stdin (VapourSynth video), or null.</summary>
     public PipeSource? Pipe { get; init; }
+    /// <summary>The video is encoded by NVEncC / QSVEncC / VCEEncC (see <see cref="RigayaEncoders"/>), or null.</summary>
+    public RigayaPlan? Rigaya { get; init; }
 
     public bool HasErrors => Issues.Any(i => i.IsError);
 }
@@ -178,7 +186,13 @@ public static class CommandBuilder
         // The chosen GPU must really have this encoder (detected with a test encode), otherwise stop here
         // instead of failing halfway through the job.
         string? encoderName = null;
-        if (!copyVideo && p.EncodesVideo && preview is null)
+        bool rigaya = !copyVideo && p.EncodesVideo && preview is null && concat is null && !ctx.RestOnly && RigayaEncoders.Wanted(s);
+        if (rigaya && !ctx.Options.RigayaEncoders.ContainsKey(s.Backend))
+            issues.Add(Containers.Error("{0} is not installed: add it in Settings → Components, or choose FFmpeg as the encoder program.",
+                RigayaEncoders.DisplayName(s.Backend)));
+        if (rigaya && s.Chunks.Enabled && chunk is null)
+            chunkedJob = false; // the encoder splits the file itself (--parallel)
+        if (!copyVideo && p.EncodesVideo && preview is null && !rigaya)
         {
             var wantedBackend = p.AllowsHardware ? s.Backend : EncoderBackend.Software;
             if (s.BackendUnavailable)
@@ -288,6 +302,8 @@ public static class CommandBuilder
         bool tenBit = preview is null && s.EffectiveTenBit && hdr.Action != HdrAction.ToneMap;
 
         var body = new List<string>();
+        bool plainPicture = false;   // no FFmpeg filter at all (a plain resize at most): the rigaya encoder can read the source itself
+        ScaleResult? plainScale = null;
         var burnTrack = tracks.FirstOrDefault(t => t.Burn && t.Kind == "subtitle");
         if (burnTrack is not null && !p.UsesVideoFilters && p.Kind != ProfileKind.RemuxMp4)
             burnTrack = null;
@@ -338,6 +354,11 @@ public static class CommandBuilder
             else if (neural && enlarge is null)
                 scaleOverride = $"scale={croppedSource.Width & ~1}:{croppedSource.Height & ~1}:flags=lanczos"; // restoration only: back to the source size
             var post = FilterBuilder.VideoPost(cropped, s, textFilter, scaleOverride);
+            if (rigaya && !neural && !placebo && burnTrack is null && pre.Count == 0 && scaleOverride is null)
+            {
+                plainScale = ScaleCalculator.Compute(cropped, p.UsesResolution ? s.Resolution : 0);
+                plainPicture = post.Count == (plainScale is null ? 0 : 1) && plainScale is not { SquarePixels: false };
+            }
             if (neural) post.Insert(0, $"scale=out_color_matrix={Ai.UpscaleSidecar.Matrix(video, hdr.Action)}:out_range=tv,format=yuv444p16le");
             if (preview is not null && preview.MaxWidth > 0)
                 post.Add($"scale='min({preview.MaxWidth},iw)':-2");
@@ -348,27 +369,33 @@ public static class CommandBuilder
                 post.Add("format=yuv420p");
             if (preview is null && p.EncodesVideo && VideoEncoders.FilterTail(backend, encodeCodec, tenBit) is { } tail) post.Add(tail);
 
-            string graph;
-            if (burnTrack is not null && burn?.BitmapStreamIndex is { } bIdx)
+            int bin = burnTrack is not null && burn?.BitmapStreamIndex is not null
+                ? inputs.Get(burn.BitmapFile ?? burnTrack.File, burn.BitmapFile is null ? burnTrack.DelaySeconds : burn.BitmapDelaySeconds) : -1;
+            string BuildGraph()
             {
-                int bin = inputs.Get(burn.BitmapFile ?? burnTrack.File, burn.BitmapFile is null ? burnTrack.DelaySeconds : burn.BitmapDelaySeconds);
-                var preChain = pre.Count > 0 ? string.Join(',', pre) : "null";
-                // With the AI upscaler the picture is already enlarged: enlarge the subtitle bitmaps by the same factor.
-                string subIn = neural ? "[ksub]" : $"[{bin}:{bIdx}]";
-                string subScale = neural ? $"[{bin}:{bIdx}]scale=iw*{aiScale}:ih*{aiScale}[ksub];" : "";
-                graph = $"{subScale}[{vin}:{vIndex}]{preChain}[base];[base]{subIn}overlay=eof_action=pass:repeatlast=0"
-                        + (post.Count > 0 ? "," + string.Join(',', post) : "") + "[vout]";
-            }
-            else
-            {
+                if (bin >= 0 && burn?.BitmapStreamIndex is { } bIdx)
+                {
+                    var preChain = pre.Count > 0 ? string.Join(',', pre) : "null";
+                    // With the AI upscaler the picture is already enlarged: enlarge the subtitle bitmaps by the same factor.
+                    string subIn = neural ? "[ksub]" : $"[{bin}:{bIdx}]";
+                    string subScale = neural ? $"[{bin}:{bIdx}]scale=iw*{aiScale}:ih*{aiScale}[ksub];" : "";
+                    return $"{subScale}[{vin}:{vIndex}]{preChain}[base];[base]{subIn}overlay=eof_action=pass:repeatlast=0"
+                           + (post.Count > 0 ? "," + string.Join(',', post) : "") + "[vout]";
+                }
                 var all = pre.Concat(post).ToList();
-                graph = $"[{vin}:{vIndex}]" + (all.Count > 0 ? string.Join(',', all) : "null") + "[vout]";
+                return $"[{vin}:{vIndex}]" + (all.Count > 0 ? string.Join(',', all) : "null") + "[vout]";
             }
-            body.AddRange(["-filter_complex", graph, "-map", "[vout]"]);
+            body.AddRange(["-filter_complex", BuildGraph(), "-map", "[vout]"]);
 
             if (preview?.Kind == PreviewKind.Frame)
             {
                 body.AddRange(["-frames:v", "1", "-c:v", "png"]);
+            }
+            else if (chunk?.Y4m == true)
+            {
+                if (!(preview is null && !p.IsImages && hdr.Action == HdrAction.ToneMap && !tenBit)) post.Add(tenBit ? "format=yuv420p10le" : "format=yuv420p");
+                body[^3] = BuildGraph();   // the format above must be in the graph
+                body.AddRange(["-c:v", "rawvideo", "-pix_fmt", tenBit ? "yuv420p10le" : "yuv420p", "-strict", "-1"]);
             }
             else if (preview?.Kind == PreviewKind.Clip)
             {
@@ -386,6 +413,9 @@ public static class CommandBuilder
                     Encoder = encoderName, Pro = s.Pro, SourceBitDepth = Math.Max(8, video.BitDepth),
                 });
                 ApplyHdrToEncoder(venc, hdr, ctx.HdrFiles);
+                // x265 leaves its AVX-512 kernels off unless asked (x86-64-v4: Zen 4/5, Intel server and Rocket/Tiger/Ice Lake).
+                if (ctx.Options.CpuLevel >= 4 && venc.IndexOf("libx265") >= 0 && venc.IndexOf("-x265-params") is var xp and >= 0)
+                    venc[xp + 1] += ":asm=avx512";
                 VideoEncoders.ApplyOverrides(venc, s.Encoder, s.VideoFilters.Fps ?? video.FrameRate);
                 body.AddRange(venc);
             }
@@ -508,7 +538,13 @@ public static class CommandBuilder
             a2.AddRange(["-an", "-sn", "-dn", "-max_muxing_queue_size", "4096"]);
             a2.AddRange(ctx.Options.ExtraArguments);
             a2.AddRange(ProgressArgs);
-            if (chunk.SegmentSeconds is { } pieceLength)
+            if (chunk.Y4m)
+            {
+                int pi = a2.IndexOf("pipe:1");
+                if (pi >= 0) a2[pi] = "pipe:2";   // stdout carries the frames
+                a2.AddRange(["-f", "yuv4mpegpipe", "pipe:1"]);
+            }
+            else if (chunk.SegmentSeconds is { } pieceLength)
             {
                 var piece = Sec(pieceLength);
                 a2.AddRange(["-force_key_frames", $"expr:gte(t,n_forced*{piece})"]);
@@ -606,7 +642,32 @@ public static class CommandBuilder
                 OutputNaming.WithPart(ctx.Options.NameTemplate, ctx.Edit.PartLabel));
             a2.Add(output);
         }
-        return new CompiledJob(new EncodePlan(a2, output), issues, hdr, tracks, container, duration) { Pipe = inputs.Pipe };
+        RigayaPlan? rigayaPlan = null;
+        if (rigaya && !copyVideo)
+        {
+            double fr = s.VideoFilters.Fps ?? video.FrameRate;
+            string? why = trimmed || ctx.Edit.IsMultiSegment ? "trim"
+                : !plainPicture ? "FFmpeg filters (tone mapping, crop, deinterlace, denoise, subtitles…)"
+                : Math.Abs(videoTrack.DelaySeconds) >= 0.0005 ? "video delay"
+                : Frameserver.IsVapourSynth(videoTrack.File) || KnA.Core.Media.Discs.DiscSource.IsTitlePath(videoTrack.File) ? "script or disc source"
+                : !RigayaEncoders.HwDecodable(video.CodecName) ? $"{video.CodecName} cannot be decoded by the GPU reader"
+                : video.Rotation != 0 || s.VideoFilters.OverridesOrientation ? "rotation"
+                : media.GetValueOrDefault(videoTrack.File)?.Video.Count(v => !v.IsAttachedPicture) is not 1 ? "several video streams"
+                : null;
+            var encArgs = RigayaEncoders.EncoderArgs(s.Backend, encodeCodec, s.Quality, tenBit, s.Encoder, fr, hdr, video, why is null);
+            rigayaPlan = new RigayaPlan(s.Backend, RigayaEncoders.EncoderArgs(s.Backend, encodeCodec, s.Quality, tenBit, s.Encoder, fr, hdr, video, false))
+            {
+                PipeReason = why,
+                NativeArgs = why is null
+                    ? RigayaEncoders.NativeArgs(videoTrack.File, [.. (plainScale is { } ps ? ["--output-res", $"{ps.Width}x{ps.Height}"] : Array.Empty<string>()), .. encArgs],
+                        video, hdr, encodeCodec, s.VideoFilters, "video.mkv", s.Chunks.Enabled)
+                    : null,
+            };
+            if (s.Chunks.Enabled && why is not null)
+                issues.Add(Containers.Warning("{0} splits the file in parallel only when it reads the source itself ({1} prevents it).",
+                    RigayaEncoders.DisplayName(s.Backend), why));
+        }
+        return new CompiledJob(new EncodePlan(a2, output), issues, hdr, tracks, container, duration) { Pipe = inputs.Pipe, Rigaya = rigayaPlan };
     }
 
     private static VideoStream Enlarged(VideoStream v, int k) => new()

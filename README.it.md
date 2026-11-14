@@ -19,6 +19,9 @@ con **HDR10 / HDR10+ / Dolby Vision**, codifica a segmenti riprendibile, **upsca
   **regole di selezione tracce** nei preset e una **gestione preset** che applica solo le parti che scegli.
 - **HDR → SDR** con luminosità stabile, scelta della curva di tone mapping e nessun metadato HDR nei file SDR.
 - **Davvero portable**: un solo eseguibile, FFmpeg incluso, ogni dipendenza nella sua sottocartella.
+- **NVEncC / QSVEncC / VCEEncC** (rigaya) come programma di codifica: decodifica GPU, resize su GPU, copia Dolby Vision / HDR10+, parti in parallelo.
+- **qaac** (AAC di Apple) per primo, libfdk_aac / fdkaac come ripiego; **modelli Real-ESRGAN e Ollama** scaricabili da Componenti.
+- Sfrutta **x86-64-v3/v4** (AVX-512 per x265); le anteprime si generano al rilascio invece che durante lo zapping.
 
 ### Novità della 3.1
 - **La scheda Tracce elenca tutto** (audio compreso, anche in Demux) e permette di **copiare o convertire ogni traccia** direttamente dalla lista.
@@ -233,10 +236,15 @@ ogni cosa nella sua sottocartella:
 KnA\
   KnA.exe            un solo eseguibile (+ le librerie native dell'interfaccia)
   portable.txt
-  tools\ffmpeg\      FFmpeg + FFprobe (build GPL di BtbN) · tools\fdkaac\ · tools\dovi_tool\ … · tools\shaders\
-  ai\                upscaler AI: script, Python portabile, ambiente PyTorch, modelli
+  tools\ffmpeg\      FFmpeg + FFprobe (build GPL di BtbN) · tools\fdkaac\ · tools\dovi_tool\ · tools\hdr10plus_tool\ · tools\shaders\
+  tools\nvencc\ tools\qsvencc\ tools\vceencc\   encoder GPU di rigaya (Windows / Linux x64)
+  tools\qaac\       qaac (Windows; i file di Apple si estraggono sul tuo PC: Componenti → qaac → Installa)
+  tools\vapoursynth\ VapourSynth portable + Python incorporato + BestSource + L-SMASH-Works (Windows x64)
+  ai\                upscaler AI: script, modelli Real-ESRGAN (Python portabile + PyTorch da Componenti)
   data\              impostazioni, preset, coda, log, file temporanei
 ```
+
+L'edizione server ha lo stesso pacchetto portable: `KnA-server-portable-<rid>` (zip su Windows, tar.gz su Linux).
 
 I componenti installati o aggiornati dall'app finiscono nelle stesse cartelle. Elimina `portable.txt` per usare
 la cartella dell'utente. Se la cartella è di sola lettura (es. Programmi) KnA ripiega sulla cartella dell'utente.
