@@ -49,6 +49,7 @@ All changes: [CHANGELOG.md](CHANGELOG.md).
 | ![Web editor: visual trim](docs/screenshots/web-editor-trim.png) | ![Desktop editor: tracks](docs/screenshots/desktop-editor-tracks.png) |
 | ![Web file manager](docs/screenshots/web-files.png) | ![Watch folders](docs/screenshots/web-watch-folders.png) |
 | ![Upload with smart matching](docs/screenshots/web-upload.png) | ![AI settings](docs/screenshots/web-ai-settings.png) |
+| ![Components: upscale and assistant models](docs/screenshots/web-components.png) | ![Desktop: encoding](docs/screenshots/desktop-encoding.png) |
 
 ## Two front-ends, one engine
 

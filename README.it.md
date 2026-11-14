@@ -49,6 +49,7 @@ Tutte le modifiche: [CHANGELOG.md](CHANGELOG.md).
 | ![Editor web: taglio visivo](docs/screenshots/web-editor-trim-it.png) | ![Editor desktop: tracce](docs/screenshots/desktop-editor-tracks-it.png) |
 | ![File manager web](docs/screenshots/web-files.png) | ![Cartelle monitorate](docs/screenshots/web-watch-folders.png) |
 | ![Upload con abbinamento intelligente](docs/screenshots/web-upload.png) | ![Impostazioni AI](docs/screenshots/web-ai-settings.png) |
+| ![Componenti: modelli di upscale e dell'assistente](docs/screenshots/web-components.png) | ![Desktop: codifica in corso](docs/screenshots/desktop-encoding.png) |
 
 ## Due interfacce, un solo motore
 

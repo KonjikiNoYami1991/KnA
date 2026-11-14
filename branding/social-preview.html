@@ -1,0 +1,35 @@
+<!doctype html>
+<html><head><meta charset="utf-8">
+<style>
+  html,body{margin:0;width:1280px;height:640px;overflow:hidden}
+  body{font-family:"Inter","DejaVu Sans",system-ui,sans-serif;color:#f4f0ff;
+    background:radial-gradient(ellipse 60% 80% at 22% 50%,rgba(255,190,40,.22),transparent 70%),
+               linear-gradient(135deg,#2a1838 0%,#120b1c 55%,#06050a 100%);position:relative}
+  .grain{position:absolute;inset:0;background-image:repeating-linear-gradient(90deg,rgba(255,255,255,.018) 0 1px,transparent 1px 4px)}
+  .logo{position:absolute;left:60px;top:130px;width:380px;height:380px;filter:drop-shadow(0 0 40px rgba(255,190,40,.35))}
+  .txt{position:absolute;left:510px;top:92px;right:40px}
+  h1{margin:0;font-size:92px;line-height:1;font-weight:800;letter-spacing:-2px;
+     background:linear-gradient(180deg,#fff4c2,#ffd659 45%,#e0a21e 80%,#a8701a);-webkit-background-clip:text;color:transparent}
+  .sub{margin:10px 0 0;font-size:34px;color:#e9dcff;font-weight:600;letter-spacing:.5px}
+  .ver{display:inline-block;margin-top:22px;padding:6px 18px;border-radius:999px;font-size:26px;font-weight:700;
+       color:#1a1022;background:linear-gradient(90deg,#ffd659,#f59e0b)}
+  ul{list-style:none;margin:26px 0 0;padding:0;font-size:21px;letter-spacing:-.2px;line-height:1.65;color:#d6cbe6}
+  li::before{content:"◆";color:#fbbf24;margin-right:12px;font-size:16px;vertical-align:3px}
+  b{color:#fff}
+  .foot{position:absolute;left:510px;bottom:34px;font-size:20px;color:#9d8fb3;letter-spacing:.4px}
+</style></head><body>
+<div class="grain"></div>
+<img class="logo" src="kna.svg" alt="">
+<div class="txt">
+  <h1>KnA</h1>
+  <div class="sub">Konjiki no Autoencoder</div>
+  <div class="ver">3.2 · FFmpeg · NVEncC · AI</div>
+  <ul>
+    <li><b>Resumable</b> encodes · GPU decoding · <b>NVEncC · QSVEncC · VCEEncC</b></li>
+    <li><b>HDR10 · Dolby Vision · HDR10+</b> kept, or tone-mapped to SDR</li>
+    <li>AI upscaling (Real-ESRGAN, Anime4K) · LLM assistant</li>
+    <li>Desktop + Web · Windows · Linux · macOS · Docker · Proxmox</li>
+  </ul>
+</div>
+<div class="foot">github.com/KonjikiNoYami1991/KnA · portable · x86-64-v4 ready</div>
+</body></html>
