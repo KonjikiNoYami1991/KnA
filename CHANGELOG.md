@@ -1,5 +1,19 @@
 # Changelog
 
+## v3.2.1 — 2026-11-14
+
+### English
+
+- **VapourSynth (Windows)**: R74 and later ship as a pip package; KnA now installs it into a portable Python (3.12+) inside
+  tools\vapoursynth, with BestSource and L-SMASH-Works in its autoload folder, so it is included again in the Windows
+  portable packages and installs from Settings → Components. Also found when installed in the per-user data folder.
+
+### Italiano
+
+- **VapourSynth (Windows)**: dalla R74 è un pacchetto pip; KnA ora lo installa in un Python portabile (3.12+) dentro
+  tools\vapoursynth, con BestSource e L-SMASH-Works nella sua cartella di caricamento automatico, quindi torna nei pacchetti
+  portable per Windows e si installa da Impostazioni → Componenti. Viene trovato anche se installato nella cartella dati dell'utente.
+
 ## v3.2.0 — 2026-11-14
 
 ### English

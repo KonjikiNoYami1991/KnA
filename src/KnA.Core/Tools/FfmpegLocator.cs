@@ -64,7 +64,7 @@ public static class FfmpegLocator
                     Custom(ToolIds.Scxvid) ?? LocateTool(["scxvid", "SCXvid"], dataDirectory, dir),
                     Custom(ToolIds.DoviTool) ?? LocateTool(["dovi_tool"], dataDirectory, dir),
                     Custom(ToolIds.Hdr10PlusTool) ?? LocateTool(["hdr10plus_tool"], dataDirectory, dir),
-                    Custom(ToolIds.VsPipe) ?? LocateVsPipe())
+                    Custom(ToolIds.VsPipe) ?? LocateVsPipe(dataDirectory))
                 {
                     Fdkaac = Custom(ToolIds.Fdkaac) ?? LocateFdkaac(dataDirectory, dir),
                     Qaac = Custom(ToolIds.Qaac) ?? LocateQaac(dataDirectory),
@@ -105,12 +105,19 @@ public static class FfmpegLocator
     }
 
     /// <summary>vspipe: PATH, $KNA_VSPIPE, the VapourSynth installer folders on Windows.</summary>
-    public static string? LocateVsPipe()
+    public static string? LocateVsPipe(string? dataDirectory = null)
     {
         if (KnA.Core.Settings.AppEnv.Get("VSPIPE") is { } env && File.Exists(env)) return env;
         // VapourSynth portable bundled with KnA or installed by the component manager.
-        foreach (var root in new[] { Path.Combine(AppContext.BaseDirectory, "tools", "vapoursynth") })
+        var roots = new List<string> { Path.Combine(AppContext.BaseDirectory, "tools", "vapoursynth") };
+        if (dataDirectory is not null) roots.Insert(0, Path.Combine(KnA.Core.Settings.AppPaths.Tools(dataDirectory), "vapoursynth"));
+        foreach (var root in roots)
+        {
             if (File.Exists(Path.Combine(root, ExeName("vspipe")))) return Path.Combine(root, ExeName("vspipe"));
+            // R74+ (pip package inside a portable Python): Lib\site-packages\vapoursynth\vspipe.exe
+            var inPackage = Path.Combine(root, "Lib", "site-packages", "vapoursynth", ExeName("vspipe"));
+            if (File.Exists(inPackage)) return inPackage;
+        }
         var found = SearchPath("vspipe").FirstOrDefault() ?? SearchPath("VSPipe").FirstOrDefault();
         if (found is not null) return found;
         if (OperatingSystem.IsWindows())

@@ -907,5 +907,6 @@ public static partial class L
         ["Small text + vision model: one model for both tasks."] = "Modello piccolo testo + immagini: un solo modello per entrambe le funzioni.",
         ["Vision model for the content analysis (anime / live action, grain, letterbox)."] = "Modello visivo per l'analisi dei contenuti (anime / live action, grana, bande nere).",
         ["{0} splits the file in parallel only when it reads the source itself ({1} prevents it)."] = "{0} divide il file in parallelo solo quando legge la sorgente da solo (lo impedisce: {1}).",
+        ["Installing {0}…"] = "Installazione di {0}…",
     };
 }

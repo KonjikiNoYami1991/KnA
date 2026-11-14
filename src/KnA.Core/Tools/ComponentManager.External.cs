@@ -337,26 +337,53 @@ public sealed partial class ComponentManager
         await GitHubReleases.DownloadAsync(asset.Url, archive, progress, ct);
         var extracted = Path.Combine(temp, "vs");
         await ExtractAsync(archive, extracted, ct);
-        var vspipe = Directory.EnumerateFiles(extracted, "vspipe.exe", SearchOption.AllDirectories).FirstOrDefault()
-                     ?? throw new InvalidDataException(L.T("The archive did not contain {0}.", "vspipe.exe"));
         var target = Path.Combine(AppPaths.Tools(dataDirectory), "vapoursynth");
-        ReplaceFolder(Path.GetDirectoryName(vspipe)!, target);
-        // vspipe loads python3NN.dll from its folder: when the portable zip doesn't ship it, the version VapourSynth
-        // was built for is read from its DLLs and that Python (portable build) is added next to it.
-        if (Directory.EnumerateFiles(target, "python3*.dll").All(f => Path.GetFileName(f).Equals("python3.dll", StringComparison.OrdinalIgnoreCase))
-            && RequiredPythonMinor(target) is { } minor)
+        string plugins, vspipeExe;
+        if (Directory.EnumerateFiles(extracted, "vapoursynth-*.whl", SearchOption.AllDirectories).FirstOrDefault() is { } wheel)
         {
+            // R74 and later: the portable zip holds the pip wheel and two .bat files. VapourSynth then needs no
+            // configuration when python.exe and python3.dll sit in the folder above Lib\site-packages: a portable Python
+            // (3.12+) goes there, the wheel is installed into it, and vspipe.exe lives in the package folder.
             log?.Report(L.T("Downloading a portable Python (no installation, stays in KnA's data folder)…"));
-            var py = await DownloadPortablePythonAsync(temp, minor, progress, log, ct);
-            foreach (var dir in Directory.EnumerateDirectories(py, "*", SearchOption.AllDirectories))
-                Directory.CreateDirectory(Path.Combine(target, Path.GetRelativePath(py, dir)));
-            foreach (var file in Directory.EnumerateFiles(py, "*", SearchOption.AllDirectories))
-            {
-                var dst = Path.Combine(target, Path.GetRelativePath(py, file));
-                if (!File.Exists(dst)) File.Copy(file, dst);
-            }
+            var py = await DownloadPortablePythonAsync(temp, null, progress, log, ct);
+            ReplaceFolder(py, target);
+            foreach (var bat in Directory.EnumerateFiles(extracted, "*.bat", SearchOption.AllDirectories))
+                File.Copy(bat, Path.Combine(target, Path.GetFileName(bat)), overwrite: true);
+            log?.Report(L.T("Installing {0}…", Path.GetFileName(wheel)));
+            var pip = await ProcessRunner.RunAsync(Path.Combine(target, "python.exe"),
+                ["-m", "pip", "install", "--no-warn-script-location", "--disable-pip-version-check", wheel],
+                workingDirectory: target, timeout: TimeSpan.FromMinutes(10), ct: ct);
+            if (pip.ExitCode != 0)
+                throw new InvalidOperationException("pip: " + (pip.StdErr.Trim().Split('\n').LastOrDefault() ?? pip.ExitCode.ToString(System.Globalization.CultureInfo.InvariantCulture)));
+            var package = Path.Combine(target, "Lib", "site-packages", "vapoursynth");
+            vspipeExe = Path.Combine(package, "vspipe.exe");
+            if (!File.Exists(vspipeExe)) throw new InvalidDataException(L.T("The archive did not contain {0}.", "vspipe.exe"));
+            // Autoloaded plugin folder of the pip package.
+            plugins = Path.Combine(package, "plugins");
         }
-        var plugins = Path.Combine(target, "vs-plugins");
+        else
+        {
+            var vspipe = Directory.EnumerateFiles(extracted, "vspipe.exe", SearchOption.AllDirectories).FirstOrDefault()
+                         ?? throw new InvalidDataException(L.T("The archive did not contain {0}.", "vspipe.exe"));
+            ReplaceFolder(Path.GetDirectoryName(vspipe)!, target);
+            // Older portable zips (up to R73): vspipe loads python3NN.dll from its folder; when the zip doesn't ship it,
+            // the version VapourSynth was built for is read from its DLLs and that Python (portable build) is added.
+            if (Directory.EnumerateFiles(target, "python3*.dll").All(f => Path.GetFileName(f).Equals("python3.dll", StringComparison.OrdinalIgnoreCase))
+                && RequiredPythonMinor(target) is { } minor)
+            {
+                log?.Report(L.T("Downloading a portable Python (no installation, stays in KnA's data folder)…"));
+                var py = await DownloadPortablePythonAsync(temp, minor, progress, log, ct);
+                foreach (var dir in Directory.EnumerateDirectories(py, "*", SearchOption.AllDirectories))
+                    Directory.CreateDirectory(Path.Combine(target, Path.GetRelativePath(py, dir)));
+                foreach (var file in Directory.EnumerateFiles(py, "*", SearchOption.AllDirectories))
+                {
+                    var dst = Path.Combine(target, Path.GetRelativePath(py, file));
+                    if (!File.Exists(dst)) File.Copy(file, dst);
+                }
+            }
+            vspipeExe = Path.Combine(target, "vspipe.exe");
+            plugins = Path.Combine(target, "vs-plugins");
+        }
         Directory.CreateDirectory(plugins);
 
         // Source plugins: BestSource (vapoursynth/bestsource) and L-SMASH-Works.
@@ -384,7 +411,7 @@ public sealed partial class ComponentManager
             }
             catch (Exception ex) when (ex is HttpRequestException or InvalidOperationException or InvalidDataException or IOException) { log?.Report(repo + ": " + ex.Message); }
         }
-        var r = await ProcessRunner.RunAsync(Path.Combine(target, "vspipe.exe"), ["--version"], workingDirectory: target, timeout: TimeSpan.FromSeconds(30), ct: ct);
+        var r = await ProcessRunner.RunAsync(vspipeExe, ["--version"], workingDirectory: target, timeout: TimeSpan.FromSeconds(30), ct: ct);
         log?.Report((r.StdOut + r.StdErr).Split('\n').FirstOrDefault(l => l.Trim().Length > 0)?.Trim() ?? "VapourSynth");
         SaveState("vapoursynth", rel.Tag);
     }
