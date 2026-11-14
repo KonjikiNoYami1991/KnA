@@ -1,6 +1,6 @@
 <p align="center"><img src="src/KnA.App/Assets/kna-256.png" width="128" alt="KnA"></p>
 
-# KnA - Konjiki no Autoencoder 3.1
+# KnA - Konjiki no Autoencoder 3.2
 
 [English](README.md) · **Italiano**
 
@@ -10,6 +10,15 @@ Trascina episodi, cartelle, **Blu-ray (BDMV / ISO) o DVD**, scegli un profilo o 
 imprime i sottotitoli con libass e codifica su **CPU o GPU** (NVENC, Quick Sync, AMF, VideoToolbox, VA-API, **Vulkan**):
 H.264, HEVC, AV1, VP9, VVC, MPEG-2 e i codec professionali **ProRes, DNxHR, CineForm, FFV1, Ut Video, FFVHuff, JPEG 2000, v210**,
 con **HDR10 / HDR10+ / Dolby Vision**, codifica a segmenti riprendibile, **upscaling su GPU o con modelli neurali** e un **assistente LLM** locale.
+
+### Novità della 3.2
+- **Codifiche riprendibili**: fermi, chiudi KnA o va persino in crash — *Avvia* continua ogni lavoro esattamente da dov'era, senza chiedere.
+- **Decodifica hardware** con gli encoder GPU (NVDEC & co.): le sorgenti UHD HEVC non rallentano più NVENC; codifica parallela più veloce.
+- **Anteprime veloci**: un fotogramma filtra 5 fotogrammi invece di ~200; le richieste vecchie vengono annullate.
+- Impostazioni dell'**encoder avanzato** (valore CRF/CQ, bitrate, preset di velocità, tune, GOP, B-frame, lookahead, opzioni extra),
+  **regole di selezione tracce** nei preset e una **gestione preset** che applica solo le parti che scegli.
+- **HDR → SDR** con luminosità stabile, scelta della curva di tone mapping e nessun metadato HDR nei file SDR.
+- **Davvero portable**: un solo eseguibile, FFmpeg incluso, ogni dipendenza nella sua sottocartella.
 
 ### Novità della 3.1
 - **La scheda Tracce elenca tutto** (audio compreso, anche in Demux) e permette di **copiare o convertire ogni traccia** direttamente dalla lista.
@@ -138,8 +147,12 @@ duplicati, file non supportati e cartelle enormi vengono mostrati prima di proce
 - **Profili**: Universale (H.264/HEVC/AV1/VP9/VVC/MPEG-2), Streaming/Web, **Professionale / Lossless**, Blu-ray AAC / AC-3, Workraw, XviD+MP3,
   Remux→MP4, Remux→MKV, **Immagini** (PNG / JPEG / TIFF / WebP / BMP), **Demux** e keyframe per Aegisub.
 
+- **Codifiche riprendibili**: ogni codifica video viene scritta in pezzi da 60 s da un solo FFmpeg; dopo uno stop, un crash o un
+  riavvio *Avvia* la continua dopo l'ultimo pezzo completato, al fotogramma esatto (Impostazioni → Elaborazione).
+- **Decodifica hardware** (NVDEC, D3D11VA, VA-API, VideoToolbox) con gli encoder GPU: la CPU non limita più una codifica GPU.
 - **Codifica a segmenti** (stile av1an): il video viene diviso sui keyframe, i segmenti vengono codificati in parallelo
-  e un lavoro fermato **riparte dall'ultimo segmento completato**. Ideale per gli encoder lenti su CPU (x265, SVT-AV1).
+  e un lavoro fermato **riparte dall'ultimo segmento completato**. Ideale per gli encoder lenti su CPU (x265, SVT-AV1); con un encoder
+  GPU di solito più di due segmenti non aiutano (la GPU ha da uno a tre motori di codifica).
 - **HDR**: l'HDR10 viene mantenuto (metadati mastering display e luminanza passati all'encoder) oppure **convertito in SDR**
   in BT.709 (libplacebo se disponibile, altrimenti zscale). La **curva di tone mapping** si sceglie (Spline di default, BT.2390, BT.2446a,
   Hable, Mobius) e la luminosità segue i metadati di mastering, stabile per tutto il film; il rilevamento del picco scena per scena è facoltativo.
@@ -213,8 +226,19 @@ Scarica l'ultimo pacchetto da **[Releases](https://github.com/KonjikiNoYami1991/
 | Linux x64 / arm64 | `KnA-portable-linux-x64.tar.gz` · `KnA-portable-linux-arm64.tar.gz` | `tar xzf KnA-portable-*.tar.gz && ./KnA/KnA` |
 | macOS | `KnA-macOS-osx-arm64.app.zip` · `KnA-macOS-osx-x64.app.zip` | estrai e sposta `KnA.app` in Applicazioni |
 
-I pacchetti portable non richiedono installazioni (.NET è incluso) e tengono tutto (impostazioni, preset, coda, log,
-i componenti FFmpeg e AI scaricati dall'app) in una cartella `data` accanto al programma; elimina `portable.txt` per usare
+I pacchetti portable non richiedono installazioni (.NET e **FFmpeg** sono inclusi) e tengono tutto nella cartella del programma,
+ogni cosa nella sua sottocartella:
+
+```
+KnA\
+  KnA.exe            un solo eseguibile (+ le librerie native dell'interfaccia)
+  portable.txt
+  tools\ffmpeg\      FFmpeg + FFprobe (build GPL di BtbN) · tools\fdkaac\ · tools\dovi_tool\ … · tools\shaders\
+  ai\                upscaler AI: script, Python portabile, ambiente PyTorch, modelli
+  data\              impostazioni, preset, coda, log, file temporanei
+```
+
+I componenti installati o aggiornati dall'app finiscono nelle stesse cartelle. Elimina `portable.txt` per usare
 la cartella dell'utente. Se la cartella è di sola lettura (es. Programmi) KnA ripiega sulla cartella dell'utente.
 `KnA-desktop-<rid>.zip` e `KnA-server-<rid>.zip` sono gli stessi programmi senza il marcatore portable (e sono quelli scaricati dall'aggiornamento interno).
 

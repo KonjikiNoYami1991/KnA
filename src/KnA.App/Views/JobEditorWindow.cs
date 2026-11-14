@@ -167,6 +167,10 @@ public sealed class JobEditorWindow : Window
 
     private void UpdateTrack(int i, Func<TrackPlan, TrackPlan> f, bool rerender = false)
     {
+        // Controls also raise "changed" when they are rebuilt with the same value: that is not an edit,
+        // and must not turn the automatic plan into a custom one.
+        var current = Tracks;
+        if (i < 0 || i >= current.Count || f(current[i]) == current[i]) return;
         var list = Materialize();
         list[i] = f(list[i]);
         if (rerender) RenderTab();
@@ -262,6 +266,8 @@ public sealed class JobEditorWindow : Window
             if (k is "audio" or "subtitle") { Head(8, L.T("Default")); Head(9, L.T("Forced")); }
             if (k == "subtitle" && p.UsesVideoFilters) Head(10, L.T("Burn"));
 
+            // Always there for subtitles (enabled while one is burned): a burn chosen later can be undone the same way.
+            var noBurn = new Button { Content = L.T("Don't burn any subtitle"), IsEnabled = rows.Any(x => x.t.Burn) };
             int r = 1;
             foreach (var (t, i) in rows)
             {
@@ -328,6 +334,7 @@ public sealed class JobEditorWindow : Window
                         if (rb.IsChecked != true) return;
                         var l = Materialize();
                         for (int j = 0; j < l.Count; j++) if (l[j].Kind == "subtitle") l[j] = l[j] with { Burn = j == idx };
+                        noBurn.IsEnabled = true;
                         Save();
                     };
                     Put(rb, 10);
@@ -363,13 +370,17 @@ public sealed class JobEditorWindow : Window
             }
             if (k == "audio" && !p.UsesAudio && !p.IsDemux) section.Children.Add(Ui.Note(L.T("This profile has no audio output.")));
             if (rows.Count > 0) section.Children.Add(grid);
-            if (k == "subtitle" && p.UsesVideoFilters && rows.Any(x => x.t.Burn))
-                section.Children.Add(Ui.Button(L.T("Don't burn any subtitle"), () =>
+            if (k == "subtitle" && p.UsesVideoFilters && rows.Count > 0)
+            {
+                noBurn.HorizontalAlignment = HorizontalAlignment.Left;
+                noBurn.Click += (_, _) =>
                 {
                     var l = Materialize();
                     for (int j = 0; j < l.Count; j++) l[j] = l[j] with { Burn = false };
                     RenderTab(); Save();
-                }));
+                };
+                section.Children.Add(noBurn);
+            }
             root.Children.Add(Ui.Card(section));
         }
         if (!p.IsKeyframes && !p.IsImages) root.Children.Add(Ui.Card(ChaptersSection()));
@@ -439,7 +450,12 @@ public sealed class JobEditorWindow : Window
                     l.Sort((a, b) => a.Start.CompareTo(b.Start));
                     Save(true);
                 };
-                var title = Ui.Text(list[i].Title, v => { var l = MaterializeChapters(); l[idx] = l[idx] with { Title = string.IsNullOrWhiteSpace(v) ? null : v }; Save(); });
+                var title = Ui.Text(list[i].Title, v =>
+                {
+                    var t = string.IsNullOrWhiteSpace(v) ? null : v;
+                    if (idx >= ChapterList.Count || ChapterList[idx].Title == t) return;   // same value: not an edit
+                    var l = MaterializeChapters(); l[idx] = l[idx] with { Title = t }; Save();
+                });
                 var rm = new Button { Content = "✕", Classes = { "ghost" } };
                 ToolTip.SetTip(rm, L.T("Remove"));
                 rm.Click += (_, _) => { MaterializeChapters().RemoveAt(idx); Save(true); };
@@ -879,7 +895,39 @@ public sealed class JobEditorWindow : Window
         DockPanel.SetDock(savePreset, Dock.Right);
         savePreset.Margin = new Thickness(6, 0, 0, 0);
         row.Children.Add(savePreset); row.Children.Add(name);
-        right.Children.Add(Ui.Card(new StackPanel { Spacing = 8, Children = { Ui.H2(L.T("Preset")), row, presetMsg } }));
+        // Apply a preset to this file, only the chosen parts (the rest of the settings and the tracks stay).
+        var presets = _queue.Presets.All;
+        Preset? pick = presets.FirstOrDefault(x => x.Name == _settings.PresetName) ?? presets.FirstOrDefault();
+        var parts = PresetParts.All;
+        var partsPanel = new WrapPanel();
+        foreach (var (part, label) in new[]
+        {
+            (PresetParts.Video, L.T("Video")), (PresetParts.Audio, L.T("Audio")), (PresetParts.Subtitles, L.T("Subtitles")),
+            (PresetParts.Filters, L.T("Picture filters")), (PresetParts.Tracks, L.T("Track selection")),
+        })
+        {
+            var pr = part;
+            var c = Ui.Check(label, true, v => parts = v ? parts | pr : parts & ~pr);
+            c.Margin = new Thickness(0, 0, 10, 0);
+            partsPanel.Children.Add(c);
+        }
+        var applyPreset = Ui.Button(L.T("Apply"), () =>
+        {
+            if (pick is null || parts == PresetParts.None) return;
+            _settings = _settings.Merge(pick.Settings with { PresetName = pick.Name }, parts);
+            Save(true);
+        });
+        var presetCombo = Ui.Combo(presets.Select(x => (x.Name, (x.BuiltIn ? "" : "★ ") + x.Name)), pick?.Name ?? "", n => pick = presets.FirstOrDefault(x => x.Name == n));
+        right.Children.Add(Ui.Card(new StackPanel
+        {
+            Spacing = 8,
+            Children =
+            {
+                Ui.H2(L.T("Preset")), presetCombo, partsPanel, applyPreset,
+                Ui.Muted(L.T("Choose what the preset replaces; everything else of each file (and its tracks, cuts, chapters) stays as it is.")),
+                new Separator(), row, presetMsg,
+            },
+        }));
         right.Children.Add(Ui.Button(L.T("FFmpeg command"), async () =>
         {
             await SaveNowAsync(false);

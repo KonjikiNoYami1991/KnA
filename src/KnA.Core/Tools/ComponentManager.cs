@@ -349,11 +349,11 @@ public sealed class ComponentManager(string dataDirectory)
 
     /// <summary>KnA's own portable Python (data folder), whether installed or not.</summary>
     public static string PortablePython(string dataDirectory) => OperatingSystem.IsWindows()
-        ? Path.Combine(dataDirectory, "ai", "python", "python.exe")
-        : Path.Combine(dataDirectory, "ai", "python", "bin", "python3");
+        ? Path.Combine(KnA.Core.Settings.AppPaths.Ai(dataDirectory), "python", "python.exe")
+        : Path.Combine(KnA.Core.Settings.AppPaths.Ai(dataDirectory), "python", "bin", "python3");
 
     public static string VenvPython(string dataDirectory) =>
-        Path.Combine(dataDirectory, "ai", "venv", OperatingSystem.IsWindows() ? "Scripts" : "bin", FfmpegLocator.ExeName("python"));
+        Path.Combine(KnA.Core.Settings.AppPaths.Ai(dataDirectory), "venv", OperatingSystem.IsWindows() ? "Scripts" : "bin", FfmpegLocator.ExeName("python"));
 
     /// <summary>
     /// Picks "cpython-3.12.N+TAG-triple-install_only.tar.gz" (newest patch of the preferred minor) from release file names.
@@ -430,7 +430,7 @@ public sealed class ComponentManager(string dataDirectory)
         await ExtractAsync(archive, extracted, ct);
         var root = Path.Combine(extracted, "python");
         if (!Directory.Exists(root)) throw new InvalidDataException(L.T("The archive did not contain {0}.", "python"));
-        var target = Path.Combine(dataDirectory, "ai", "python");
+        var target = Path.Combine(KnA.Core.Settings.AppPaths.Ai(dataDirectory), "python");
         if (Directory.Exists(target)) Directory.Delete(target, true);
         Directory.CreateDirectory(Path.GetDirectoryName(target)!);
         Directory.Move(root, target);
@@ -530,7 +530,7 @@ public sealed class ComponentManager(string dataDirectory)
     /// </summary>
     private async Task InstallAiRuntimeAsync(string temp, IProgress<double>? progress, IProgress<string>? log, CancellationToken ct)
     {
-        var venv = Path.Combine(dataDirectory, "ai", "venv");
+        var venv = Path.Combine(KnA.Core.Settings.AppPaths.Ai(dataDirectory), "venv");
         var vpy = VenvPython(dataDirectory);
         async Task Run(string exe, string[] args, int minutes)
         {

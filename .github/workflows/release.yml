@@ -84,8 +84,10 @@ jobs:
       - name: Publish
         shell: bash
         run: |
-          dotnet publish src/KnA.App -c Release -r ${{ matrix.rid }} --self-contained -p:Version=$VERSION -o out/desktop
-          dotnet publish src/KnA.Server -c Release -r ${{ matrix.rid }} --self-contained -p:Version=$VERSION -o out/server
+          # One executable (the .NET runtime and every assembly inside) plus the few native libraries Avalonia/Skia load.
+          sf="-p:PublishSingleFile=true -p:EnableCompressionInSingleFile=true -p:DebugType=none"
+          dotnet publish src/KnA.App -c Release -r ${{ matrix.rid }} --self-contained $sf -p:Version=$VERSION -o out/desktop
+          dotnet publish src/KnA.Server -c Release -r ${{ matrix.rid }} --self-contained $sf -p:Version=$VERSION -o out/server
       - name: fdkaac
         uses: actions/download-artifact@v4
         continue-on-error: true
@@ -111,21 +113,57 @@ jobs:
         run: |
           (cd out/desktop && zip -qry "$GITHUB_WORKSPACE/KnA-desktop-${{ matrix.rid }}.zip" .)
           (cd out/server && zip -qry "$GITHUB_WORKSPACE/KnA-server-${{ matrix.rid }}.zip" .)
-      # Portable desktop edition: same files plus portable.txt, so settings, presets, queue, logs and the
-      # FFmpeg/AI components downloaded from the app live in a "data" folder next to the program.
-      - name: Portable marker
+      # Portable desktop edition: everything in one folder, each dependency in its own subfolder:
+      #   KnA(.exe) + native libs · portable.txt · tools/ffmpeg (FFmpeg + FFprobe, BtbN GPL build) · tools/fdkaac
+      #   · ai/ (sidecar; portable Python, PyTorch and models when installed) · data/ (settings, queue, logs, temp).
+      - name: Portable layout
         if: runner.os != 'macOS'
         shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           mkdir -p portable && cp -R out/desktop portable/KnA
-          cat > portable/KnA/portable.txt <<'EOF'
-          KnA portable: settings, presets, queue, logs and downloaded components (FFmpeg, shaders, AI models)
-          are kept in the "data" folder next to this file. Delete this file to use the per-user folder instead.
+          k=portable/KnA
+          # fdkaac in its own folder (the plain packages keep it in tools/)
+          if [ -d "$k/tools" ]; then mkdir -p "$k/tools/fdkaac" && find "$k/tools" -maxdepth 1 -type f -exec mv {} "$k/tools/fdkaac/" \; ; fi
+          # FFmpeg: newest release-branch GPL build from BtbN for this platform
+          case "${{ matrix.rid }}" in
+            win-x64) t=win64 ;; win-arm64) t=winarm64 ;; linux-x64) t=linux64 ;; linux-arm64) t=linuxarm64 ;;
+          esac
+          asset=$(gh release view latest -R BtbN/FFmpeg-Builds --json assets -q '.assets[].name' \
+            | grep -E "^ffmpeg-n[0-9]+\.[0-9]+-latest-$t-gpl-[0-9]+\.[0-9]+\.(zip|tar\.xz)$" | sort -V | tail -1)
+          if [ -z "$asset" ]; then asset=$(gh release view latest -R BtbN/FFmpeg-Builds --json assets -q '.assets[].name' | grep -E "^ffmpeg-master-latest-$t-gpl\.(zip|tar\.xz)$" | head -1); fi
+          echo "FFmpeg: $asset"
+          gh release download latest -R BtbN/FFmpeg-Builds -p "$asset" -D ffdl
+          mkdir -p ffx
+          case "$asset" in
+            *.zip) if command -v unzip >/dev/null; then unzip -q "ffdl/$asset" -d ffx; else 7z x -offx "ffdl/$asset" >/dev/null; fi ;;
+            *) tar -xJf "ffdl/$asset" -C ffx ;;
+          esac
+          mkdir -p "$k/tools/ffmpeg"
+          for exe in ffmpeg ffprobe ffmpeg.exe ffprobe.exe; do
+            f=$(find ffx -type f -name "$exe" | head -1)
+            if [ -n "$f" ]; then cp "$f" "$k/tools/ffmpeg/"; fi
+          done
+          ls "$k/tools/ffmpeg" | grep -q '^ffmpeg' || { echo "::error::FFmpeg not found in $asset"; exit 1; }
+          lic=$(find ffx -maxdepth 2 -type f -name 'LICENSE*' | head -1)
+          if [ -n "$lic" ]; then cp "$lic" "$k/tools/ffmpeg/LICENSE.txt"; fi
+          printf '%s\n' "FFmpeg $asset - https://github.com/BtbN/FFmpeg-Builds (build scripts) and https://ffmpeg.org (source code)." \
+            "GPL licensed: see LICENSE.txt. KnA runs it as a separate program." > "$k/tools/ffmpeg/SOURCE.txt"
+          cat > "$k/portable.txt" <<'EOF'
+          KnA portable: everything stays in this folder. data = settings, presets, queue, logs, temporary files;
+          tools = FFmpeg, fdkaac and the other programs (updates from Settings → Components go here too);
+          ai = the AI upscaler (portable Python, PyTorch, models) when installed.
+          Delete this file to use the per-user folder instead.
 
-          KnA portable: impostazioni, preset, coda, log e componenti scaricati (FFmpeg, shader, modelli AI)
-          stanno nella cartella "data" accanto a questo file. Elimina questo file per usare la cartella dell'utente.
+          KnA portable: tutto resta in questa cartella. data = impostazioni, preset, coda, log, file temporanei;
+          tools = FFmpeg, fdkaac e gli altri programmi (anche gli aggiornamenti da Impostazioni → Componenti);
+          ai = l'upscaler AI (Python portabile, PyTorch, modelli) quando installato.
+          Elimina questo file per usare la cartella dell'utente.
           EOF
-          sed -i.bak 's/^          //' portable/KnA/portable.txt && rm portable/KnA/portable.txt.bak
+          sed -i.bak 's/^          //' "$k/portable.txt" && rm "$k/portable.txt.bak"
+          mkdir -p "$k/data"
+          ls -R "$k" | head -40
       - name: Portable zip (Windows)
         if: runner.os == 'Windows'
         shell: pwsh

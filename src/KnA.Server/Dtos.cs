@@ -43,6 +43,17 @@ public sealed record OptionsDto(
     public IReadOnlyList<OptionDto> AudioCodecs { get; init; } = Enum.GetValues<AudioCodec>().Select(a => new OptionDto(a.ToString(), a.Display())).ToList();
     public IReadOnlyList<OptionDto> ProResProfiles { get; init; } = Enum.GetValues<ProResProfile>().Select(a => new OptionDto(a.ToString(), a.Display())).ToList();
     public IReadOnlyList<OptionDto> DnxhrProfiles { get; init; } = Enum.GetValues<DnxhrProfile>().Select(a => new OptionDto(a.ToString(), a.Display())).ToList();
+    /// <summary>Encoder used for "Codec|Backend" (e.g. "HEVC|Nvenc" → hevc_nvenc).</summary>
+    public IReadOnlyDictionary<string, string> EncoderNames { get; init; } =
+        (from c in Enum.GetValues<VideoCodec>() from b in Enum.GetValues<EncoderBackend>()
+         let n = VideoEncoders.EncoderName(c, b) where n is not null select (Key: $"{c}|{b}", n)).ToDictionary(x => x.Key, x => x.n!);
+    /// <summary>Hand-set parameters each encoder accepts (quality option and range, speed presets, tunes).</summary>
+    public IReadOnlyDictionary<string, EncoderInfoDto> Encoders { get; init; } =
+        (from c in Enum.GetValues<VideoCodec>() from b in Enum.GetValues<EncoderBackend>()
+         let n = VideoEncoders.EncoderName(c, b) where n is not null select n).Distinct()
+        .ToDictionary(n => n, n => new EncoderInfoDto(
+            VideoEncoders.QualityOption(n)?.Label, VideoEncoders.QualityOption(n)?.Min, VideoEncoders.QualityOption(n)?.Max,
+            VideoEncoders.SpeedOption(n)?.Values ?? [], VideoEncoders.TuneValues(n)));
     public IReadOnlyList<OptionDto> ToneMapCurves { get; init; } = Enum.GetValues<ToneMapCurve>().Select(a => new OptionDto(a.ToString(), a.Display())).ToList();
     public IReadOnlyList<OptionDto> ChromaFormats { get; init; } = Enum.GetValues<ChromaFormat>().Select(a => new OptionDto(a.ToString(), a.Display())).ToList();
     public IReadOnlyList<OptionDto> UpscaleMethods { get; init; } = Enum.GetValues<UpscaleMethod>().Select(a => new OptionDto(a.ToString(), a.Display(), a.Description())).ToList();
@@ -76,6 +87,8 @@ public sealed record OptionsDto(
         Enum.GetValues<ImageFormat>().Select(m => new OptionDto(m.ToString(), m.ToString().ToUpperInvariant())).ToList(),
         Enum.GetValues<ImageMode>().Select(m => new OptionDto(m.ToString(), m.Display())).ToList());
 }
+
+public sealed record EncoderInfoDto(string? QualityLabel, double? QualityMin, double? QualityMax, IReadOnlyList<string> Speeds, IReadOnlyList<string> Tunes);
 
 public sealed record ToolsDto(string? Ffmpeg, string? Ffprobe, string? Scxvid, string? DoviTool, string? Hdr10PlusTool, string Instructions, string? VsPipe = null, string? Fdkaac = null);
 
@@ -126,7 +139,8 @@ public sealed record SettingsUpdate(
     string? Language = null, bool? RestoreQueue = null, string? OutputNameTemplate = null, ProcessPriority? Priority = null,
     int? StallTimeoutMinutes = null, int? KeepLogs = null, string? TempDirectory = null,
     List<string>? CustomFfmpegBuilds = null, Dictionary<string, string>? ToolPaths = null, string? FfmpegChannel = null,
-    bool? DiscAllTitles = null, int? DiscMinMinutes = null, KnA.Core.Ai.AiSettings? Ai = null);
+    bool? DiscAllTitles = null, int? DiscMinMinutes = null, KnA.Core.Ai.AiSettings? Ai = null,
+    HardwareDecoding? HardwareDecoding = null, bool? ResumableEncoding = null);
 
 public sealed record UploadCreate(string Name, long Size, string? Folder);
 public sealed record UploadComplete(bool Enqueue, JobSettings? Settings, string? Preset, Guid? AttachTo, string? AttachToSource = null);

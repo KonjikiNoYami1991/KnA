@@ -23,7 +23,7 @@ public static class FfmpegLocator
     public static string ExeName(string name) => OperatingSystem.IsWindows() ? name + ".exe" : name;
 
     public static string ManagedDir(string dataDirectory, string component) =>
-        component == "ffmpeg" ? Path.Combine(dataDirectory, "ffmpeg") : Path.Combine(dataDirectory, "tools", component);
+        component == "ffmpeg" ? KnA.Core.Settings.AppPaths.Ffmpeg(dataDirectory) : Path.Combine(KnA.Core.Settings.AppPaths.Tools(dataDirectory), component);
 
     public static FfmpegTools? Locate(string? configuredFfmpeg, string dataDirectory) =>
         Locate(configuredFfmpeg, dataDirectory, null);
@@ -40,6 +40,8 @@ public static class FfmpegLocator
             candidates.Add(Directory.Exists(configuredFfmpeg) ? Path.Combine(configuredFfmpeg, ExeName("ffmpeg")) : configuredFfmpeg);
         if (KnA.Core.Settings.AppEnv.Get("FFMPEG") is { } env) candidates.Add(env);
         candidates.Add(Path.Combine(ManagedDir(dataDirectory, "ffmpeg"), ExeName("ffmpeg")));
+        candidates.Add(Path.Combine(dataDirectory, "ffmpeg", ExeName("ffmpeg")));   // portable copies of KnA ≤ 3.1.1
+        candidates.Add(Path.Combine(AppContext.BaseDirectory, "tools", "ffmpeg", ExeName("ffmpeg")));   // bundled (portable packages)
         candidates.Add(Path.Combine(AppContext.BaseDirectory, "ffmpeg", ExeName("ffmpeg")));
         candidates.Add(Path.Combine(AppContext.BaseDirectory, ExeName("ffmpeg")));
         candidates.AddRange(SearchPath("ffmpeg"));
@@ -68,8 +70,8 @@ public static class FfmpegLocator
     public static string? LocateFdkaac(string dataDirectory, string? ffmpegDir = null)
     {
         if (Settings.AppEnv.Get("FDKAAC") is { } env && File.Exists(env)) return env;
-        var bundled = Path.Combine(AppContext.BaseDirectory, "tools", ExeName("fdkaac"));
-        if (File.Exists(bundled)) return bundled;
+        foreach (var bundled in new[] { Path.Combine(AppContext.BaseDirectory, "tools", "fdkaac", ExeName("fdkaac")), Path.Combine(AppContext.BaseDirectory, "tools", ExeName("fdkaac")) })
+            if (File.Exists(bundled)) return bundled;
         return LocateTool(["fdkaac"], dataDirectory, ffmpegDir);
     }
 
@@ -96,6 +98,7 @@ public static class FfmpegLocator
         if (extraDir is not null) dirs.Add(extraDir);
         dirs.Add(AppContext.BaseDirectory);
         dirs.Add(Path.Combine(dataDirectory, "ffmpeg"));
+        foreach (var n in names) dirs.Add(Path.Combine(dataDirectory, "tools", n.ToLowerInvariant()));   // portable copies of KnA ≤ 3.1.1
         if (OperatingSystem.IsMacOS()) dirs.AddRange(["/opt/homebrew/bin", "/usr/local/bin"]);
         foreach (var dir in dirs)
             foreach (var n in names)

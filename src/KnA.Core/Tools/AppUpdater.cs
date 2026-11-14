@@ -56,6 +56,14 @@ public static class AppUpdater
             Directory.CreateDirectory(Path.GetDirectoryName(dst)!);
             ComponentManager.ReplaceFile(file, dst);
         }
+        // From 3.2 the program is a single executable: the loose .NET/Avalonia files of an older version are
+        // set aside (deleted at the next start), nothing else in the folder is touched.
+        var shipped = Directory.EnumerateFiles(root).Select(Path.GetFileName).ToHashSet(StringComparer.OrdinalIgnoreCase);
+        if (!shipped.Contains("KnA.Core.dll"))
+            foreach (var f in Directory.EnumerateFiles(appDir))
+                if (Path.GetExtension(f).ToLowerInvariant() is ".dll" or ".pdb" or ".json" or ".so" or ".dylib"
+                    && !shipped.Contains(Path.GetFileName(f)) && !Path.GetFileName(f).StartsWith("appsettings", StringComparison.OrdinalIgnoreCase))
+                    try { File.Move(f, f + ".old", overwrite: true); } catch (IOException) { } catch (UnauthorizedAccessException) { }
         try { Directory.Delete(temp, true); } catch (IOException) { }
     }
 

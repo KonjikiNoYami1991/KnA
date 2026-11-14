@@ -77,6 +77,9 @@ public sealed partial class MainViewModel : ObservableObject
 
     // ------------------------------------------------------------------ form & presets
 
+    /// <summary>Presets changed elsewhere (preset manager).</summary>
+    public void ReloadPresets() => OnPropertyChanged(nameof(Presets));
+
     public void ApplyPreset(Preset p)
     {
         FormSettings = p.Settings with { PresetName = p.Name };

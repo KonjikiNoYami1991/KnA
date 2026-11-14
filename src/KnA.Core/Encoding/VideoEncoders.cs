@@ -303,6 +303,128 @@ public static class VideoEncoders
         return a;
     }
 
+    // ---------------------------------------------------------------- hand-set parameters (advanced)
+
+    /// <summary>Option that holds the constant-quality value of an encoder, and its range (for the UI).</summary>
+    public static (string Option, double Min, double Max, string Label)? QualityOption(string encoder) => encoder switch
+    {
+        "libx264" or "libx265" => ("-crf", 0, 51, "CRF"),
+        "libsvtav1" or "libaom-av1" => ("-crf", 0, 63, "CRF"),
+        "libvpx-vp9" => ("-crf", 0, 63, "CRF"),
+        "h264_nvenc" or "hevc_nvenc" or "av1_nvenc" => ("-cq", 0, 51, "CQ"),
+        "h264_qsv" or "hevc_qsv" or "av1_qsv" or "vp9_qsv" or "mpeg2_qsv" => ("-global_quality", 1, 51, "ICQ"),
+        "h264_amf" or "hevc_amf" or "av1_amf" => ("-qvbr_quality_level", 1, 51, "QVBR (51 = best)"),
+        "h264_vaapi" or "hevc_vaapi" or "mpeg2_vaapi" => ("-global_quality", 1, 51, "QP"),
+        "av1_vaapi" or "vp9_vaapi" => ("-global_quality", 1, 255, "QP"),
+        "h264_vulkan" or "hevc_vulkan" or "av1_vulkan" => ("-qp", 0, 255, "QP"),
+        "h264_videotoolbox" or "hevc_videotoolbox" => ("-q:v", 1, 100, "Q (100 = best)"),
+        "libvvenc" or "librav1e" => ("-qp", 0, 255, "QP"),
+        "libxvid" or "mpeg4" or "mpeg2video" => ("-q:v", 1, 31, "Q"),
+        _ => null,
+    };
+
+    /// <summary>Speed presets an encoder accepts (fastest first); the option name.</summary>
+    public static (string Option, IReadOnlyList<string> Values)? SpeedOption(string encoder) => encoder switch
+    {
+        "libx264" or "libx265" => ("-preset", ["ultrafast", "superfast", "veryfast", "faster", "fast", "medium", "slow", "slower", "veryslow", "placebo"]),
+        "h264_nvenc" or "hevc_nvenc" or "av1_nvenc" => ("-preset", ["p1", "p2", "p3", "p4", "p5", "p6", "p7"]),
+        "libsvtav1" => ("-preset", ["13", "12", "11", "10", "9", "8", "7", "6", "5", "4", "3", "2", "1", "0"]),
+        "libaom-av1" => ("-cpu-used", ["8", "7", "6", "5", "4", "3", "2", "1", "0"]),
+        "libvpx-vp9" => ("-cpu-used", ["8", "7", "6", "5", "4", "3", "2", "1", "0"]),
+        "h264_qsv" or "hevc_qsv" or "av1_qsv" or "vp9_qsv" or "mpeg2_qsv" => ("-preset", ["veryfast", "faster", "fast", "medium", "slow", "slower", "veryslow"]),
+        "h264_amf" or "hevc_amf" or "av1_amf" => ("-quality", ["speed", "balanced", "quality"]),
+        "libvvenc" => ("-preset", ["faster", "fast", "medium", "slow", "slower"]),
+        "librav1e" => ("-speed", ["10", "9", "8", "7", "6", "5", "4", "3", "2", "1", "0"]),
+        _ => null,
+    };
+
+    /// <summary>Tunes an encoder accepts.</summary>
+    public static IReadOnlyList<string> TuneValues(string encoder) => encoder switch
+    {
+        "libx264" => ["film", "animation", "grain", "stillimage", "fastdecode", "zerolatency"],
+        "libx265" => ["grain", "animation", "psnr", "ssim", "fastdecode", "zerolatency"],
+        "h264_nvenc" or "hevc_nvenc" or "av1_nvenc" => ["hq", "uhq", "ll", "ull", "lossless"],
+        _ => [],
+    };
+
+    /// <summary>
+    /// Applies hand-set parameters to the arguments <see cref="BuildArgs"/> made: replaces the values it chose,
+    /// adds the missing options, and appends the extra options last (they win).
+    /// </summary>
+    public static void ApplyOverrides(List<string> a, EncoderOverrides o, double frameRate)
+    {
+        if (o.IsEmpty || a.IndexOf("-c:v") is var ci && (ci < 0 || ci + 1 >= a.Count)) return;
+        var enc = a[ci + 1];
+        void Set(string opt, string value)
+        {
+            int i = a.IndexOf(opt);
+            if (i >= 0 && i + 1 < a.Count) a[i + 1] = value; else a.AddRange([opt, value]);
+        }
+        void Remove(string opt)
+        {
+            int i = a.IndexOf(opt);
+            if (i >= 0) a.RemoveRange(i, Math.Min(2, a.Count - i));
+        }
+        void X265(string kv)
+        {
+            int i = a.IndexOf("-x265-params");
+            if (i >= 0) a[i + 1] = a[i + 1] + ":" + kv; else a.AddRange(["-x265-params", kv]);
+        }
+
+        if (o.RateControl == RateControl.Quality && o.QualityValue is { } qv && QualityOption(enc) is { } qo)
+            Set(qo.Option, Num(Math.Clamp(qv, qo.Min, qo.Max)));
+        else if (o.RateControl == RateControl.Bitrate && o.BitrateKbps is > 0 and var kb)
+        {
+            foreach (var opt in new[] { "-crf", "-cq", "-qp", "-global_quality", "-q:v", "-qvbr_quality_level" }) Remove(opt);
+            Remove("-b:v");
+            if (enc.EndsWith("_nvenc", StringComparison.Ordinal)) Set("-rc", "vbr");
+            else if (enc.EndsWith("_amf", StringComparison.Ordinal)) Set("-rc", o.MaxBitrateKbps is > 0 ? "vbr_peak" : "vbr_latency");
+            else if (enc.EndsWith("_vaapi", StringComparison.Ordinal) || enc.EndsWith("_vulkan", StringComparison.Ordinal)) Set("-rc_mode", "VBR");
+            a.AddRange(["-b:v", kb + "k"]);
+            if (o.MaxBitrateKbps is > 0 and var mx)
+                a.AddRange(["-maxrate", Math.Max(mx, kb) + "k", "-bufsize", (Math.Max(mx, kb) * 2) + "k"]);
+        }
+        if (o.Speed is { Length: > 0 } speed && SpeedOption(enc) is { } so) Set(so.Option, speed);
+        if (o.Tune is { Length: > 0 } tune) Set("-tune", tune);
+        if (o.KeyframeSeconds is > 0 and var ks) Set("-g", Math.Max(1, (int)Math.Round(ks * (frameRate > 0 ? frameRate : 25))).ToString(CultureInfo.InvariantCulture));
+        if (o.BFrames is >= 0 and var bf) Set("-bf", bf.ToString(CultureInfo.InvariantCulture));
+        if (o.Lookahead is >= 0 and var la)
+        {
+            if (enc == "libx265") X265("rc-lookahead=" + la.ToString(CultureInfo.InvariantCulture));
+            else if (enc is "libx264" || enc.EndsWith("_nvenc", StringComparison.Ordinal)) Set("-rc-lookahead", la.ToString(CultureInfo.InvariantCulture));
+            else if (enc.EndsWith("_qsv", StringComparison.Ordinal)) Set("-look_ahead_depth", la.ToString(CultureInfo.InvariantCulture));
+        }
+        if (!string.IsNullOrWhiteSpace(o.Extra))
+            foreach (var (opt, value) in ParseExtra(o.Extra))
+            {
+                if (opt == "-x265-params" && value is not null && enc == "libx265") { X265(value); continue; }
+                if (value is null) a.Add(opt); else Set(opt, value);
+            }
+    }
+
+    /// <summary>"-opt value -flag -opt2 "a b"" → pairs (value null for a lone flag).</summary>
+    public static List<(string Option, string? Value)> ParseExtra(string text)
+    {
+        var tokens = new List<string>();
+        var cur = new System.Text.StringBuilder();
+        bool quoted = false;
+        foreach (var ch in text)
+        {
+            if (ch == '"') { quoted = !quoted; continue; }
+            if (char.IsWhiteSpace(ch) && !quoted) { if (cur.Length > 0) { tokens.Add(cur.ToString()); cur.Clear(); } continue; }
+            cur.Append(ch);
+        }
+        if (cur.Length > 0) tokens.Add(cur.ToString());
+        var result = new List<(string, string?)>();
+        for (int i = 0; i < tokens.Count; i++)
+        {
+            if (!tokens[i].StartsWith('-')) continue;
+            bool hasValue = i + 1 < tokens.Count && (!tokens[i + 1].StartsWith('-') || double.TryParse(tokens[i + 1], NumberStyles.Float, CultureInfo.InvariantCulture, out _));
+            result.Add((tokens[i], hasValue ? tokens[++i] : null));
+        }
+        return result;
+    }
+
     /// <summary>ProRes profile: explicit, or derived from quality and chroma.</summary>
     public static ProResProfile ProResFor(VideoEncodeRequest r)
     {

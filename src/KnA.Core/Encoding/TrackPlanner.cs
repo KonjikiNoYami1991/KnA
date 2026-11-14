@@ -16,6 +16,46 @@ public static class TrackPlanner
     public static List<TrackPlan> Default(MediaInfo source, JobSettings s, IReadOnlyDictionary<string, MediaInfo>? externals = null,
         MediaInfo? frameserver = null)
     {
+        var plan = Rules(DefaultPlan(source, s, externals, frameserver), source, s.TrackRules);
+        return plan;
+    }
+
+    /// <summary>
+    /// Applies the preset's track rules to an automatic plan: unwanted languages, commentaries and attachments are
+    /// switched off. A rule never leaves the file without audio: when no track matches, the plan's choice stays.
+    /// </summary>
+    public static List<TrackPlan> Rules(List<TrackPlan> plan, MediaInfo source, TrackRules rules)
+    {
+        if (rules.IsEmpty) return plan;
+        bool Keep(TrackPlan t) => t.File != source.Path || t.Kind switch
+        {
+            "audio" => TrackRules.LanguageMatches(rules.AudioLanguages, t.Language) && !(rules.DropCommentary && TrackRules.IsCommentary(t.Title)),
+            "subtitle" => TrackRules.LanguageMatches(rules.SubtitleLanguages, t.Language) && !(rules.DropCommentary && TrackRules.IsCommentary(t.Title)),
+            "attachment" => !rules.DropAttachments,
+            _ => true,
+        };
+        var result = plan.Select(t => t.Include && !Keep(t) ? t with { Include = false } : t).ToList();
+        // Audio language rule matched nothing but the plan had audio: keep the plan's audio rather than none.
+        if (plan.Any(t => t.Include && t.Kind == "audio") && !result.Any(t => t.Include && t.Kind == "audio")) return plan;
+        // The burned subtitle follows the subtitle languages too (when another one matches).
+        if (result.FirstOrDefault(t => t.Burn) is { } burned && !TrackRules.LanguageMatches(rules.SubtitleLanguages, burned.Language)
+            && result.FirstOrDefault(t => t.Kind == "subtitle" && t.File == source.Path && TrackRules.LanguageMatches(rules.SubtitleLanguages, t.Language)
+                                          && !(rules.DropCommentary && TrackRules.IsCommentary(t.Title))) is { } better)
+            result = result.Select(t => t.Kind != "subtitle" ? t : t == better ? t with { Burn = true, Include = false } : t with { Burn = false }).ToList();
+        // Preferred order: the first language of the list first.
+        var order = TrackRules.Parse(rules.AudioLanguages).ToList();
+        if (order.Count > 1)
+        {
+            int Rank(TrackPlan t) { var i = order.FindIndex(l => TrackRules.LanguageMatches(l, t.Language)); return i < 0 ? order.Count : i; }
+            var audio = result.Where(t => t.Kind == "audio").OrderBy(Rank).ToList();
+            int k = 0;
+            result = result.Select(t => t.Kind == "audio" ? audio[k++] : t).ToList();
+        }
+        return result;
+    }
+
+    private static List<TrackPlan> DefaultPlan(MediaInfo source, JobSettings s, IReadOnlyDictionary<string, MediaInfo>? externals, MediaInfo? frameserver)
+    {
         var plan = new List<TrackPlan>();
         var p = s.ProfileDefinition;
         var mode = s.EffectiveSubtitles;

@@ -235,6 +235,9 @@
           <label class="field"><span data-i18n>Stuck FFmpeg timeout (minutes)</span><input type="number" min="1" max="600" id="s-stall"></label>
           <label class="field"><span data-i18n>Logs to keep</span><input type="number" min="10" max="100000" id="s-keeplogs"></label>
           <label class="field"><span data-i18n>VA-API device</span><input id="s-vaapi" placeholder="/dev/dri/renderD128"></label>
+          <label class="field"><span data-i18n>Hardware decoding</span><select id="s-hwdecode"></select>
+            <small class="muted" data-i18n>The GPU decodes the source (NVDEC, D3D11VA, VA-API, VideoToolbox): a UHD HEVC source no longer limits a GPU encode to the CPU's decoding speed.</small></label>
+          <label class="toggle"><input type="checkbox" id="s-resumable"><span class="switch"></span><span data-i18n>Resumable encodes (continue after a stop, a crash or a restart)</span></label>
         </div>
         <h3 data-i18n>Blu-ray and DVD</h3>
         <div class="grid2">

@@ -425,6 +425,8 @@ $("#btn-settings").onclick = guard(async () => {
   $("#s-stall").value = s.stallTimeoutMinutes;
   $("#s-keeplogs").value = s.keepLogs;
   $("#s-vaapi").value = s.vaapiDevice ?? "";
+  fillSelect($("#s-hwdecode"), [{ value: "Auto", label: t("With GPU encoders (recommended)") }, { value: "Always", label: t("Always (also CPU encoders and previews)") }, { value: "Off", label: t("Off") }], s.hardwareDecoding ?? "Auto");
+  $("#s-resumable").checked = s.resumableEncoding !== false;
   $("#s-ffmpeg").value = s.ffmpegPath ?? "";
   $("#s-extra").value = s.extraArguments ?? "";
   $("#s-temp").value = s.tempDirectory ?? "";
@@ -551,6 +553,7 @@ $("#btn-save-settings").onclick = guard(async () => {
     priority: $("#s-priority").value, postAction: $("#s-post").value,
     stallTimeoutMinutes: Number($("#s-stall").value) || 10, keepLogs: Number($("#s-keeplogs").value) || 300,
     vaapiDevice: $("#s-vaapi").value.trim(),
+    hardwareDecoding: $("#s-hwdecode").value, resumableEncoding: $("#s-resumable").checked,
     folderExtensions: $$("#s-ext input:checked").map(i => i.value),
     discAllTitles: $("#s-disc-all").value === "true", discMinMinutes: Number($("#s-disc-min").value) || 0,
     ffmpegChannel: $("#s-channel").value, ai: aiBody(),

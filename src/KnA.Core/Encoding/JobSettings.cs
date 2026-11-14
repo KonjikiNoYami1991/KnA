@@ -108,6 +108,91 @@ public sealed record ChunkSettings
     public double TargetSeconds { get; init; } = 60;
 }
 
+public enum RateControl
+{
+    /// <summary>From the quality level (KnA's tuned values per encoder).</summary>
+    Auto,
+    /// <summary>Constant quality: CRF (x264/x265/SVT-AV1/VP9), CQ (NVENC), global_quality (QSV), QP (AMF/VA-API).</summary>
+    Quality,
+    /// <summary>Average bitrate (VBR) with an optional maximum.</summary>
+    Bitrate,
+}
+
+/// <summary>Encoder parameters set by hand; empty fields keep KnA's choice for the quality level.</summary>
+public sealed record EncoderOverrides
+{
+    public RateControl RateControl { get; init; }
+    /// <summary>CRF / CQ / QP value (lower = better).</summary>
+    public double? QualityValue { get; init; }
+    public int? BitrateKbps { get; init; }
+    public int? MaxBitrateKbps { get; init; }
+    /// <summary>Encoder speed preset ("slow", "p5", "6"…), null = from the quality level.</summary>
+    public string? Speed { get; init; }
+    public string? Tune { get; init; }
+    /// <summary>Maximum distance between keyframes, seconds.</summary>
+    public double? KeyframeSeconds { get; init; }
+    public int? BFrames { get; init; }
+    /// <summary>Rate-control lookahead, frames.</summary>
+    public int? Lookahead { get; init; }
+    /// <summary>Extra encoder options, FFmpeg syntax ("-x265-params …", "-spatial-aq 1"…).</summary>
+    public string? Extra { get; init; }
+
+    [JsonIgnore]
+    public bool IsEmpty => RateControl == RateControl.Auto && Speed is null && Tune is null && KeyframeSeconds is null
+                           && BFrames is null && Lookahead is null && string.IsNullOrWhiteSpace(Extra);
+}
+
+/// <summary>
+/// Which tracks of the source the automatic plan keeps, so a preset can drop unwanted streams of every file
+/// (languages, commentaries, attachments). Empty = keep as the profile decides.
+/// </summary>
+public sealed record TrackRules
+{
+    /// <summary>Audio languages to keep, in order of preference ("ita,jpn"); "und" matches tracks without a language.</summary>
+    public string? AudioLanguages { get; init; }
+    public string? SubtitleLanguages { get; init; }
+    /// <summary>Leave out tracks whose title says commentary ("commento", "commentary"…).</summary>
+    public bool DropCommentary { get; init; }
+    /// <summary>Leave out the attachments of the file (fonts are still used to burn subtitles).</summary>
+    public bool DropAttachments { get; init; }
+
+    [JsonIgnore] public bool IsEmpty => string.IsNullOrWhiteSpace(AudioLanguages) && string.IsNullOrWhiteSpace(SubtitleLanguages) && !DropCommentary && !DropAttachments;
+
+    public static IReadOnlyList<string> Parse(string? list) =>
+        (list ?? "").Split([',', ';', ' '], StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries).Select(x => x.ToLowerInvariant()).ToList();
+
+    /// <summary>Whether a track passes the language list (no list = every track).</summary>
+    public static bool LanguageMatches(string? list, string? language)
+    {
+        var langs = Parse(list);
+        if (langs.Count == 0) return true;
+        var lang = string.IsNullOrWhiteSpace(language) ? "und" : language.ToLowerInvariant();
+        return langs.Any(l => l == lang || Media.LanguageNames.Same(l, lang));
+    }
+
+    public static bool IsCommentary(string? title) =>
+        title is not null && new[] { "comment", "kommentar", "commento", "commentaire", "comentario", "director" }
+            .Any(w => title.Contains(w, StringComparison.OrdinalIgnoreCase));
+}
+
+/// <summary>Parts of the settings a preset can be applied to, leaving the others as they are.</summary>
+[Flags]
+public enum PresetParts
+{
+    None = 0,
+    /// <summary>Profile, codec, encoder, quality, resolution, 10-bit, container, HDR, upscaling, advanced encoder, segments.</summary>
+    Video = 1,
+    /// <summary>Audio codec, bitrate and audio filters.</summary>
+    Audio = 2,
+    /// <summary>Subtitle mode and external subtitles.</summary>
+    Subtitles = 4,
+    /// <summary>Picture filters and frameserver.</summary>
+    Filters = 8,
+    /// <summary>Track selection rules.</summary>
+    Tracks = 16,
+    All = Video | Audio | Subtitles | Filters | Tracks,
+}
+
 /// <summary>Everything that can be stored in a preset (not tied to a specific file).</summary>
 public sealed record JobSettings
 {
@@ -145,8 +230,35 @@ public sealed record JobSettings
     public DemuxSettings Demux { get; init; } = new();
     public ChunkSettings Chunks { get; init; } = new();
     public FrameserverSettings Frameserver { get; init; } = new();
+    /// <summary>Encoder parameters set by hand (advanced).</summary>
+    public EncoderOverrides Encoder { get; init; } = new();
+    /// <summary>Which source tracks the automatic plan keeps.</summary>
+    public TrackRules TrackRules { get; init; } = new();
     /// <summary>Name of the preset these settings came from (informative).</summary>
     public string? PresetName { get; init; }
+
+    /// <summary>These settings with the chosen <paramref name="parts"/> taken from <paramref name="preset"/>.</summary>
+    public JobSettings Merge(JobSettings preset, PresetParts parts)
+    {
+        if (parts == PresetParts.All) return preset;
+        var r = this;
+        if (parts.HasFlag(PresetParts.Video))
+            r = r with
+            {
+                Profile = preset.Profile, Codec = preset.Codec, Backend = preset.Backend, Quality = preset.Quality, Resolution = preset.Resolution,
+                TenBit = preset.TenBit, Container = preset.Container, Hdr = preset.Hdr, ToneMap = preset.ToneMap, ToneMapDynamic = preset.ToneMapDynamic,
+                Pro = preset.Pro, Upscale = preset.Upscale, Encoder = preset.Encoder, Chunks = preset.Chunks, Images = preset.Images, Demux = preset.Demux,
+            };
+        if (parts.HasFlag(PresetParts.Audio))
+            r = r with { AudioCodec = preset.AudioCodec, AudioBitrate = preset.AudioBitrate, AudioFilters = preset.AudioFilters };
+        if (parts.HasFlag(PresetParts.Subtitles))
+            r = r with { Subtitles = preset.Subtitles, UseSidecarSubtitles = preset.UseSidecarSubtitles };
+        if (parts.HasFlag(PresetParts.Filters))
+            r = r with { VideoFilters = preset.VideoFilters, Frameserver = preset.Frameserver };
+        if (parts.HasFlag(PresetParts.Tracks))
+            r = r with { TrackRules = preset.TrackRules };
+        return r with { PresetName = preset.PresetName };
+    }
 
     [JsonIgnore]
     public ProfileDefinition ProfileDefinition => Profiles.Get(Profile);

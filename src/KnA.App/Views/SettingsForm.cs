@@ -45,6 +45,7 @@ public sealed class SettingsForm : StackPanel
 
     private void Set(JobSettings s, bool rebuild = true)
     {
+        if (s == _s) return;   // a control rebuilt with the same value is not a change
         _s = s;
         if (rebuild) Dispatcher.UIThread.Post(Rebuild);
         Changed?.Invoke(s);
@@ -211,6 +212,9 @@ public sealed class SettingsForm : StackPanel
             }
         }
 
+        if (_full && p.EncodesVideo) Children.Add(AdvancedEncoder(s, codec));
+        if (_full && (p.UsesTrackPlan || p.IsDemux)) Children.Add(TrackSelection(s));
+
         if (p.IsImages)
         {
             var im = s.Images;
@@ -235,5 +239,61 @@ public sealed class SettingsForm : StackPanel
             Children.Add(Ui.Toggle(L.T("Extract attachments (fonts)"), s.Demux.Attachments, v => Set(_s with { Demux = _s.Demux with { Attachments = v } }, false)));
             Children.Add(Ui.Toggle(L.T("Extract chapters"), s.Demux.Chapters, v => Set(_s with { Demux = _s.Demux with { Chapters = v } }, false)));
         }
+    }
+
+    /// <summary>Hand-set encoder parameters: every field empty = KnA's values for the quality level.</summary>
+    private Control AdvancedEncoder(JobSettings s, VideoCodec codec)
+    {
+        var o = s.Encoder;
+        var enc = VideoEncoders.EncoderName(codec, s.EffectiveBackend) ?? "";
+        void SetO(Func<EncoderOverrides, EncoderOverrides> f, bool rebuild = false) => Set(_s with { Encoder = f(_s.Encoder) }, rebuild);
+        static string? Clean(string v) => string.IsNullOrWhiteSpace(v) ? null : v.Trim();
+        var box = new StackPanel { Spacing = 10 };
+        box.Children.Add(Ui.Muted(L.T("Encoder: {0}. Empty fields keep KnA's values for the chosen quality.", enc)));
+
+        var rc = new List<(RateControl, string)> { (RateControl.Auto, L.T("From the quality level")) };
+        if (VideoEncoders.QualityOption(enc) is { } qo) rc.Add((RateControl.Quality, L.T("Constant quality ({0})", qo.Label)));
+        rc.Add((RateControl.Bitrate, L.T("Average bitrate")));
+        box.Children.Add(Ui.Field("Rate control", Ui.Combo(rc, o.RateControl, v => SetO(x => x with { RateControl = v }, true))));
+        if (o.RateControl == RateControl.Quality && VideoEncoders.QualityOption(enc) is { } q)
+            box.Children.Add(Ui.Field(L.T("{0} value ({1}–{2})", q.Label, q.Min, q.Max),
+                Ui.Number(o.QualityValue ?? Math.Round((q.Min + q.Max) / 2.5), q.Min, q.Max, 0.5, v => SetO(x => x with { QualityValue = v }))));
+        if (o.RateControl == RateControl.Bitrate)
+            box.Children.Add(Ui.Columns(
+                Ui.Field("Bitrate (kb/s)", Ui.Number(o.BitrateKbps ?? 6000, 100, 500000, 100, v => SetO(x => x with { BitrateKbps = (int)v }), "0")),
+                Ui.Field("Maximum (kb/s, 0 = none)", Ui.Number(o.MaxBitrateKbps ?? 0, 0, 1000000, 100, v => SetO(x => x with { MaxBitrateKbps = v > 0 ? (int)v : null }), "0"))));
+
+        var speed = new List<(string?, string)> { (null, L.T("From the quality level")) };
+        if (VideoEncoders.SpeedOption(enc) is { } so) speed.AddRange(so.Values.Select(v => ((string?)v, v)));
+        var tunes = new List<(string?, string)> { (null, L.T("None")) };
+        tunes.AddRange(VideoEncoders.TuneValues(enc).Select(t => ((string?)t, t)));
+        box.Children.Add(Ui.Columns(
+            Ui.Field(L.T("Speed preset (fastest → slowest)"), Ui.Combo(speed, o.Speed, v => SetO(x => x with { Speed = v }))),
+            Ui.Field("Tune", Ui.Combo(tunes, o.Tune, v => SetO(x => x with { Tune = v })))));
+        box.Children.Add(Ui.Columns(
+            Ui.Field("Keyframe every (s, 0 = auto)", Ui.Number(o.KeyframeSeconds ?? 0, 0, 60, 0.5, v => SetO(x => x with { KeyframeSeconds = v > 0 ? v : null }))),
+            Ui.Field("B-frames (−1 = auto)", Ui.Number(o.BFrames ?? -1, -1, 16, 1, v => SetO(x => x with { BFrames = v >= 0 ? (int)v : null }), "0")),
+            Ui.Field("Lookahead (frames, −1 = auto)", Ui.Number(o.Lookahead ?? -1, -1, 250, 1, v => SetO(x => x with { Lookahead = v >= 0 ? (int)v : null }), "0"))));
+        box.Children.Add(Ui.Field("Extra encoder options", Ui.Text(o.Extra, v => SetO(x => x with { Extra = Clean(v) }), "-x265-params psy-rd=2:aq-strength=0.8", mono: true),
+            L.T("FFmpeg syntax, applied last (they replace KnA's values).")));
+        if (!o.IsEmpty)
+            box.Children.Add(Ui.Button(L.T("Back to automatic"), () => Set(_s with { Encoder = new() })));
+        return new Expander { Header = L.T("Advanced encoder") + (o.IsEmpty ? "" : " ●"), Content = box, IsExpanded = !o.IsEmpty, HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Stretch };
+    }
+
+    /// <summary>Rules that switch off unwanted tracks of every file (kept in presets).</summary>
+    private Control TrackSelection(JobSettings s)
+    {
+        var r = s.TrackRules;
+        void SetR(Func<TrackRules, TrackRules> f) => Set(_s with { TrackRules = f(_s.TrackRules) }, false);
+        static string? Clean(string v) => string.IsNullOrWhiteSpace(v) ? null : v.Trim();
+        var box = new StackPanel { Spacing = 10 };
+        box.Children.Add(Ui.Muted(L.T("Applied to the automatic track plan of every file: the tracks left out can still be ticked by hand in the editor.")));
+        box.Children.Add(Ui.Columns(
+            Ui.Field("Audio languages to keep", Ui.Text(r.AudioLanguages, v => SetR(x => x with { AudioLanguages = Clean(v) }), "ita, jpn"), L.T("In order of preference; empty = all.")),
+            Ui.Field("Subtitle languages to keep", Ui.Text(r.SubtitleLanguages, v => SetR(x => x with { SubtitleLanguages = Clean(v) }), "ita"), L.T("Empty = all."))));
+        box.Children.Add(Ui.Toggle(L.T("Leave out commentary tracks"), r.DropCommentary, v => SetR(x => x with { DropCommentary = v })));
+        box.Children.Add(Ui.Toggle(L.T("Leave out the attachments of the file"), r.DropAttachments, v => SetR(x => x with { DropAttachments = v })));
+        return new Expander { Header = L.T("Track selection") + (r.IsEmpty ? "" : " ●"), Content = box, IsExpanded = !r.IsEmpty, HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Stretch };
     }
 }

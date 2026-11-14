@@ -116,8 +116,19 @@ public partial class MainWindow : Window, IDialogService
         ToolTip.SetTip(delete, L.T("Delete preset"));
         delete.Click += async (_, _) => { if (current is not null) await vm.DeletePresetAsync(current); };
 
+        var manage = IconButton("IconList");
+        ToolTip.SetTip(manage, L.T("Manage presets: edit everything, apply parts to the selected files, import/export"));
+        manage.Click += async (_, _) =>
+        {
+            var w = new PresetManagerWindow(vm.Queue, () => vm.FormSettings,
+                () => vm.Jobs.Where(j => j.IsSelected).Select(j => j.Id).ToList(), vm.FormSettings.PresetName) { Icon = Icon };
+            await w.ShowDialog(this);
+            if (w.UseForNewFiles is { } chosen) vm.ApplyPreset(chosen);
+            else if (w.Changed) vm.ReloadPresets();
+            BuildQuickPanel(vm);
+        };
         var row = new DockPanel();
-        var buttons = Ui.Row(4, wizard, aiButton, saveAs, delete);
+        var buttons = Ui.Row(4, wizard, aiButton, manage, saveAs, delete);
         buttons.Margin = new Thickness(6, 0, 0, 0);
         DockPanel.SetDock(buttons, Dock.Right);
         row.Children.Add(buttons);

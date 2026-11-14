@@ -100,6 +100,8 @@ export function renderSettingsForm(root, s, opts = {}) {
       <label class="toggle"><input type="checkbox" data-k="demux.raw" ${s.demux.raw ? "checked" : ""}><span class="switch"></span><span>${esc(t("Raw elementary streams (.h264, .aac…) instead of MKA/MKS wrappers"))}</span></label>
       <label class="toggle"><input type="checkbox" data-k="demux.attachments" ${s.demux.attachments ? "checked" : ""}><span class="switch"></span><span>${esc(t("Extract attachments (fonts)"))}</span></label>
       <label class="toggle"><input type="checkbox" data-k="demux.chapters" ${s.demux.chapters ? "checked" : ""}><span class="switch"></span><span>${esc(t("Extract chapters"))}</span></label>` : ""}
+    ${full && p.encodesVideo ? advancedEncoder(s, codec) : ""}
+    ${full && (p.encodesVideo || p.isRemux || p.isImages || p.isDemux) ? trackSelection(s) : ""}
   `;
   const sel = k => $(`[data-k="${k}"]`, root);
   fillSelect(sel("profile"), o.profiles, s.profile);
@@ -134,6 +136,10 @@ export function renderSettingsForm(root, s, opts = {}) {
     if (["resolution"].includes(k)) v = Number(v);
     if (["images.intervalSeconds", "images.count", "images.quality", "chunks.workers", "chunks.targetSeconds", "pro.bitDepth"].includes(k)) v = Number(v);
     if (k === "audioBitrate") v = v === "" ? null : Number(v);
+    if (["encoder.qualityValue", "encoder.keyframeSeconds"].includes(k)) v = v === "" || Number(v) <= 0 && k !== "encoder.qualityValue" ? null : Number(v);
+    if (["encoder.bitrateKbps", "encoder.maxBitrateKbps", "encoder.bFrames", "encoder.lookahead"].includes(k)) v = v === "" || Number(v) < 0 || (k.includes("itrate") && Number(v) === 0) ? null : Math.round(Number(v));
+    if (["encoder.speed", "encoder.tune", "encoder.extra", "trackRules.audioLanguages", "trackRules.subtitleLanguages"].includes(k)) v = String(v).trim() || null;
+
     if (k === "upscale.method") s.upscale = { ...s.upscale, model: null };
     const [a, b] = k.split(".");
     if (b) s[a] = { ...s[a], [b]: v }; else s[a] = v;
@@ -141,9 +147,56 @@ export function renderSettingsForm(root, s, opts = {}) {
     changed();
   };
   root.onclick = e => {
+    if (e.target.closest("[data-reset=encoder]")) { s.encoder = {}; changed(); return; }
     const b = e.target.closest("[data-k=codec] button");
     if (b) { s.codec = b.dataset.v; changed(); }
   };
+}
+
+/** Hand-set encoder parameters (full form only); empty = KnA's values for the quality level. */
+function advancedEncoder(s, codec) {
+  const o = state.options, e = s.encoder ?? {};
+  const enc = o.encoderNames?.[`${codec}|${s.backend ?? "Software"}`] ?? "";
+  const info = o.encoders?.[enc] ?? { speeds: [], tunes: [] };
+  const rc = e.rateControl ?? "Auto";
+  const opt = (v, l, cur) => `<option value="${esc(v)}" ${String(cur ?? "") === v ? "selected" : ""}>${esc(l)}</option>`;
+  const empty = rc === "Auto" && !e.speed && !e.tune && e.keyframeSeconds == null && e.bFrames == null && e.lookahead == null && !e.extra;
+  return `<details class="upscale" ${empty ? "" : "open"}><summary>${esc(t("Advanced encoder"))}${empty ? "" : " ●"}</summary>
+    <small class="muted">${esc(t("Encoder: {0}. Empty fields keep KnA's values for the chosen quality.", enc))}</small>
+    <label class="field"><span>${esc(t("Rate control"))}</span><select data-k="encoder.rateControl">
+      ${opt("Auto", t("From the quality level"), rc)}${info.qualityLabel ? opt("Quality", t("Constant quality ({0})", info.qualityLabel), rc) : ""}${opt("Bitrate", t("Average bitrate"), rc)}</select></label>
+    ${rc === "Quality" && info.qualityLabel ? `<label class="field"><span>${esc(t("{0} value ({1}–{2})", info.qualityLabel, info.qualityMin, info.qualityMax))}</span>
+      <input type="number" step="0.5" min="${info.qualityMin}" max="${info.qualityMax}" data-k="encoder.qualityValue" value="${e.qualityValue ?? ""}"></label>` : ""}
+    ${rc === "Bitrate" ? `<div class="grid2"><label class="field"><span>${esc(t("Bitrate (kb/s)"))}</span><input type="number" min="100" step="100" data-k="encoder.bitrateKbps" value="${e.bitrateKbps ?? 6000}"></label>
+      <label class="field"><span>${esc(t("Maximum (kb/s, 0 = none)"))}</span><input type="number" min="0" step="100" data-k="encoder.maxBitrateKbps" value="${e.maxBitrateKbps ?? 0}"></label></div>` : ""}
+    <div class="grid2">
+      <label class="field"><span>${esc(t("Speed preset (fastest → slowest)"))}</span><select data-k="encoder.speed">${opt("", t("From the quality level"), e.speed)}${info.speeds.map(v => opt(v, v, e.speed)).join("")}</select></label>
+      <label class="field"><span>${esc(t("Tune"))}</span><select data-k="encoder.tune">${opt("", t("None"), e.tune)}${info.tunes.map(v => opt(v, v, e.tune)).join("")}</select></label>
+    </div>
+    <div class="grid3">
+      <label class="field"><span>${esc(t("Keyframe every (s, 0 = auto)"))}</span><input type="number" min="0" step="0.5" data-k="encoder.keyframeSeconds" value="${e.keyframeSeconds ?? 0}"></label>
+      <label class="field"><span>${esc(t("B-frames (−1 = auto)"))}</span><input type="number" min="-1" max="16" data-k="encoder.bFrames" value="${e.bFrames ?? -1}"></label>
+      <label class="field"><span>${esc(t("Lookahead (frames, −1 = auto)"))}</span><input type="number" min="-1" max="250" data-k="encoder.lookahead" value="${e.lookahead ?? -1}"></label>
+    </div>
+    <label class="field"><span>${esc(t("Extra encoder options"))}</span><input class="mono" data-k="encoder.extra" value="${esc(e.extra ?? "")}" placeholder="-x265-params psy-rd=2:aq-strength=0.8">
+      <small class="muted">${esc(t("FFmpeg syntax, applied last (they replace KnA's values)."))}</small></label>
+    ${empty ? "" : `<button type="button" class="btn sm ghost" data-reset="encoder">${esc(t("Back to automatic"))}</button>`}
+  </details>`;
+}
+
+/** Track selection rules kept in presets. */
+function trackSelection(s) {
+  const r = s.trackRules ?? {};
+  const empty = !r.audioLanguages && !r.subtitleLanguages && !r.dropCommentary && !r.dropAttachments;
+  return `<details class="upscale" ${empty ? "" : "open"}><summary>${esc(t("Track selection"))}${empty ? "" : " ●"}</summary>
+    <small class="muted">${esc(t("Applied to the automatic track plan of every file: the tracks left out can still be ticked by hand in the editor."))}</small>
+    <div class="grid2">
+      <label class="field"><span>${esc(t("Audio languages to keep"))}</span><input data-k="trackRules.audioLanguages" value="${esc(r.audioLanguages ?? "")}" placeholder="ita, jpn"><small class="muted">${esc(t("In order of preference; empty = all."))}</small></label>
+      <label class="field"><span>${esc(t("Subtitle languages to keep"))}</span><input data-k="trackRules.subtitleLanguages" value="${esc(r.subtitleLanguages ?? "")}" placeholder="ita"><small class="muted">${esc(t("Empty = all."))}</small></label>
+    </div>
+    <label class="toggle"><input type="checkbox" data-k="trackRules.dropCommentary" ${r.dropCommentary ? "checked" : ""}><span class="switch"></span><span>${esc(t("Leave out commentary tracks"))}</span></label>
+    <label class="toggle"><input type="checkbox" data-k="trackRules.dropAttachments" ${r.dropAttachments ? "checked" : ""}><span class="switch"></span><span>${esc(t("Leave out the attachments of the file"))}</span></label>
+  </details>`;
 }
 
 /** Which AAC encoder the server will use (best first). */

@@ -27,7 +27,7 @@ public static class UpscaleModels
             "RealESRGAN_x2plus.pth", Rel + "v0.2.1/RealESRGAN_x2plus.pth", "BSD-3-Clause"),
     ];
 
-    public static string ModelDir(string dataDirectory) => Path.Combine(dataDirectory, "ai", "models");
+    public static string ModelDir(string dataDirectory) => Path.Combine(KnA.Core.Settings.AppPaths.Ai(dataDirectory), "models");
 
     /// <summary>Model id from the list, or a path to a local .pth/.safetensors/.onnx file (scale read from its name: "x2", "2x"…).</summary>
     public static (string Path, int Scale, UpscaleModel? Known) Resolve(string? id, string dataDirectory)
@@ -76,7 +76,7 @@ public static class UpscaleSidecar
     public static string? Python(AiSettings s, string dataDirectory)
     {
         if (!string.IsNullOrWhiteSpace(s.Python) && File.Exists(s.Python)) return s.Python;
-        var venv = Path.Combine(dataDirectory, "ai", "venv", OperatingSystem.IsWindows() ? "Scripts" : "bin", FfmpegLocator.ExeName("python"));
+        var venv = ComponentManager.VenvPython(dataDirectory);
         if (File.Exists(venv)) return venv;
         return FfmpegLocator.LocateTool(["python3", "python"], dataDirectory);
     }

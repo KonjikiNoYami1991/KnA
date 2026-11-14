@@ -1,8 +1,35 @@
 # Changelog
 
-## v3.1.1 — 2026-11-13
+## v3.2.0 — 2026-11-14
 
 ### English
+
+**Resumable encodes**
+- Every video encode can be stopped and continued: one FFmpeg writes the video in 60 s pieces (forced IDR at each cut), and after a
+  stop, a crash or a restart the next run starts exactly after the last finished piece (frame-exact, no quality loss, no extra
+  cost while it runs). *Start* continues stopped jobs by itself, without asking. Audio and subtitles are made alongside the video.
+
+**Speed**
+- **Hardware decoding**: with GPU encoders the source is decoded on the GPU (NVDEC, D3D11VA, VA-API, VideoToolbox). A UHD HEVC remux
+  decoded by the CPU was what limited NVENC encodes (and every parallel segment decoded its own part). Setting: with GPU encoders /
+  always / off.
+- Parallel (segmented) encoding: split points found by seeking near each step instead of reading the whole file first; no preroll
+  per segment unless temporal filters are on.
+- **Previews**: a still frame no longer decodes and filters ~8 s of video first (5 frames instead of ~200 through tone mapping,
+  scaling and subtitles); a frame the playhead already left is cancelled; frames never wait behind the thumbnails and the waveform.
+
+**Encode settings and presets**
+- **Advanced encoder** (editor ✎ → Output, preset manager): constant quality value (CRF/CQ/ICQ/QP) or average bitrate with maximum,
+  encoder speed preset, tune, keyframe interval, B-frames, lookahead, extra encoder options.
+- **Track selection** in presets: audio and subtitle languages to keep (in order of preference), leave out commentaries and
+  attachments; applied to every file's automatic track plan.
+- **Preset manager**: every setting of a preset editable, new / duplicate / rename / update from the side panel / delete,
+  import and export; **apply only some parts** (video, audio, subtitles, picture filters, track selection) to the selected files,
+  or to the open file from the editor.
+
+**Portable**
+- One executable plus a few native libraries; the portable package contains **FFmpeg** (tools\ffmpeg) and fdkaac (tools\fdkaac);
+  components updated from the app, the AI runtime (ai\) and all data (data\) stay in the program folder.
 
 **HDR → SDR**
 - The SDR picture was too bright: libplacebo measured every scene (dynamic peak detection) and stretched dim ones towards white,
@@ -17,7 +44,41 @@
 - Finished jobs are recognisable at a glance: coloured status badge with an icon (✓ done, ✓ done with warnings, ✕ error, ■ stopped,
   ▶ running) and a coloured card border, on desktop and web.
 
+**Fixes**
+- Editor: "Don't burn any subtitle" stays available after a subtitle is chosen again; opening a tab no longer turns the automatic
+  track plan or the file's chapters into custom ones.
+- Segmented encoding: audio codec chosen for the final container (WebM), attachment MIME types, delayed tracks kept.
+
 ### Italiano
+
+**Codifiche riprendibili**
+- Ogni codifica video si può fermare e continuare: un solo FFmpeg scrive il video in pezzi da 60 s (IDR forzato a ogni taglio) e
+  dopo uno stop, un crash o un riavvio la codifica riparte esattamente dopo l'ultimo pezzo completato (al fotogramma, senza perdita di
+  qualità, senza costi aggiuntivi mentre gira). *Avvia* riprende da solo i lavori fermati, senza chiedere. Audio e sottotitoli
+  vengono preparati in parallelo al video.
+
+**Velocità**
+- **Decodifica hardware**: con gli encoder GPU la sorgente viene decodificata dalla GPU (NVDEC, D3D11VA, VA-API, VideoToolbox). Era la
+  decodifica CPU di un remux UHD HEVC a limitare NVENC (e ogni segmento parallelo decodificava la sua parte). Impostazione: con gli
+  encoder GPU / sempre / spenta.
+- Codifica parallela (a segmenti): i punti di taglio si trovano con un seek vicino a ogni passo invece di leggere prima tutto il
+  file; nessun preroll per segmento salvo con filtri temporali.
+- **Anteprime**: un fotogramma non decodifica e filtra più ~8 s di video prima (5 fotogrammi invece di ~200 attraverso tone mapping,
+  scala e sottotitoli); il fotogramma di una posizione già lasciata dalla testina viene annullato; i fotogrammi non aspettano più
+  miniature e forma d'onda.
+
+**Impostazioni di codifica e preset**
+- **Encoder avanzato** (editor ✎ → Uscita, gestione preset): valore di qualità costante (CRF/CQ/ICQ/QP) o bitrate medio con massimo,
+  preset di velocità dell'encoder, tune, intervallo dei keyframe, B-frame, lookahead, opzioni extra dell'encoder.
+- **Selezione tracce** nei preset: lingue audio e sottotitoli da tenere (in ordine di preferenza), esclusione di commenti e allegati;
+  applicata al piano tracce automatico di ogni file.
+- **Gestione preset**: ogni impostazione modificabile, nuovo / duplica / rinomina / aggiorna dal pannello laterale / elimina,
+  importa ed esporta; **applica solo alcune parti** (video, audio, sottotitoli, filtri immagine, selezione tracce) ai file selezionati,
+  o al file aperto dall'editor.
+
+**Portable**
+- Un solo eseguibile più poche librerie native; il pacchetto portable contiene **FFmpeg** (tools\ffmpeg) e fdkaac (tools\fdkaac);
+  componenti aggiornati dall'app, runtime AI (ai\) e tutti i dati (data\) restano nella cartella del programma.
 
 **HDR → SDR**
 - L'immagine SDR era troppo luminosa: libplacebo misurava ogni scena (rilevamento dinamico del picco) e spingeva quelle scure verso il bianco,
@@ -31,6 +92,11 @@
 **Coda**
 - I lavori conclusi si riconoscono a colpo d'occhio: badge di stato colorato con icona (✓ completato, ✓ completato con avvisi, ✕ errore,
   ■ fermato, ▶ in corso) e bordo della scheda colorato, sia nell'app desktop sia nel web.
+
+**Correzioni**
+- Editor: "Non imprimere sottotitoli" resta disponibile dopo aver scelto di nuovo un sottotitolo; aprire una scheda non rende più
+  personalizzati il piano tracce automatico o i capitoli del file.
+- Codifica a segmenti: codec audio scelto per il contenitore finale (WebM), MIME type degli allegati, tracce con ritardo mantenute.
 
 ## v3.1.0 — 2026-11-13
 

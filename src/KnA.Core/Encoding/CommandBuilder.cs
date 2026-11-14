@@ -386,6 +386,7 @@ public static class CommandBuilder
                     Encoder = encoderName, Pro = s.Pro, SourceBitDepth = Math.Max(8, video.BitDepth),
                 });
                 ApplyHdrToEncoder(venc, hdr, ctx.HdrFiles);
+                VideoEncoders.ApplyOverrides(venc, s.Encoder, s.VideoFilters.Fps ?? video.FrameRate);
                 body.AddRange(venc);
             }
         }

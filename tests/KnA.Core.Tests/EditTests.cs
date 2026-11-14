@@ -311,3 +311,73 @@ public class ResumeTests(FeatureFixture fx) : IClassFixture<FeatureFixture>
         finally { ResumableEncoder.PieceSeconds = 60; }
     }
 }
+
+public class EncoderAndPresetTests
+{
+    [Fact]
+    public void Hand_set_parameters_replace_the_automatic_ones()
+    {
+        var x265 = new List<string> { "-c:v", "libx265", "-preset", "medium", "-crf", "23", "-x265-params", "aq-mode=3:log-level=error" };
+        VideoEncoders.ApplyOverrides(x265, new EncoderOverrides
+        {
+            RateControl = RateControl.Quality, QualityValue = 19.5, Speed = "slow", Tune = "animation", KeyframeSeconds = 10, BFrames = 8, Lookahead = 40,
+            Extra = "-x265-params psy-rd=2 -profile:v main10",
+        }, 23.976);
+        Assert.Equal(["-c:v", "libx265", "-preset", "slow", "-crf", "19.5", "-x265-params", "aq-mode=3:log-level=error:rc-lookahead=40:psy-rd=2",
+            "-tune", "animation", "-g", "240", "-bf", "8", "-profile:v", "main10"], x265);
+
+        var nvenc = new List<string> { "-c:v", "hevc_nvenc", "-preset", "p5", "-tune", "hq", "-rc", "vbr", "-cq", "28", "-b:v", "0" };
+        VideoEncoders.ApplyOverrides(nvenc, new EncoderOverrides { RateControl = RateControl.Bitrate, BitrateKbps = 8000, MaxBitrateKbps = 12000 }, 24);
+        Assert.DoesNotContain("-cq", nvenc);
+        Assert.Equal(["-c:v", "hevc_nvenc", "-preset", "p5", "-tune", "hq", "-rc", "vbr", "-b:v", "8000k", "-maxrate", "12000k", "-bufsize", "24000k"], nvenc);
+
+        var untouched = new List<string> { "-c:v", "libx264", "-crf", "20" };
+        VideoEncoders.ApplyOverrides(untouched, new EncoderOverrides(), 25);
+        Assert.Equal(["-c:v", "libx264", "-crf", "20"], untouched);
+    }
+
+    [Fact]
+    public void Track_rules_leave_out_languages_commentaries_and_attachments()
+    {
+        var m = new MediaInfo
+        {
+            Path = "/x.mkv",
+            Video = [new VideoStream { Index = 0, Kind = "video", CodecName = "hevc", Width = 1920, Height = 1080 }],
+            Audio =
+            [
+                new AudioStream { Index = 1, Kind = "audio", CodecName = "ac3", Language = "eng", Channels = 6 },
+                new AudioStream { Index = 2, Kind = "audio", CodecName = "ac3", Language = "ita", Channels = 6 },
+                new AudioStream { Index = 3, Kind = "audio", CodecName = "aac", Language = "eng", Title = "Director's commentary", Channels = 2 },
+            ],
+            Subtitles = [new SubtitleStream { Index = 4, Kind = "subtitle", CodecName = "subrip", Language = "en" }, new SubtitleStream { Index = 5, Kind = "subtitle", CodecName = "subrip", Language = "it" }],
+            Attachments = [new AttachmentStream { Index = 6, Kind = "attachment", CodecName = "ttf", FileName = "a.ttf", MimeType = "font/ttf" }],
+        };
+        var s = new JobSettings
+        {
+            Profile = ProfileKind.UniversalMkv, Subtitles = SubtitleMode.Softsub,
+            TrackRules = new TrackRules { AudioLanguages = "ita, eng", SubtitleLanguages = "ita", DropCommentary = true, DropAttachments = true },
+        };
+        var plan = TrackPlanner.Default(m, s);
+        Assert.Equal([2, 1], plan.Where(t => t.Kind == "audio" && t.Include).Select(t => t.Stream));   // Italian first, commentary out
+        Assert.Equal([5], plan.Where(t => t.Kind == "subtitle" && t.Include).Select(t => t.Stream)); // "it" matches "ita"
+        Assert.DoesNotContain(plan, t => t.Kind == "attachment" && t.Include);
+        // A language nobody has never removes all the audio.
+        var none = TrackPlanner.Default(m, s with { TrackRules = new TrackRules { AudioLanguages = "fra" } });
+        Assert.Contains(none, t => t.Kind == "audio" && t.Include);
+    }
+
+    [Fact]
+    public void Presets_apply_only_the_chosen_parts()
+    {
+        var file = new JobSettings { Codec = VideoCodec.HEVC, Resolution = 0, AudioCodec = AudioCodec.Copy, Subtitles = SubtitleMode.Softsub };
+        var preset = new JobSettings { Codec = VideoCodec.AV1, Resolution = 720, AudioCodec = AudioCodec.Opus, Subtitles = SubtitleMode.Hardsub, PresetName = "P",
+            Encoder = new EncoderOverrides { Speed = "6" } };
+        var audioOnly = file.Merge(preset, PresetParts.Audio);
+        Assert.Equal(VideoCodec.HEVC, audioOnly.Codec);
+        Assert.Equal(AudioCodec.Opus, audioOnly.AudioCodec);
+        Assert.Equal(SubtitleMode.Softsub, audioOnly.Subtitles);
+        var video = file.Merge(preset, PresetParts.Video);
+        Assert.Equal((VideoCodec.AV1, 720, "6", AudioCodec.Copy), (video.Codec, video.Resolution, video.Encoder.Speed, video.AudioCodec));
+        Assert.Same(preset, file.Merge(preset, PresetParts.All));
+    }
+}

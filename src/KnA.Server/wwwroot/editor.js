@@ -171,7 +171,7 @@ function renderTracks(body) {
           </tr>`;
         }).join("")}
       </tbody></table>
-      ${k === "subtitle" && p.usesVideoFilters && rows.some(r => r.tp.burn) ? `<button class="btn sm ghost" data-a="no-burn">${esc(t("Don't burn any subtitle"))}</button>` : ""}
+      ${k === "subtitle" && p.usesVideoFilters ? `<button class="btn sm ghost" data-a="no-burn" ${rows.some(r => r.tp.burn) ? "" : "disabled"}>${esc(t("Don't burn any subtitle"))}</button>` : ""}
       </div>`;
     }).join("")}
     ${p.isKeyframes || p.isImages ? "" : renderChapters()}`;
@@ -566,6 +566,11 @@ function renderOutput(body) {
         </div>
         ${p.isDemux ? `<p class="issue info">${esc(t("Demux: choose the streams, attachments and chapters to extract in the Tracks tab."))}</p>` : ""}
         <div class="section"><h3>${esc(t("Preset"))}</h3>
+          <select id="apply-preset">${(state.presets ?? []).map(x => `<option value="${esc(x.name)}" ${x.name === ed.settings.presetName ? "selected" : ""}>${x.builtIn ? "" : "★ "}${esc(x.name)}</option>`).join("")}</select>
+          <div class="row" style="flex-wrap:wrap;margin:6px 0">${[["Video", t("Video")], ["Audio", t("Audio")], ["Subtitles", t("Subtitles")], ["Filters", t("Picture filters")], ["Tracks", t("Track selection")]]
+            .map(([v, l]) => `<label class="check"><input type="checkbox" data-part="${v}" checked>${esc(l)}</label>`).join("")}</div>
+          <button class="btn sm" data-a="apply-preset">${esc(t("Apply"))}</button>
+          <p class="muted small">${esc(t("Choose what the preset replaces; everything else of each file (and its tracks, cuts, chapters) stays as it is."))}</p>
           <div class="row"><input id="preset-name" placeholder="${esc(t("Preset name"))}" value="${esc(ed.settings.presetName ?? "")}">
           <button class="btn sm" data-a="save-preset">${esc(t("Save as preset"))}</button></div>
           <p class="muted small">${esc(t("Saves the settings of this file (not the tracks or the trim) for reuse."))}</p>
@@ -587,6 +592,13 @@ function renderOutput(body) {
     }
     if (a === "cmd") { await saveNow(); showText(t("FFmpeg command"), await api("GET", `/api/jobs/${ed.id}/command`)); }
     const applyAi = s => { ed.settings = { ...s, presetName: null }; saveAndRender(); };
+    if (a === "apply-preset") {
+      const pr = (state.presets ?? []).find(x => x.name === $("#apply-preset").value); if (!pr) return;
+      const parts = [...body.querySelectorAll("[data-part]")].filter(c => c.checked).map(c => c.dataset.part);
+      if (!parts.length) throw new Error(t("Choose at least one part."));
+      ed.settings = mergePreset(ed.settings, { ...cloneSettings(pr.settings), presetName: pr.name }, parts);
+      return saveAndRender();
+    }
     if (a === "ai-analyze") { await saveNow(); await analyzeJob(ed.id, ed.settings, applyAi); }
     if (a === "ai-ask") { await saveNow(); openAssistant(applyAi, ed.id); }
   });
@@ -631,6 +643,19 @@ function renderPreview(body) {
     v.src = `/api/jobs/${ed.id}/preview/clip?t=${ed.playhead.toFixed(3)}&len=6&v=${Date.now() % 100000}`;
   };
   load();
+}
+
+/** Mirrors JobSettings.Merge: the chosen parts come from the preset, the rest stays. */
+function mergePreset(cur, p, parts) {
+  const r = { ...cur };
+  const take = keys => keys.forEach(k => { r[k] = p[k]; });
+  if (parts.includes("Video")) take(["profile", "codec", "backend", "quality", "resolution", "tenBit", "container", "hdr", "toneMap", "toneMapDynamic", "pro", "upscale", "encoder", "chunks", "images", "demux"]);
+  if (parts.includes("Audio")) take(["audioCodec", "audioBitrate", "audioFilters"]);
+  if (parts.includes("Subtitles")) take(["subtitles", "useSidecarSubtitles"]);
+  if (parts.includes("Filters")) take(["videoFilters", "frameserver"]);
+  if (parts.includes("Tracks")) take(["trackRules"]);
+  r.presetName = p.presetName;
+  return r;
 }
 
 export function editorJobChanged(job) {

@@ -1,6 +1,6 @@
 <p align="center"><img src="src/KnA.App/Assets/kna-256.png" width="128" alt="KnA"></p>
 
-# KnA - Konjiki no Autoencoder 3.1
+# KnA - Konjiki no Autoencoder 3.2
 
 **English** · [Italiano](README.it.md)
 
@@ -10,6 +10,15 @@ Drop in episodes, folders, **Blu-rays (BDMV / ISO) or DVDs** and pick a profile 
 burns subtitles with libass and encodes on the **CPU or the GPU** (NVENC, Quick Sync, AMF, VideoToolbox, VA-API, **Vulkan**):
 H.264, HEVC, AV1, VP9, VVC, MPEG-2 and the professional **ProRes, DNxHR, CineForm, FFV1, Ut Video, FFVHuff, JPEG 2000, v210**,
 with **HDR10 / HDR10+ / Dolby Vision**, resumable segmented encoding, **GPU and neural upscaling**, and a local **LLM assistant**.
+
+### New in 3.2
+- **Resumable encodes**: stop, close KnA or even crash — *Start* continues every job exactly where it was, without asking.
+- **Hardware decoding** with GPU encoders (NVDEC & co.): UHD HEVC sources no longer slow NVENC down; faster parallel encoding.
+- **Fast previews**: a still frame filters 5 frames instead of ~200; old requests are cancelled.
+- **Advanced encoder** settings (CRF/CQ value, bitrate, speed preset, tune, GOP, B-frames, lookahead, extra options),
+  **track selection rules** in presets, and a **preset manager** that applies only the parts you choose.
+- **HDR → SDR** with stable brightness, a choice of tone-mapping curve and no HDR metadata left in SDR files.
+- **Truly portable**: one executable, FFmpeg included, every dependency in its own subfolder.
 
 ### New in 3.1
 - **Tracks tab lists everything** (audio included, Demux too) and lets you **copy or convert each track** right from the list.
@@ -138,8 +147,12 @@ duplicates, unsupported files and huge folders are shown before anything happens
 - **Profiles**: Universal (H.264/HEVC/AV1/VP9/VVC/MPEG-2), Streaming/Web, **Professional / Lossless**, Blu-ray AAC / AC-3, Workraw, XviD+MP3,
   Remux→MP4, Remux→MKV, **Images** (PNG / JPEG / TIFF / WebP / BMP), **Demux** and Aegisub keyframes.
 
+- **Resumable encodes**: every video encode is written in 60 s pieces by a single FFmpeg; after a stop, a crash or a restart
+  *Start* continues it after the last finished piece, frame-exact (Settings → Processing).
+- **Hardware decoding** (NVDEC, D3D11VA, VA-API, VideoToolbox) with GPU encoders, so the CPU no longer limits a GPU encode.
 - **Segmented encoding** (av1an-style): the video is split at keyframes, segments are encoded in parallel,
-  and a stopped job **resumes from the last finished segment**. Ideal for slow CPU encoders (x265, SVT-AV1).
+  and a stopped job **resumes from the last finished segment**. Ideal for slow CPU encoders (x265, SVT-AV1); with a GPU encoder
+  two segments are usually the most that helps (the GPU has one to three encoder engines).
 - **HDR**: HDR10 is kept (mastering display and light levels passed to the encoder) or **tone-mapped to SDR**
   in BT.709 (libplacebo when available, otherwise zscale). The **tone-mapping curve** is a choice (Spline by default, BT.2390, BT.2446a,
   Hable, Mobius) and the brightness follows the mastering metadata, stable across the film; scene-by-scene peak detection is optional.
@@ -213,8 +226,19 @@ Get the latest package from **[Releases](https://github.com/KonjikiNoYami1991/Kn
 | Linux x64 / arm64 | `KnA-portable-linux-x64.tar.gz` · `KnA-portable-linux-arm64.tar.gz` | `tar xzf KnA-portable-*.tar.gz && ./KnA/KnA` |
 | macOS | `KnA-macOS-osx-arm64.app.zip` · `KnA-macOS-osx-x64.app.zip` | unzip, move `KnA.app` to Applications |
 
-Portable packages need nothing installed (.NET is included) and keep everything (settings, presets, queue, logs,
-the FFmpeg and AI components downloaded from the app) in a `data` folder next to the program; delete `portable.txt` to use
+Portable packages need nothing installed (.NET and **FFmpeg** are included) and keep everything in the program folder,
+each kind of thing in its own subfolder:
+
+```
+KnA\
+  KnA.exe            one executable (+ the native libraries of the UI)
+  portable.txt
+  tools\ffmpeg\      FFmpeg + FFprobe (BtbN GPL build) · tools\fdkaac\ · tools\dovi_tool\ … · tools\shaders\
+  ai\                AI upscaler: script, portable Python, PyTorch environment, models
+  data\              settings, presets, queue, logs, temporary files
+```
+
+Components installed or updated from the app go to the same folders. Delete `portable.txt` to use
 the per-user folder instead. If the folder is read-only (e.g. Program Files) KnA falls back to the per-user folder.
 `KnA-desktop-<rid>.zip` and `KnA-server-<rid>.zip` are the same programs without the portable marker (they are also what the in-app updater downloads).
 
