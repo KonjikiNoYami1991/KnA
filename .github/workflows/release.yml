@@ -163,7 +163,9 @@ jobs:
             linux-arm64) ids="dovi_tool,hdr10plus_tool,$common" ;;
             *)           ids="$common" ;;   # win-arm64 is built on an x64 runner: only platform-neutral parts
           esac
-          dotnet run --project src/KnA.Server -c Release -- --bundle "$b" "$ids" || echo "::warning::Some components could not be bundled for ${{ matrix.rid }} (see the log)"
+          # Absolute path: "dotnet run" starts in the project folder (pwd -W = Windows form under Git Bash).
+          abs=$(cd "$b" && { pwd -W 2>/dev/null || pwd; })
+          dotnet run --project src/KnA.Server -c Release -- --bundle "$abs" "$ids" || echo "::warning::Some components could not be bundled for ${{ matrix.rid }} (see the log)"
           rm -rf "$b/data/temp"
           du -sh "$b"/tools/* "$b"/ai 2>/dev/null || true
       - name: Portable layout
@@ -187,7 +189,7 @@ jobs:
             sed -i.bak 's/^          //' "$1/portable.txt" && rm "$1/portable.txt.bak"
           }
           for v in desktop server; do
-            k=portable-$v/KnA$([ $v = server ] && echo -server)
+            if [ "$v" = server ]; then k=portable-server/KnA-server; else k=portable-desktop/KnA; fi
             mkdir -p "$(dirname "$k")" && cp -R out/$v "$k"
             rm -rf "$k/tools"   # the flat fdkaac copy of the plain package: the bundle has tools/fdkaac
             cp -R bundle/tools "$k/tools"
