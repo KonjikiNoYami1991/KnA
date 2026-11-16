@@ -104,6 +104,8 @@ public sealed partial class JobViewModel(QueueJob job, MainViewModel owner) : Ob
     }
 
     [RelayCommand] private Task Edit() => owner.OpenEditorAsync(this);
+    /// <summary>Quick trim: only the cut (keep a part, drop openings/endings), without the advanced editor.</summary>
+    [RelayCommand] private Task Trim() => owner.OpenEditorAsync(this, "trim-only");   // JobEditorTabs.TrimOnly
     [RelayCommand] private void Remove() => owner.Queue.Remove([Id]);
     [RelayCommand] private void Retry() => owner.Queue.Reset([Id]);
     [RelayCommand] private void MoveUp() => owner.Queue.Move(Id, -1);

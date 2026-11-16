@@ -89,6 +89,14 @@ public class MainWindowTests
         }
         editor.Close();
 
+        // standalone trim on a small window: only the cut, and the frame fits the visible area
+        var trim = new JobEditorWindow(queue, vm.Jobs[0].Job, JobEditorTabs.TrimOnly) { Width = 960, Height = 640 };
+        trim.Show();
+        await Pump(() => false, 9000);
+        Shot(trim, "app-05-trim-only.png");
+        Assert.False(trim.GetVisualDescendants().OfType<TabControl>().First().IsVisible);
+        trim.Close();
+
         var settings = new SettingsWindow(queue) { Width = 860, Height = 680 };
         settings.Show();
         await Pump(() => false, 800);

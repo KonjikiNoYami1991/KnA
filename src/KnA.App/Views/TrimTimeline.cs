@@ -1,6 +1,7 @@
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.Primitives;
+using Avalonia.Layout;
 using Avalonia.Input;
 using Avalonia.Media;
 using Avalonia.Media.Imaging;
@@ -14,9 +15,14 @@ namespace KnA.App.Views;
 /// </summary>
 public sealed class TrimTimeline : Grid
 {
-    private readonly UniformGrid _thumbs = new() { Rows = 1 };
+    private readonly UniformGrid _thumbs = new() { Rows = 1, Columns = 12 };
     private readonly Image _wave = new() { Stretch = Stretch.Fill, Height = 70 };
     private readonly Overlay _overlay;
+    // Hover preview: the nearest strip thumbnail, bigger, with its time, follows the pointer.
+    private readonly Popup _hover;
+    private int _hoverSlot = -1;
+    private readonly Image _hoverImage = new() { Width = 240, Stretch = Stretch.Uniform };
+    private readonly TextBlock _hoverTime = new() { FontSize = 12, HorizontalAlignment = HorizontalAlignment.Center, Foreground = Brushes.White };
 
     public double Duration { get; }
     public double? Start { get; private set; }
@@ -38,7 +44,11 @@ public sealed class TrimTimeline : Grid
     {
         if (_thumbs.Children.Count == 0) return null;
         int i = Math.Clamp((int)(t / Duration * ThumbCount), 0, _thumbs.Children.Count - 1);
-        return (_thumbs.Children[i] as Image)?.Source;
+        // Not loaded yet: the closest one that is.
+        for (int d = 0; d < ThumbCount; d++)
+            foreach (int k in new[] { i - d, i + d })
+                if (k >= 0 && k < _thumbs.Children.Count && (_thumbs.Children[k] as Image)?.Source is { } src) return src;
+        return null;
     }
 
     public TrimTimeline(double duration, double? start, double? end, double playhead)
@@ -52,18 +62,62 @@ public sealed class TrimTimeline : Grid
         SetRow(wave, 1);
         Children.Add(strip);
         Children.Add(wave);
+        for (int i = 0; i < ThumbCount; i++)
+            _thumbs.Children.Add(new Image { Stretch = Stretch.UniformToFill, Opacity = 0 });
         _overlay = new Overlay(this);
         SetRowSpan(_overlay, 2);
         Children.Add(_overlay);
+        _hover = new Popup
+        {
+            PlacementTarget = _overlay, Placement = PlacementMode.Pointer, IsHitTestVisible = false,
+            HorizontalOffset = -120, VerticalOffset = -170,
+            Child = new Border
+            {
+                Background = new SolidColorBrush(Color.Parse("#E6101014")), CornerRadius = new CornerRadius(8), Padding = new Thickness(4),
+                BorderBrush = new SolidColorBrush(Color.Parse("#55FFFFFF")), BorderThickness = new Thickness(1),
+                Child = new StackPanel { Spacing = 2, Children = { _hoverImage, _hoverTime } },
+            },
+        };
+        Children.Add(_hover);
+        // As many thumbnails as fit at ~16:9 on the strip's height: narrow windows show fewer, uncropped ones.
+        SizeChanged += (_, e) => FitThumbs(e.NewSize.Width);
     }
 
-    public int ThumbCount => 12;
+    private void FitThumbs(double width)
+    {
+        int visible = Math.Clamp((int)Math.Round(width / 112), 4, ThumbCount);
+        for (int i = 0; i < _thumbs.Children.Count; i++)
+        {
+            // Evenly spread: thumbnail i is shown when it is the closest one to a visible slot.
+            int slot = (int)Math.Floor((i + 0.5) * visible / ThumbCount);
+            int owner = (int)Math.Floor((slot + 0.5) * ThumbCount / visible);
+            _thumbs.Children[i].IsVisible = owner == i;
+        }
+        _thumbs.Columns = visible;
+    }
+
+    /// <summary>Thumbnails in the strip: enough to recognise scenes on a wide window without making the strip slow.</summary>
+    public int ThumbCount => 20;
 
     public void SetThumb(int i, Bitmap bmp)
     {
-        while (_thumbs.Children.Count < ThumbCount)
-            _thumbs.Children.Add(new Image { Stretch = Stretch.UniformToFill });
-        ((Image)_thumbs.Children[i]).Source = bmp;
+        if (i < 0 || i >= _thumbs.Children.Count) return;
+        var img = (Image)_thumbs.Children[i];
+        img.Source = bmp;
+        img.Opacity = 1;
+    }
+
+    private void Hover(double? sec)
+    {
+        if (sec is not { } t || _overlay.Dragging) { _hover.IsOpen = false; _hoverSlot = -1; return; }
+        // The popup is placed at the pointer when it opens: reopened when the pointer reaches another thumbnail.
+        int slot = Math.Clamp((int)(t / Duration * ThumbCount * 2), 0, ThumbCount * 2 - 1);
+        if (slot != _hoverSlot) { _hover.IsOpen = false; _hoverSlot = slot; }
+        _hoverImage.Source = ThumbAt(t);
+        _hoverImage.IsVisible = _hoverImage.Source is not null;
+        var ts = TimeSpan.FromSeconds(t);
+        _hoverTime.Text = ts.TotalHours >= 1 ? ts.ToString(@"h\:mm\:ss") : ts.ToString(@"m\:ss");
+        _hover.IsOpen = true;
     }
 
     public void SetWave(Bitmap? bmp) { _wave.Source = bmp; _wave.IsVisible = bmp is not null; }
@@ -123,8 +177,12 @@ public sealed class TrimTimeline : Grid
 
         protected override void OnPointerMoved(PointerEventArgs e)
         {
-            if (_drag is not null) Move(e.GetPosition(this).X);
+            var x = e.GetPosition(this).X;
+            if (_drag is not null) Move(x);
+            _t.Hover(_drag is null ? Sec(x) : null);
         }
+
+        protected override void OnPointerExited(PointerEventArgs e) => _t.Hover(null);
 
         protected override void OnPointerReleased(PointerReleasedEventArgs e)
         {

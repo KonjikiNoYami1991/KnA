@@ -23,6 +23,8 @@ public sealed class PreviewService(QueueService queue)
     // which can take minutes on a long film.
     private readonly SemaphoreSlim _gate = new(2);
     private readonly SemaphoreSlim _bgGate = new(2);
+    // Timeline thumbnails have their own lane: a waveform of a long film no longer keeps the strip black for minutes.
+    private readonly SemaphoreSlim _thumbGate = new(Math.Clamp(Environment.ProcessorCount / 4, 2, 4));
     private readonly ConcurrentDictionary<string, SemaphoreSlim> _keyLocks = new();
 
     private string JobDir(Guid id) => Path.Combine(queue.Store.TempDirectory, "preview", id.ToString("N"));
@@ -79,8 +81,8 @@ public sealed class PreviewService(QueueService queue)
                 if (keyOnly) args.AddRange(["-skip_frame", "nokey"]);
                 args.AddRange(MediaProber.RobustInputArgs(job.SourcePath));
                 args.AddRange(["-ss", CommandBuilder.Sec(Math.Max(0, seconds)), .. KnA.Core.Media.Discs.DiscSource.InputArgs(job.SourcePath), "-map", "0:v:0", "-frames:v", "1",
-                    "-vf", $"scale={width}:-2", "-q:v", "5", "-update", "1", path]);
-                try { await Run(args, dir, ct, background: true); } catch (InvalidOperationException) when (keyOnly) { }
+                    "-vf", ThumbFilter(job.Media?.PrimaryVideo, width), "-q:v", "5", "-update", "1", path]);
+                try { await Run(args, dir, ct, gate: _thumbGate); } catch (InvalidOperationException) when (keyOnly) { }
                 if (File.Exists(path) && new FileInfo(path).Length > 0) return;
             }
         }, ct);
@@ -268,10 +270,27 @@ public sealed class PreviewService(QueueService queue)
         return await JobRunner.RenderScriptAudioAsync(tracks, Path.Combine(dir, "script-audio"), ctx, job, ct);
     }
 
-    private async Task Run(IEnumerable<string> args, string dir, CancellationToken ct, TimeSpan? timeout = null, bool background = false)
+    /// <summary>
+    /// Thumbnail filter: scaled first (cheap), then HDR sources are tone mapped (zscale, a simple curve is enough for a
+    /// 192-pixel strip) so the timeline doesn't show grey, washed-out pictures.
+    /// </summary>
+    internal string ThumbFilter(VideoStream? v, int width)
+    {
+        var f = $"scale={width}:-2";
+        bool zscale = queue.Settings.Capabilities?.Main?.HasZscale ?? true;
+        if (v is { Hdr.IsHdr: true } && zscale && !v.Hdr.DolbyVisionWithoutFallback)
+        {
+            string tin = v.Hdr.IsHlg ? "arib-std-b67" : "smpte2084";
+            f += $",zscale=tin={tin}:min=bt2020nc:pin=bt2020:rin=tv:t=linear:npl=100,format=gbrpf32le," +
+                 "zscale=p=bt709,tonemap=tonemap=hable:desat=0,zscale=t=bt709:m=bt709:r=tv,format=yuv420p";
+        }
+        return f;
+    }
+
+    private async Task Run(IEnumerable<string> args, string dir, CancellationToken ct, TimeSpan? timeout = null, bool background = false, SemaphoreSlim? gate = null)
     {
         var tools = queue.Tools ?? throw new InvalidOperationException(L.T("FFmpeg was not found. Configure it in Settings."));
-        var gate = background ? _bgGate : _gate;
+        gate ??= background ? _bgGate : _gate;
         await gate.WaitAsync(ct);
         try
         {

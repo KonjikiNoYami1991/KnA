@@ -220,6 +220,7 @@ function jobHtml(j) {
     <div class="right">
       <span class="badge ${statusClass(j.status)}">${esc(statusText(j.status))}</span>
       <div class="actions">
+        <button class="btn ghost icon sm" data-a="trim" title="${esc(t("Trim: keep only a part, cut openings and endings"))}" ${running ? "disabled" : ""}><svg><use href="#i-cut"/></svg></button>
         <button class="btn ghost icon sm" data-a="edit" title="${esc(t("Edit tracks, trim, filters, preview"))}" ${running ? "disabled" : ""}><svg><use href="#i-edit"/></svg></button>
         <button class="btn ghost icon sm" data-a="up" title="${esc(t("Move up"))}" ${running ? "disabled" : ""}><svg><use href="#i-up"/></svg></button>
         <button class="btn ghost icon sm" data-a="down" title="${esc(t("Move down"))}" ${running ? "disabled" : ""}><svg><use href="#i-down"/></svg></button>
@@ -298,6 +299,7 @@ $("#jobs").addEventListener("click", guard(async e => {
   const a = e.target.closest("button")?.dataset.a;
   if (!a) return;
   if (a === "edit") return openEditor(id);
+  if (a === "trim") return openEditor(id, "trim-only");
   if (a === "remove") await post("/api/jobs/remove", { ids: [id] });
   if (a === "reset") await post("/api/jobs/reset", { ids: [id] });
   if (a === "up" || a === "down") await post(`/api/jobs/${id}/move`, { delta: a === "up" ? -1 : 1 });

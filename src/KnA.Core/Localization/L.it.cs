@@ -909,5 +909,6 @@ public static partial class L
         ["{0} splits the file in parallel only when it reads the source itself ({1} prevents it)."] = "{0} divide il file in parallelo solo quando legge la sorgente da solo (lo impedisce: {1}).",
         ["Installing {0}…"] = "Installazione di {0}…",
         ["Tracks not included (enable them in Tracks): {0}"] = "Tracce non incluse (attivale in Tracce): {0}",
+        ["Trim: keep only a part, cut openings and endings"] = "Taglia: tieni solo una parte, togli sigle e finali",
     };
 }

@@ -12,6 +12,9 @@ const kindLabel = k => ({ video: t("Video"), audio: t("Audio"), subtitle: t("Sub
 export async function openEditor(id, tab = "tracks") {
   const job = state.jobs.get(id);
   if (!job) return;
+  // "trim-only": the cut as a standalone tool (keep a part, drop openings/endings) without the other tabs.
+  $("#dlg-editor").classList.toggle("trim-only", tab === "trim-only");
+  if (tab === "trim-only") tab = "trim";
   ed = { id, job, settings: cloneSettings(job.settings), edit: cloneSettings(job.edit), analysis: null, tab, playhead: job.edit.segments?.[0]?.start ?? job.edit.trimStart ?? 0, final: true, parts: null, seg: 0 };
   $("#ed-title").textContent = job.fileName;
   $("#ed-sub").textContent = job.folder;
@@ -287,7 +290,7 @@ function renderTrim(body) {
   const dur = ed.analysis.files[0].duration || 1;
   const fps = ed.analysis.frameRate || 25;
   const audio = tracks().find(x => x.kind === "audio" && x.include);
-  const nThumbs = 12;
+  const nThumbs = 20;
   if (!ed.parts) {
     ed.parts = ed.edit.segments?.length > 1 ? ed.edit.segments.map(x => ({ ...x })).sort((a, b) => a.start - b.start)
       : (ed.edit.trimStart != null || ed.edit.trimEnd != null) ? [{ start: ed.edit.trimStart ?? 0, end: ed.edit.trimEnd ?? null }] : [];
@@ -300,7 +303,7 @@ function renderTrim(body) {
   body.innerHTML = `
     <p class="muted small">${esc(t("The cut is applied last: after imported tracks, delays, filters and burned subtitles."))}</p>
     <div class="timeline" id="tl">
-      <div class="thumbs">${Array.from({ length: nThumbs }, (_, i) => `<img loading="lazy" alt="" src="/api/jobs/${ed.id}/preview/thumb?t=${((i + 0.5) * dur / nThumbs).toFixed(2)}&w=192">`).join("")}</div>
+      <div class="thumbs">${Array.from({ length: nThumbs }, (_, i) => `<img alt="" src="/api/jobs/${ed.id}/preview/thumb?t=${((i + 0.5) * dur / nThumbs).toFixed(2)}&w=192">`).join("")}</div>
       ${audio ? `<div class="wave"><img alt="" src="/api/jobs/${ed.id}/preview/waveform?file=${encodeURIComponent(audio.file)}&stream=${audio.stream}&w=1600&h=100"></div>` : ""}
       <div id="shades"></div><div id="others"></div>
       <div class="sel-range" id="rng"></div>
@@ -384,8 +387,26 @@ function renderTrim(body) {
     tl.setPointerCapture(ev.pointerId);
     tl.onpointermove(ev);
   };
+  // Hover preview: the nearest strip thumbnail, bigger, with its time.
+  const hover = document.createElement("div");
+  hover.className = "tl-hover"; hover.hidden = true;
+  hover.innerHTML = `<img alt=""><div></div>`;
+  tl.appendChild(hover);
+  tl.onpointerleave = () => { hover.hidden = true; };
   tl.onpointermove = ev => {
-    if (!drag) return;
+    if (!drag) {
+      const tt = timeAt(ev), thumbs = tl.querySelectorAll(".thumbs img");
+      const r = tl.getBoundingClientRect();
+      const x = Math.min(Math.max(ev.clientX - r.left, 110), r.width - 110);
+      hover.style.left = x + "px";
+      const th = thumbs[Math.min(thumbs.length - 1, Math.floor(tt / dur * thumbs.length))];
+      hover.querySelector("img").src = th?.complete && th.naturalWidth ? th.src : "";
+      hover.querySelector("img").hidden = !(th?.complete && th.naturalWidth);
+      hover.querySelector("div").textContent = fmtTime(tt);
+      hover.hidden = false;
+      return;
+    }
+    hover.hidden = true;
     const tt = timeAt(ev);
     if (drag === "start") setTrim(Math.min(tt, (curEnd() ?? dur) - 0.05), curEnd());
     else if (drag === "end") setTrim(curStart() ?? 0, Math.max(tt, (curStart() ?? 0) + 0.05));

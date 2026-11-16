@@ -19,6 +19,12 @@ namespace KnA.App.Views;
 /// output settings and preview of the final result. Every change is saved to the job and re-validated (debounced).
 /// Mirrors wwwroot/editor.js.
 /// </summary>
+/// <summary>Tab names of the editor; <see cref="TrimOnly"/> opens just the cut, as a standalone tool.</summary>
+public static class JobEditorTabs
+{
+    public const string TrimOnly = "trim-only";
+}
+
 public sealed class JobEditorWindow : Window
 {
     private static readonly string[] Kinds = ["video", "audio", "subtitle", "attachment"];
@@ -38,6 +44,7 @@ public sealed class JobEditorWindow : Window
     private readonly TextBlock _saving = new() { Classes = { "muted" }, FontSize = 12, VerticalAlignment = VerticalAlignment.Center };
     private readonly TabControl _tabs = new();
     private readonly ContentControl _body = new();
+    private ScrollViewer _scroll = null!;
     private CancellationTokenSource? _saveCts;
     private CancellationTokenSource _previewCts = new();
     private readonly DispatcherTimer _debounce = new() { Interval = TimeSpan.FromMilliseconds(450) };
@@ -53,8 +60,10 @@ public sealed class JobEditorWindow : Window
         Width = 1180; Height = 820; MinWidth = 860; MinHeight = 600;
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
 
-        string[] tabs = ["tracks", "trim", "filters", "output", "preview"];
-        string[] names = [L.T("Tracks"), L.T("Trim"), L.T("Filters"), L.T("Output"), L.T("Preview")];
+        bool trimOnly = tab == JobEditorTabs.TrimOnly;
+        string[] tabs = trimOnly ? ["trim"] : ["tracks", "trim", "filters", "output", "preview"];
+        string[] names = trimOnly ? [L.T("Trim")] : [L.T("Tracks"), L.T("Trim"), L.T("Filters"), L.T("Output"), L.T("Preview")];
+        if (trimOnly) { tab = "trim"; Title = L.T("Trim") + " — " + job.FileName + " — KnA"; _tabs.IsVisible = false; }
         for (int i = 0; i < tabs.Length; i++) _tabs.Items.Add(new TabItem { Header = names[i], Tag = tabs[i], FontSize = 15 });
         _tabs.SelectedIndex = Math.Max(0, Array.IndexOf(tabs, tab));
         _tabs.SelectionChanged += (_, _) => { if (_a is not null) RenderTab(); };
@@ -69,7 +78,7 @@ public sealed class JobEditorWindow : Window
         var root = new DockPanel();
         DockPanel.SetDock(top, Dock.Top);
         root.Children.Add(top);
-        root.Children.Add(new ScrollViewer { Content = new Border { Padding = new Thickness(20, 4, 20, 20), Child = _body } });
+        root.Children.Add(_scroll = new ScrollViewer { Content = new Border { Padding = new Thickness(20, 4, 20, 20), Child = _body } });
         Content = root;
         _body.Content = Ui.Muted(L.T("Loading…"));
 
@@ -690,14 +699,35 @@ public sealed class JobEditorWindow : Window
                     nudges),
                 segPanel,
                 Ui.Row(12, finalSwitch, stamp, spin),
-                new Border { Background = Brushes.Black, CornerRadius = new CornerRadius(10), ClipToBounds = true, Child = img, MinHeight = 200 },
             },
         };
         foreach (var c in root.Children.OfType<StackPanel>()) foreach (var tb in c.Children.OfType<TextBlock>()) tb.VerticalAlignment = VerticalAlignment.Center;
         Layout();
         LoadFrame();
         _ = LoadTimelineAsync(tl, dur, ct);
-        return root;
+        return FitPicture(root, img);
+    }
+
+    /// <summary>
+    /// Controls on top, picture below filling the rest of the window: the frame always fits the visible area (it no
+    /// longer runs off the bottom of a small window). Very small windows still scroll, with a picture of at least 180 px.
+    /// </summary>
+    private Control FitPicture(Control header, Image img)
+    {
+        img.MaxHeight = double.PositiveInfinity;
+        img.Stretch = Stretch.Uniform;
+        var picture = new Border { Background = Brushes.Black, CornerRadius = new CornerRadius(10), ClipToBounds = true, Child = img, Margin = new Thickness(0, 10, 0, 0) };
+        var panel = new StackPanel { Children = { header, picture } };
+        void Fit()
+        {
+            double h = _scroll.Viewport.Height - header.Bounds.Height - 10 - 24;
+            picture.Height = Math.Max(180, h);
+        }
+        void Viewport(object? _, AvaloniaPropertyChangedEventArgs e) { if (e.Property == ScrollViewer.ViewportProperty) Fit(); }
+        header.SizeChanged += (_, _) => Fit();
+        panel.AttachedToVisualTree += (_, _) => { _scroll.PropertyChanged += Viewport; Fit(); };
+        panel.DetachedFromVisualTree += (_, _) => _scroll.PropertyChanged -= Viewport;
+        return panel;
     }
 
     private Button ModeButton(string text, bool final, Action click)
@@ -718,24 +748,34 @@ public sealed class JobEditorWindow : Window
 
     private async Task LoadTimelineAsync(TrimTimeline tl, double dur, CancellationToken ct)
     {
-        try
+        // Thumbnails first and in parallel (the service limits how many FFmpeg run at once), the waveform alongside:
+        // on a long film the waveform decodes the whole track and must not keep the strip empty.
+        async Task Thumb(int i)
         {
-            var audio = Tracks.FirstOrDefault(t => t.Kind == "audio" && t.Include);
-            if (audio is not null)
-            {
-                var w = await Task.Run(() => _queue.Preview.WaveformAsync(_job.Id, audio.File, audio.Stream, 1600, 100, ct), ct);
-                tl.SetWave(Load(w));
-            }
-            else tl.SetWave(null);
-            for (int i = 0; i < tl.ThumbCount && !ct.IsCancellationRequested; i++)
+            try
             {
                 var t = (i + 0.5) * dur / tl.ThumbCount;
                 var p = await Task.Run(() => _queue.Preview.ThumbnailAsync(_job.Id, t, 192, ct), ct);
-                tl.SetThumb(i, Load(p));
+                if (!ct.IsCancellationRequested) tl.SetThumb(i, Load(p));
             }
+            catch (OperationCanceledException) { }
+            catch (Exception) { /* one missing thumbnail is not worth an error banner */ }
         }
-        catch (Exception ex) when (ex is not OperationCanceledException) { _issues.Children.Add(Ui.Note(ex.Message, true)); }
-        catch (OperationCanceledException) { }
+        async Task Wave()
+        {
+            try
+            {
+                var audio = Tracks.FirstOrDefault(t => t.Kind == "audio" && t.Include);
+                if (audio is null) { tl.SetWave(null); return; }
+                var w = await Task.Run(() => _queue.Preview.WaveformAsync(_job.Id, audio.File, audio.Stream, 1600, 100, ct), ct);
+                if (!ct.IsCancellationRequested) tl.SetWave(Load(w));
+            }
+            catch (OperationCanceledException) { }
+            catch (Exception ex) { _issues.Children.Add(Ui.Note(ex.Message, true)); }
+        }
+        // Middle first: the user usually looks there before the ends.
+        var order = Enumerable.Range(0, tl.ThumbCount).OrderBy(i => Math.Abs(i - tl.ThumbCount / 2.0)).ToList();
+        await Task.WhenAll(order.Select(Thumb).Append(Wave()));
     }
 
     // ------------------------------------------------------------------ filters
@@ -1010,7 +1050,7 @@ public sealed class JobEditorWindow : Window
             catch (Exception ex) when (ex is not OperationCanceledException) { status.Text = L.T("The preview could not be generated.") + " " + ex.Message; }
         }, primary: true);
         timer.Start();
-        return new StackPanel
+        return FitPicture(new StackPanel
         {
             Spacing = 10,
             Children =
@@ -1018,9 +1058,8 @@ public sealed class JobEditorWindow : Window
                 Ui.Field(L.T("Position") + " — " + L.T("Final (filters, subtitles, HDR conversion)"), slider),
                 Ui.Row(12, play, status),
                 Ui.Muted(L.T("Rendered quickly in H.264, SDR: for checking timing and look, not quality.")),
-                new Border { Background = Brushes.Black, CornerRadius = new CornerRadius(10), ClipToBounds = true, Child = img, MinHeight = 240 },
             },
-        };
+        }, img);
     }
 }
 
