@@ -7,8 +7,11 @@ using KnA.Core.Tools;
 
 namespace KnA.App.Views;
 
+/// <summary>Part of the full form shown by one tab of the editor (each setting appears in exactly one place).</summary>
+public enum FormSection { Video, Audio, Subtitles, Output }
+
 /// <summary>
-/// Encode settings form, shared by the side panel ("quick") and the editor Output tab ("full").
+/// Encode settings form, shared by the side panel ("quick") and the editor tabs ("full", one <see cref="FormSection"/> each).
 /// Mirrors wwwroot/form.js: same fields, same visibility rules.
 /// </summary>
 public sealed class SettingsForm : StackPanel
@@ -20,8 +23,17 @@ public sealed class SettingsForm : StackPanel
 
     public event Action<JobSettings>? Changed;
 
-    public SettingsForm(JobSettings settings, Func<FfmpegCapabilities?> caps, bool full, Func<FfmpegTools?>? tools = null)
+    private readonly FormSection? _section;
+
+    /// <summary>Text describing what a target size leaves for each stream (editor: depends on the file).</summary>
+    public Func<JobSettings, string?>? SizeInfo { get; init; }
+
+    /// <summary>Loads a program's options for the parameter editors (editor only).</summary>
+    public Func<string, JobSettings, CancellationToken, Task<(string Program, IReadOnlyList<ToolOption> Options)>>? ParameterOptions { get; init; }
+
+    public SettingsForm(JobSettings settings, Func<FfmpegCapabilities?> caps, bool full, Func<FfmpegTools?>? tools = null, FormSection? section = null)
     {
+        _section = full ? section : null;
         _tools = tools;
         _s = settings;
         _caps = caps;
@@ -66,6 +78,9 @@ public sealed class SettingsForm : StackPanel
     /// <summary>External programs found (qaac, fdkaac, rigaya encoders), given by the window.</summary>
     private readonly Func<FfmpegTools?>? _tools;
 
+    /// <summary>The block belongs to the section shown (the quick panel and a sectionless full form show everything).</summary>
+    private bool In(FormSection sec) => _section is null || _section == sec;
+
     public void Rebuild()
     {
         Children.Clear();
@@ -76,6 +91,14 @@ public sealed class SettingsForm : StackPanel
                               && p.Kind is ProfileKind.UniversalMkv or ProfileKind.Streaming;
         bool pro = p.Kind == ProfileKind.Professional;
 
+        if (In(FormSection.Video)) VideoBlock(s, p, codec, tenBitPossible, pro);
+        if (In(FormSection.Subtitles)) SubtitleBlock(s, p);
+        if (In(FormSection.Audio)) AudioBlock(s, p);
+        if (In(FormSection.Output)) OutputBlock(s, p);
+    }
+
+    private void VideoBlock(JobSettings s, ProfileDefinition p, VideoCodec codec, bool tenBitPossible, bool pro)
+    {
         Children.Add(Ui.Field("Profile",
             Ui.Combo(Profiles.All.Select(x => (x.Kind, x.Name)), s.Profile, v => Set(s with { Profile = v, Container = null })),
             p.Description));
@@ -134,22 +157,18 @@ public sealed class SettingsForm : StackPanel
         var resQ = new List<Control>();
         if (p.UsesResolution)
             resQ.Add(Ui.Field("Resolution", Ui.Combo(Resolutions.All.Select(r => (r, Resolutions.Display(r))), s.Resolution, v => Set(s with { Resolution = v }))));
-        if (p.UsesQuality)
-            resQ.Add(Ui.Field("Quality", Ui.Combo(Enum.GetValues<QualityLevel>().Select(q => (q, q.Display())), s.Quality, v => Set(s with { Quality = v }))));
+        if (p.UsesQuality && !_full)
+        {
+            // One place decides the quality: when the editor sets it by hand, the quick panel says so instead of
+            // showing a level that would be ignored.
+            if (s.Encoder.RateControl == RateControl.Auto)
+                resQ.Add(Ui.Field("Quality", Ui.Combo(Enum.GetValues<QualityLevel>().Select(q => (q, q.Display())), s.Quality, v => Set(s with { Quality = v }))));
+            else
+                resQ.Add(Ui.Field("Quality", Ui.Muted(RateText(s.Encoder))));
+        }
         if (resQ.Count > 0) Children.Add(Ui.Columns([.. resQ]));
 
-        if (p.UsesSubtitleMode)
-        {
-            Children.Add(Ui.Field("Subtitles",
-                Ui.Combo(Enum.GetValues<SubtitleMode>().Select(m => (m, m.Display())), s.Subtitles, v => Set(s with { Subtitles = v })),
-                _full ? L.T("Automatic plan: the editor (Tracks tab) can override it per file.") : null));
-            if (s.Subtitles == SubtitleMode.Hardsub)
-                Children.Add(Ui.Toggle(L.T("Prefer external .ass/.srt next to the video"), s.UseSidecarSubtitles, v => Set(s with { UseSidecarSubtitles = v }, false)));
-        }
-
-        if (_full && _containers.Count > 1)
-            Children.Add(Ui.Field("Container",
-                Ui.Combo(_containers.Select(c => (c, Containers.Display(c))), s.Container ?? p.Container, v => Set(s with { Container = v }))));
+        if (_full && p.EncodesVideo && p.UsesQuality) RateControlBlock(s, codec);
 
         if (_full && p.UsesVideoFilters)
         {
@@ -160,21 +179,6 @@ public sealed class SettingsForm : StackPanel
                 Children.Add(Ui.Toggle(L.T("Adapt brightness scene by scene (dynamic peak)"), s.ToneMapDynamic, v => Set(s with { ToneMapDynamic = v }, false)));
                 Children.Add(Ui.Muted(L.T("Used only when an HDR source becomes SDR. Off: the brightness follows the mastering metadata and stays stable across the film; on, dim scenes are brightened.")));
             }
-        }
-
-        if (p.UsesAudio)
-        {
-            bool lossless = s.AudioCodec is AudioCodec.Copy or AudioCodec.Flac or AudioCodec.Alac or AudioCodec.WavPack or AudioCodec.TrueHd
-                or AudioCodec.Pcm16 or AudioCodec.Pcm24 or AudioCodec.Pcm32Float;
-            var audio = new List<Control>
-            {
-                Ui.Field("Audio", Ui.Combo(Enum.GetValues<AudioCodec>().Select(a => (a, a.Display())), s.AudioCodec, v => Set(s with { AudioCodec = v }))),
-            };
-            if (!lossless)
-                audio.Add(Ui.Field("Bitrate (kb/s)", Ui.Number(s.AudioBitrate ?? 0, 0, 1536, 8, v => Set(_s with { AudioBitrate = v > 0 ? (int)v : null }, false), "0"),
-                    L.T("0 = automatic")));
-            Children.Add(Ui.Columns([.. audio]));
-            if (s.AudioCodec is AudioCodec.Auto or AudioCodec.Aac or AudioCodec.HeAac) Children.Add(Ui.Muted(AacNote()));
         }
 
         if (p.UsesVideoFilters && p.UsesResolution)
@@ -219,8 +223,6 @@ public sealed class SettingsForm : StackPanel
         }
 
         if (_full && p.EncodesVideo) Children.Add(AdvancedEncoder(s, codec));
-        if (_full && (p.UsesTrackPlan || p.IsDemux)) Children.Add(TrackSelection(s));
-
         if (p.IsImages)
         {
             var im = s.Images;
@@ -239,12 +241,137 @@ public sealed class SettingsForm : StackPanel
                 Children.Add(Ui.Toggle(L.T("16 bits per channel"), im.SixteenBit, v => Set(_s with { Images = _s.Images with { SixteenBit = v } }, false)));
         }
 
+    }
+
+    private void SubtitleBlock(JobSettings s, ProfileDefinition p)
+    {
+        if (p.UsesSubtitleMode)
+        {
+            Children.Add(Ui.Field("Subtitles",
+                Ui.Combo(Enum.GetValues<SubtitleMode>().Select(m => (m, m.Display())), s.Subtitles, v => Set(s with { Subtitles = v })),
+                _full ? L.T("Automatic plan: the editor (Tracks tab) can override it per file.") : null));
+            if (s.Subtitles == SubtitleMode.Hardsub)
+                Children.Add(Ui.Toggle(L.T("Prefer external .ass/.srt next to the video"), s.UseSidecarSubtitles, v => Set(s with { UseSidecarSubtitles = v }, false)));
+        }
+
+        if (_full && ParameterOptions is { } po && p.UsesTrackPlan)
+            Children.Add(Params(L.T("Subtitle encoder parameters"), s.Arguments.Subtitles, KnA.Core.Queue.QueueService.ParameterTools.Subtitles,
+                v => Set(_s with { Arguments = _s.Arguments with { Subtitles = v } }, false), "-alignment 1"));
+    }
+
+    private void AudioBlock(JobSettings s, ProfileDefinition p)
+    {
+        if (p.UsesAudio)
+        {
+            bool lossless = s.AudioCodec is AudioCodec.Copy or AudioCodec.Flac or AudioCodec.Alac or AudioCodec.WavPack or AudioCodec.TrueHd
+                or AudioCodec.Pcm16 or AudioCodec.Pcm24 or AudioCodec.Pcm32Float;
+            var audio = new List<Control>
+            {
+                Ui.Field("Audio", Ui.Combo(Enum.GetValues<AudioCodec>().Select(a => (a, a.Display())), s.AudioCodec, v => Set(s with { AudioCodec = v }))),
+            };
+            if (!lossless)
+                audio.Add(Ui.Field("Bitrate (kb/s)", Ui.Number(s.AudioBitrate ?? 0, 0, 1536, 8, v => Set(_s with { AudioBitrate = v > 0 ? (int)v : null }, false), "0"),
+                    L.T("0 = automatic")));
+            Children.Add(Ui.Columns([.. audio]));
+            if (s.AudioCodec is AudioCodec.Auto or AudioCodec.Aac or AudioCodec.HeAac) Children.Add(Ui.Muted(AacNote()));
+        }
+
+        if (_full && p.UsesAudio && ParameterOptions is not null)
+        {
+            var tools = _tools?.Invoke();
+            Children.Add(Params(L.T("FFmpeg audio encoder parameters"), s.Arguments.AudioFfmpeg, KnA.Core.Queue.QueueService.ParameterTools.Audio,
+                v => Set(_s with { Arguments = _s.Arguments with { AudioFfmpeg = v } }, false), "-aac_coder twoloop"));
+            if (tools?.Fdkaac is not null)
+                Children.Add(Params(L.T("fdkaac parameters"), s.Arguments.Fdkaac, KnA.Core.Queue.QueueService.ParameterTools.Fdkaac,
+                    v => Set(_s with { Arguments = _s.Arguments with { Fdkaac = v } }, false), "--afterburner 1"));
+            if (tools?.Qaac is not null)
+                Children.Add(Params(L.T("qaac parameters"), s.Arguments.Qaac, KnA.Core.Queue.QueueService.ParameterTools.Qaac,
+                    v => Set(_s with { Arguments = _s.Arguments with { Qaac = v } }, false), "--quality 2"));
+        }
+    }
+
+    private void OutputBlock(JobSettings s, ProfileDefinition p)
+    {
+        if (_full && _containers.Count > 1)
+            Children.Add(Ui.Field("Container",
+                Ui.Combo(_containers.Select(c => (c, Containers.Display(c))), s.Container ?? p.Container, v => Set(s with { Container = v }))));
+
+        if (_full && (p.UsesTrackPlan || p.IsDemux)) Children.Add(TrackSelection(s));
+        if (_full && !p.IsImages && ParameterOptions is not null)
+            Children.Add(Params(L.T("Container parameters"), s.Arguments.Muxer, KnA.Core.Queue.QueueService.ParameterTools.Muxer,
+                v => Set(_s with { Arguments = _s.Arguments with { Muxer = v } }, false), "-reserve_index_space 50k"));
         if (p.IsDemux)
         {
             Children.Add(Ui.Toggle(L.T("Raw elementary streams (.h264, .aac…) instead of MKA/MKS wrappers"), s.Demux.Raw, v => Set(_s with { Demux = _s.Demux with { Raw = v } }, false)));
             Children.Add(Ui.Toggle(L.T("Extract attachments (fonts)"), s.Demux.Attachments, v => Set(_s with { Demux = _s.Demux with { Attachments = v } }, false)));
             Children.Add(Ui.Toggle(L.T("Extract chapters"), s.Demux.Chapters, v => Set(_s with { Demux = _s.Demux with { Chapters = v } }, false)));
         }
+    }
+
+    /// <summary>Short description of a rate control set by hand (quick panel).</summary>
+    private static string RateText(EncoderOverrides o) => o.RateControl switch
+    {
+        RateControl.Quality => L.T("Constant quality {0} (set in the editor)", o.QualityValue?.ToString("0.#", System.Globalization.CultureInfo.CurrentCulture) ?? "?"),
+        RateControl.Bitrate => L.T("{0} kb/s (set in the editor)", o.BitrateKbps ?? 0),
+        RateControl.TargetSize => L.T("Maximum {0} MB (set in the editor)", o.TargetSizeMB?.ToString("0.#", System.Globalization.CultureInfo.CurrentCulture) ?? "?"),
+        _ => "",
+    };
+
+    /// <summary>
+    /// The one place where the video quality is decided: a quality level (KnA's tuned values), a constant quality
+    /// value, an average bitrate, or a maximum file size (bitrates computed for every stream).
+    /// </summary>
+    private void RateControlBlock(JobSettings s, VideoCodec codec)
+    {
+        var o = s.Encoder;
+        bool rigaya = RigayaEncoders.Wanted(s);
+        var enc = rigaya ? RigayaEncoders.ToolId(s.Backend)! : VideoEncoders.EncoderName(codec, s.EffectiveBackend) ?? "";
+        var quality = rigaya ? RigayaEncoders.QualityOption(enc, codec) : VideoEncoders.QualityOption(enc);
+        void SetO(Func<EncoderOverrides, EncoderOverrides> f, bool rebuild = false) => Set(_s with { Encoder = f(_s.Encoder) }, rebuild);
+        var rc = new List<(RateControl, string)> { (RateControl.Auto, L.T("Quality level")) };
+        if (quality is { } qo) rc.Add((RateControl.Quality, L.T("Constant quality ({0})", qo.Label)));
+        rc.Add((RateControl.Bitrate, L.T("Average bitrate")));
+        rc.Add((RateControl.TargetSize, L.T("Maximum file size")));
+        var mode = o.RateControl == RateControl.Quality && quality is null ? RateControl.Auto : o.RateControl;
+        Children.Add(Ui.Field("Rate control", Ui.Combo(rc, mode, v => SetO(x => x with { RateControl = v }, true))));
+        switch (mode)
+        {
+            case RateControl.Auto:
+                Children.Add(Ui.Field("Quality", Ui.Combo(Enum.GetValues<QualityLevel>().Select(q => (q, q.Display())), s.Quality, v => Set(_s with { Quality = v })),
+                    L.T("KnA's tuned values for {0}: from best to smallest.", rigaya ? RigayaEncoders.DisplayName(s.Backend) : enc)));
+                break;
+            case RateControl.Quality when quality is { } q:
+                Children.Add(Ui.Field(L.T("{0} value ({1}–{2})", q.Label, q.Min, q.Max),
+                    Ui.Number(o.QualityValue ?? Math.Round((q.Min + q.Max) / 2.5), q.Min, q.Max, 0.5, v => SetO(x => x with { QualityValue = v })),
+                    enc == "vceencc" ? null : L.T("Lower = better and bigger.")));
+                break;
+            case RateControl.Bitrate:
+                Children.Add(Ui.Columns(
+                    Ui.Field("Bitrate (kb/s)", Ui.Number(o.BitrateKbps ?? 6000, 100, 500000, 100, v => SetO(x => x with { BitrateKbps = (int)v }), "0")),
+                    Ui.Field("Maximum (kb/s, 0 = none)", Ui.Number(o.MaxBitrateKbps ?? 0, 0, 1000000, 100, v => SetO(x => x with { MaxBitrateKbps = v > 0 ? (int)v : null }), "0"))));
+                break;
+            case RateControl.TargetSize:
+                var info = Ui.Muted(SizeInfo?.Invoke(s) ?? L.T("Audio, subtitles and the container are subtracted; the video gets the rest."));
+                Children.Add(Ui.Field("Maximum size (MB)", Ui.Number(o.TargetSizeMB ?? 4096, 1, 10_000_000, 50, v =>
+                {
+                    SetO(x => x with { TargetSizeMB = v }, false);
+                    info.Text = SizeInfo?.Invoke(_s) ?? info.Text;
+                }, "0.#"), L.T("As Windows counts it (1 MB = 1024 KB). KnA aims 3 % lower so one-pass encoders stay below.")));
+                Children.Add(info);
+                break;
+        }
+    }
+
+    /// <summary>A collapsible editor of every parameter of the program that runs for <paramref name="tool"/>.</summary>
+    private Control Params(string title, string? text, string tool, Action<string?> changed, string example, bool expanded = false)
+    {
+        var editor = new ParameterEditor(text, ct => ParameterOptions!(tool, _s, ct), changed, example);
+        if (expanded) return Ui.Field(title, editor);
+        return new Expander
+        {
+            Header = title + (string.IsNullOrWhiteSpace(text) ? "" : " ●"), Content = editor, IsExpanded = !string.IsNullOrWhiteSpace(text),
+            HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Stretch,
+        };
     }
 
     /// <summary>Hand-set encoder parameters: every field empty = KnA's values for the quality level.</summary>
@@ -269,18 +396,6 @@ public sealed class SettingsForm : StackPanel
         }
         box.Children.Add(Ui.Muted(L.T("Encoder: {0}. Empty fields keep KnA's values for the chosen quality.", rigaya ? RigayaEncoders.DisplayName(s.Backend) : enc)));
 
-        var rc = new List<(RateControl, string)> { (RateControl.Auto, L.T("From the quality level")) };
-        if (quality is { } qo) rc.Add((RateControl.Quality, L.T("Constant quality ({0})", qo.Label)));
-        rc.Add((RateControl.Bitrate, L.T("Average bitrate")));
-        box.Children.Add(Ui.Field("Rate control", Ui.Combo(rc, o.RateControl, v => SetO(x => x with { RateControl = v }, true))));
-        if (o.RateControl == RateControl.Quality && quality is { } q)
-            box.Children.Add(Ui.Field(L.T("{0} value ({1}–{2})", q.Label, q.Min, q.Max),
-                Ui.Number(o.QualityValue ?? Math.Round((q.Min + q.Max) / 2.5), q.Min, q.Max, 0.5, v => SetO(x => x with { QualityValue = v }))));
-        if (o.RateControl == RateControl.Bitrate)
-            box.Children.Add(Ui.Columns(
-                Ui.Field("Bitrate (kb/s)", Ui.Number(o.BitrateKbps ?? 6000, 100, 500000, 100, v => SetO(x => x with { BitrateKbps = (int)v }), "0")),
-                Ui.Field("Maximum (kb/s, 0 = none)", Ui.Number(o.MaxBitrateKbps ?? 0, 0, 1000000, 100, v => SetO(x => x with { MaxBitrateKbps = v > 0 ? (int)v : null }), "0"))));
-
         var speed = new List<(string?, string)> { (null, L.T("From the quality level")) };
         if (rigaya) speed.AddRange(RigayaEncoders.SpeedValues(enc).Select(v => ((string?)v, v)));
         else if (VideoEncoders.SpeedOption(enc) is { } so) speed.AddRange(so.Values.Select(v => ((string?)v, v)));
@@ -293,9 +408,14 @@ public sealed class SettingsForm : StackPanel
             Ui.Field("Keyframe every (s, 0 = auto)", Ui.Number(o.KeyframeSeconds ?? 0, 0, 60, 0.5, v => SetO(x => x with { KeyframeSeconds = v > 0 ? v : null }))),
             Ui.Field("B-frames (−1 = auto)", Ui.Number(o.BFrames ?? -1, -1, 16, 1, v => SetO(x => x with { BFrames = v >= 0 ? (int)v : null }), "0")),
             Ui.Field("Lookahead (frames, −1 = auto)", Ui.Number(o.Lookahead ?? -1, -1, 250, 1, v => SetO(x => x with { Lookahead = v >= 0 ? (int)v : null }), "0"))));
-        box.Children.Add(Ui.Field("Extra encoder options", Ui.Text(o.Extra, v => SetO(x => x with { Extra = Clean(v) }),
-                rigaya ? "--aq-temporal --bref-mode each" : "-x265-params psy-rd=2:aq-strength=0.8", mono: true),
-            rigaya ? L.T("{0} options (see its documentation), applied last.", RigayaEncoders.DisplayName(s.Backend)) : L.T("FFmpeg syntax, applied last (they replace KnA's values).")));
+        if (ParameterOptions is not null)
+            box.Children.Add(Params(L.T("All {0} parameters", rigaya ? RigayaEncoders.DisplayName(s.Backend) : enc), o.Extra,
+                KnA.Core.Queue.QueueService.ParameterTools.Video, v => SetO(x => x with { Extra = v }),
+                rigaya ? "--aq-temporal --bref-mode each" : "-x265-params psy-rd=2:aq-strength=0.8", expanded: true));
+        else
+            box.Children.Add(Ui.Field("Extra encoder options", Ui.Text(o.Extra, v => SetO(x => x with { Extra = Clean(v) }),
+                    rigaya ? "--aq-temporal --bref-mode each" : "-x265-params psy-rd=2:aq-strength=0.8", mono: true),
+                rigaya ? L.T("{0} options (see its documentation), applied last.", RigayaEncoders.DisplayName(s.Backend)) : L.T("FFmpeg syntax, applied last (they replace KnA's values).")));
         if (!o.IsEmpty)
             box.Children.Add(Ui.Button(L.T("Back to automatic"), () => Set(_s with { Encoder = new() })));
         return new Expander { Header = L.T("Advanced encoder") + (o.IsEmpty ? "" : " ●"), Content = box, IsExpanded = !o.IsEmpty, HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Stretch };

@@ -67,6 +67,10 @@ public class StreamBase
     public string? Title { get; init; }
     public bool IsDefault { get; init; }
     public bool IsForced { get; init; }
+    /// <summary>Bits per second (container statistics or the stream header), 0 = unknown.</summary>
+    public long BitRate { get; init; }
+    /// <summary>Bytes of the stream in the file (Matroska statistics), 0 = unknown.</summary>
+    public long SizeBytes { get; init; }
 }
 
 public sealed class VideoStream : StreamBase

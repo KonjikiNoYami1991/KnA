@@ -80,12 +80,23 @@ public class MainWindowTests
         // editor: every tab renders (trim loads thumbnails and frames through the preview service)
         var editor = new JobEditorWindow(queue, vm.Jobs[0].Job, "tracks") { Width = 1280, Height = 860 };
         editor.Show();
-        foreach (var (tab, wait) in new[] { ("tracks", 3000), ("trim", 9000), ("filters", 1500), ("output", 2500), ("preview", 6000) })
+        foreach (var (tab, wait) in new[] { ("tracks", 3000), ("trim", 9000), ("video", 3000), ("audio", 3000), ("subtitles", 1500), ("filters", 1500), ("output", 2500), ("preview", 6000) })
         {
             var tabs = editor.GetVisualDescendants().OfType<TabControl>().First();
             tabs.SelectedItem = tabs.Items.OfType<TabItem>().First(t => (string?)t.Tag == tab);
             await Pump(() => false, wait);
             Shot(editor, $"app-05-editor-{tab}.png");
+            if (tab == "video")
+            {
+                // the parameter editor of the encoder, with the options read from its help
+                foreach (var ex in editor.GetVisualDescendants().OfType<Expander>()) ex.IsExpanded = true;
+                await Pump(() => editor.GetVisualDescendants().OfType<ParameterEditor>().Any(), 5000);
+                var pe = editor.GetVisualDescendants().OfType<ParameterEditor>().FirstOrDefault();
+                Assert.NotNull(pe);
+                pe!.BringIntoView();
+                await Pump(() => false, 2500);
+                Shot(editor, "app-05-editor-video-parameters.png");
+            }
         }
         editor.Close();
 

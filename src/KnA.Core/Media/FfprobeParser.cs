@@ -59,6 +59,10 @@ public static class FfprobeParser
                     if (pid > 0) lang = Discs.DiscSource.BlurayLanguage(path, pid);
                 }
                 string? title = Tag(s, "title");
+                long bitRate = Long(s, "bit_rate");
+                if (bitRate <= 0 && Tag(s, "BPS") is { } bps) long.TryParse(bps, NumberStyles.Integer, CultureInfo.InvariantCulture, out bitRate);
+                long streamBytes = 0;
+                if (Tag(s, "NUMBER_OF_BYTES") is { } nb) long.TryParse(nb, NumberStyles.Integer, CultureInfo.InvariantCulture, out streamBytes);
 
                 switch (type)
                 {
@@ -84,7 +88,7 @@ public static class FfprobeParser
                         {
                             Kind = "video",
                             Index = index, CodecName = codec, Profile = profile, Language = lang, Title = title,
-                            IsDefault = isDefault, IsForced = isForced, IsAttachedPicture = isAttachedPic,
+                            IsDefault = isDefault, IsForced = isForced, IsAttachedPicture = isAttachedPic, BitRate = bitRate, SizeBytes = streamBytes,
                             Width = Int(s, "width"), Height = Int(s, "height"),
                             SampleAspectRatio = ParseRatio(Str(s, "sample_aspect_ratio")),
                             FrameRate = fps, FrameRateRational = frameRateRational, FrameCount = frames,
@@ -110,7 +114,7 @@ public static class FfprobeParser
                         {
                             Kind = "audio",
                             Index = index, CodecName = codec, Profile = profile, Language = lang, Title = title,
-                            IsDefault = isDefault, IsForced = isForced,
+                            IsDefault = isDefault, IsForced = isForced, BitRate = bitRate, SizeBytes = streamBytes,
                             Channels = Int(s, "channels"), ChannelLayout = Str(s, "channel_layout"),
                             SampleRate = Int(s, "sample_rate"),
                         });
@@ -126,7 +130,7 @@ public static class FfprobeParser
                         {
                             Kind = "subtitle",
                             Index = index, CodecName = codec, Profile = profile, Language = lang, Title = title,
-                            IsDefault = isDefault, IsForced = isForced,
+                            IsDefault = isDefault, IsForced = isForced, BitRate = bitRate, SizeBytes = streamBytes,
                         });
                         break;
                     case "attachment":

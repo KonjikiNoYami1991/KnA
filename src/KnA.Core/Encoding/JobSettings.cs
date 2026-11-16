@@ -116,6 +116,11 @@ public enum RateControl
     Quality,
     /// <summary>Average bitrate (VBR) with an optional maximum.</summary>
     Bitrate,
+    /// <summary>
+    /// Final file size: the video bitrate is what is left of the size once audio, subtitles and the container
+    /// overhead are counted (see <see cref="SizePlanner"/>).
+    /// </summary>
+    TargetSize,
 }
 
 /// <summary>Encoder parameters set by hand; empty fields keep KnA's choice for the quality level.</summary>
@@ -128,6 +133,8 @@ public sealed record EncoderOverrides
     public double? QualityValue { get; init; }
     public int? BitrateKbps { get; init; }
     public int? MaxBitrateKbps { get; init; }
+    /// <summary>Maximum size of the final file in MiB (what Windows Explorer calls MB), with <see cref="RateControl.TargetSize"/>.</summary>
+    public double? TargetSizeMB { get; init; }
     /// <summary>Encoder speed preset ("slow", "p5", "6"…), null = from the quality level.</summary>
     public string? Speed { get; init; }
     public string? Tune { get; init; }
@@ -142,6 +149,61 @@ public sealed record EncoderOverrides
     [JsonIgnore]
     public bool IsEmpty => Program == EncoderProgram.FFmpeg && RateControl == RateControl.Auto && Speed is null && Tune is null && KeyframeSeconds is null
                            && BFrames is null && Lookahead is null && string.IsNullOrWhiteSpace(Extra);
+}
+
+/// <summary>
+/// Parameters typed or picked by hand for the programs other than the video encoder (the video encoder's are in
+/// <see cref="EncoderOverrides.Extra"/>). Same syntax as on the command line ("-aac_coder twoloop", "--afterburner 1");
+/// FFmpeg options are applied to every audio / subtitle stream it encodes. Applied last: they win over KnA's values.
+/// </summary>
+public sealed record ToolArguments
+{
+    /// <summary>FFmpeg audio encoder options (aac, libopus, ac3, flac…).</summary>
+    public string? AudioFfmpeg { get; init; }
+    /// <summary>fdkaac options.</summary>
+    public string? Fdkaac { get; init; }
+    /// <summary>qaac options.</summary>
+    public string? Qaac { get; init; }
+    /// <summary>FFmpeg subtitle encoder options (ass, srt, mov_text, webvtt).</summary>
+    public string? Subtitles { get; init; }
+    /// <summary>Container (muxer) options ("-reserve_index_space 50k", "-movflags +faststart"…).</summary>
+    public string? Muxer { get; init; }
+
+    [JsonIgnore]
+    public bool IsEmpty => new[] { AudioFfmpeg, Fdkaac, Qaac, Subtitles, Muxer }.All(string.IsNullOrWhiteSpace);
+
+    /// <summary>"-opt value" pairs with a stream specifier added (-opt:a:2), for one output stream.</summary>
+    public static List<string> ForStream(string? text, char kind, int index)
+    {
+        var l = new List<string>();
+        foreach (var (opt, value) in VideoEncoders.ParseExtra(text ?? ""))
+        {
+            // An option written with its own specifier ("-b:a 96k") keeps it, the stream number is added.
+            var name = opt.Contains(':') ? opt + ":" + index.ToString(System.Globalization.CultureInfo.InvariantCulture)
+                                         : $"{opt}:{kind}:{index.ToString(System.Globalization.CultureInfo.InvariantCulture)}";
+            l.Add(name);
+            l.Add(value ?? "1");
+        }
+        return l;
+    }
+
+    /// <summary>Program options as separate arguments, values of the same option replacing KnA's ones.</summary>
+    public static List<string> Merge(IReadOnlyList<string> args, string? text, int insertAt)
+    {
+        var l = args.ToList();
+        foreach (var (opt, value) in VideoEncoders.ParseExtra(text ?? ""))
+        {
+            int i = l.IndexOf(opt);
+            if (i >= 0 && i < insertAt)
+            {
+                if (value is not null && i + 1 < l.Count && !l[i + 1].StartsWith('-')) l[i + 1] = value;
+                continue;
+            }
+            l.Insert(insertAt++, opt);
+            if (value is not null) l.Insert(insertAt++, value);
+        }
+        return l;
+    }
 }
 
 /// <summary>
@@ -236,6 +298,8 @@ public sealed record JobSettings
     public EncoderOverrides Encoder { get; init; } = new();
     /// <summary>Which source tracks the automatic plan keeps.</summary>
     public TrackRules TrackRules { get; init; } = new();
+    /// <summary>Hand-set parameters of the other programs (audio encoders, subtitles, container).</summary>
+    public ToolArguments Arguments { get; init; } = new();
     /// <summary>Name of the preset these settings came from (informative).</summary>
     public string? PresetName { get; init; }
 
@@ -252,7 +316,11 @@ public sealed record JobSettings
                 Pro = preset.Pro, Upscale = preset.Upscale, Encoder = preset.Encoder, Chunks = preset.Chunks, Images = preset.Images, Demux = preset.Demux,
             };
         if (parts.HasFlag(PresetParts.Audio))
-            r = r with { AudioCodec = preset.AudioCodec, AudioBitrate = preset.AudioBitrate, AudioFilters = preset.AudioFilters };
+            r = r with
+            {
+                AudioCodec = preset.AudioCodec, AudioBitrate = preset.AudioBitrate, AudioFilters = preset.AudioFilters,
+                Arguments = r.Arguments with { AudioFfmpeg = preset.Arguments.AudioFfmpeg, Fdkaac = preset.Arguments.Fdkaac, Qaac = preset.Arguments.Qaac },
+            };
         if (parts.HasFlag(PresetParts.Subtitles))
             r = r with { Subtitles = preset.Subtitles, UseSidecarSubtitles = preset.UseSidecarSubtitles };
         if (parts.HasFlag(PresetParts.Filters))

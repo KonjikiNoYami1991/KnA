@@ -61,8 +61,9 @@ public sealed class JobEditorWindow : Window
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
 
         bool trimOnly = tab == JobEditorTabs.TrimOnly;
-        string[] tabs = trimOnly ? ["trim"] : ["tracks", "trim", "filters", "output", "preview"];
-        string[] names = trimOnly ? [L.T("Trim")] : [L.T("Tracks"), L.T("Trim"), L.T("Filters"), L.T("Output"), L.T("Preview")];
+        // One tab per kind of stream: every setting appears in exactly one place.
+        string[] tabs = trimOnly ? ["trim"] : ["tracks", "trim", "video", "audio", "subtitles", "filters", "output", "preview"];
+        string[] names = trimOnly ? [L.T("Trim")] : [L.T("Tracks"), L.T("Trim"), L.T("Video"), L.T("Audio"), L.T("Subtitles"), L.T("Filters"), L.T("Output"), L.T("Preview")];
         if (trimOnly) { tab = "trim"; Title = L.T("Trim") + " — " + job.FileName + " — KnA"; _tabs.IsVisible = false; }
         for (int i = 0; i < tabs.Length; i++) _tabs.Items.Add(new TabItem { Header = names[i], Tag = tabs[i], FontSize = 15 });
         _tabs.SelectedIndex = Math.Max(0, Array.IndexOf(tabs, tab));
@@ -157,6 +158,9 @@ public sealed class JobEditorWindow : Window
         _body.Content = CurrentTab switch
         {
             "trim" => TrimTab(),
+            "video" => VideoTab(),
+            "audio" => AudioTab(),
+            "subtitles" => SubtitlesTab(),
             "filters" => FiltersTab(),
             "output" => OutputTab(),
             "preview" => PreviewTab(),
@@ -270,13 +274,11 @@ public sealed class JobEditorWindow : Window
             Head(0, L.T("Use")); Head(1, L.T("Source")); Head(2, L.T("Stream"));
             if (k != "attachment") { Head(3, L.T("Language")); Head(5, L.T("Delay (ms)")); }
             Head(4, k == "attachment" ? L.T("File name") : L.T("Title"));
-            if (outputs && k != "attachment") Head(6, L.T("Output"));
-            if (outputs && k == "audio") Head(7, "kb/s");
+            // What becomes of each audio/subtitle track (codec, bitrate, burning) is set in the Audio and Subtitles
+            // tabs: here only what the file contains and how the tracks are labelled.
+            if (outputs && k == "video") Head(6, L.T("Output"));
             if (k is "audio" or "subtitle") { Head(8, L.T("Default")); Head(9, L.T("Forced")); }
-            if (k == "subtitle" && p.UsesVideoFilters) Head(10, L.T("Burn"));
 
-            // Always there for subtitles (enabled while one is burned): a burn chosen later can be undone the same way.
-            var noBurn = new Button { Content = L.T("Don't burn any subtitle"), IsEnabled = rows.Any(x => x.t.Burn) };
             int r = 1;
             foreach (var (t, i) in rows)
             {
@@ -307,21 +309,11 @@ public sealed class JobEditorWindow : Window
                 var title = Ui.Text(t.Title, v => UpdateTrack(idx, x => x with { Title = string.IsNullOrEmpty(v) ? null : v }));
                 if (k == "attachment" && !standalone) title.IsReadOnly = true;   // attachments of the file keep their name
                 Put(title, 4);
-                if (outputs && k != "attachment")
+                if (outputs && k == "video")
                 {
-                    var combo = Ui.Combo(OutputChoices(k), t.Output, v => UpdateTrack(idx, x => x with { Output = v }, rerender: k == "audio"));
+                    var combo = Ui.Combo(OutputChoices(k), t.Output, v => UpdateTrack(idx, x => x with { Output = v }));
                     combo.MinWidth = 150;
                     Put(combo, 6);
-                }
-                if (outputs && k == "audio")
-                {
-                    bool copies = string.Equals(t.Output, nameof(AudioCodec.Copy), StringComparison.OrdinalIgnoreCase);
-                    var kbps = Ui.Number(t.Bitrate ?? 0, 0, 1536, 16, v => UpdateTrack(idx, x => x with { Bitrate = v > 0 ? (int)v : null }), "0");
-                    kbps.ShowButtonSpinner = false;
-                    kbps.Width = 80;
-                    kbps.IsEnabled = !copies;
-                    ToolTip.SetTip(kbps, L.T("Per stereo pair; 0 = job setting"));
-                    Put(kbps, 7);
                 }
                 if (k is "audio" or "subtitle")
                 {
@@ -334,19 +326,6 @@ public sealed class JobEditorWindow : Window
                         RenderTab(); Save();
                     }), 8);
                     Put(Ui.Check("", t.Forced, v => UpdateTrack(idx, x => x with { Forced = v })), 9);
-                }
-                if (k == "subtitle" && p.UsesVideoFilters)
-                {
-                    var rb = new RadioButton { GroupName = "burn" + _job.Id, IsChecked = t.Burn };
-                    rb.IsCheckedChanged += (_, _) =>
-                    {
-                        if (rb.IsChecked != true) return;
-                        var l = Materialize();
-                        for (int j = 0; j < l.Count; j++) if (l[j].Kind == "subtitle") l[j] = l[j] with { Burn = j == idx };
-                        noBurn.IsEnabled = true;
-                        Save();
-                    };
-                    Put(rb, 10);
                 }
                 var up = new Button { Content = "↑", Classes = { "ghost" } };
                 var down = new Button { Content = "↓", Classes = { "ghost" } };
@@ -379,17 +358,8 @@ public sealed class JobEditorWindow : Window
             }
             if (k == "audio" && !p.UsesAudio && !p.IsDemux) section.Children.Add(Ui.Note(L.T("This profile has no audio output.")));
             if (rows.Count > 0) section.Children.Add(grid);
-            if (k == "subtitle" && p.UsesVideoFilters && rows.Count > 0)
-            {
-                noBurn.HorizontalAlignment = HorizontalAlignment.Left;
-                noBurn.Click += (_, _) =>
-                {
-                    var l = Materialize();
-                    for (int j = 0; j < l.Count; j++) l[j] = l[j] with { Burn = false };
-                    RenderTab(); Save();
-                };
-                section.Children.Add(noBurn);
-            }
+            if (k is "audio" or "subtitle" && rows.Count > 0 && outputs)
+                section.Children.Add(Ui.Muted(k == "audio" ? L.T("Codec and bitrate of each track: Audio tab.") : L.T("Format of each track and burning into the picture: Subtitles tab.")));
             root.Children.Add(Ui.Card(section));
         }
         if (!p.IsKeyframes && !p.IsImages) root.Children.Add(Ui.Card(ChaptersSection()));
@@ -893,11 +863,136 @@ public sealed class JobEditorWindow : Window
 
     // ------------------------------------------------------------------ output
 
+    // ------------------------------------------------------------------ video / audio / subtitles
+
+    /// <summary>The settings form for one tab, wired to this job (size budget, program parameters).</summary>
+    private SettingsForm Form(FormSection section)
+    {
+        var form = new SettingsForm(_settings, () => _queue.Settings.Capabilities, full: true, () => _queue.Tools, section)
+        {
+            AllowedContainers = _a!.AllowedContainers,
+            SizeInfo = SizeText,
+            ParameterOptions = (tool, s, ct) => _queue.ParameterOptionsAsync(tool, s, ct),
+        };
+        form.Rebuild();   // the properties above are set after the constructor's first build
+        form.Changed += s => { _settings = s; Save(true); };
+        return form;
+    }
+
+    /// <summary>What a target size leaves for each stream of this file, with the current tracks and trim.</summary>
+    private string? SizeText(JobSettings s)
+    {
+        try
+        {
+            var ctx = KnA.Core.Queue.JobRunner.BuildContext(_job, _queue.Settings, _queue.Tools) with { Settings = s, Edit = _edit };
+            if (SizePlanner.For(ctx) is not { } b) return null;
+            var text = SizePlanner.Describe(b);
+            return b.TooSmall ? "⚠ " + text + "\n" + L.T("Too small for this duration: the video gets the minimum and the file will be bigger.") : text;
+        }
+        catch (Exception ex) when (ex is InvalidOperationException or NullReferenceException) { return null; }
+    }
+
+    private Control VideoTab()
+    {
+        var form = Form(FormSection.Video);
+        var info = new StackPanel { Spacing = 8 };
+        var v = _a!.Source.PrimaryVideo;
+        if (v is not null) info.Children.Add(Ui.Muted($"{L.T("Source")}: {v.CodecName} · {Details(v)}"));
+        info.Children.Add(Ui.Button(L.T("Encoder command"), async () =>
+        {
+            await SaveNowAsync(false);
+            var cmd = _a?.CommandLine ?? await _queue.PreviewCommandAsync(_job);
+            await TextWindow.ShowAsync(this, L.T("Encoder command"), cmd);
+        }));
+        info.Children.Add(Ui.Muted(L.T("Picture filters (crop, resize, denoise, VapourSynth/AviSynth scripts) are in the Filters tab; the cut in the Trim tab.")));
+        var g = Ui.Columns(form, Ui.Card(info));
+        g.ColumnSpacing = 20;
+        g.ColumnDefinitions[1].Width = new GridLength(320);
+        info.VerticalAlignment = VerticalAlignment.Top;
+        ((Control)g.Children[1]).VerticalAlignment = VerticalAlignment.Top;
+        return g;
+    }
+
+    /// <summary>Per-track codec choices of one kind (audio: codec + bitrate; subtitles: format + burning).</summary>
+    private Control PerTrack(string kind)
+    {
+        var list = Tracks;
+        var media = AllMedia();
+        var p = _settings.ProfileDefinition;
+        var rows = list.Select((t, i) => (t, i)).Where(x => x.t.Kind == kind).ToList();
+        var box = new StackPanel { Spacing = 6, Children = { Ui.H2(kind == "audio" ? L.T("Audio tracks") : L.T("Subtitle tracks")) } };
+        if (rows.Count == 0) { box.Children.Add(Ui.Muted(L.T("No tracks of this kind."))); return Ui.Card(box); }
+        bool outputs = p.EncodesVideo || p.IsRemux;
+        var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,*,190,90,Auto"), ColumnSpacing = 10, RowSpacing = 6 };
+        int r = 0;
+        foreach (var (t, i) in rows)
+        {
+            int idx = i;
+            grid.RowDefinitions.Add(new RowDefinition(GridLength.Auto));
+            void Put(Control c, int col) { Grid.SetRow(c, r); Grid.SetColumn(c, col); c.VerticalAlignment = VerticalAlignment.Center; grid.Children.Add(c); }
+            var st = TrackPlanner.Lookup(t, media);
+            Put(Ui.Check("", t.Include, v => UpdateTrack(idx, x => x with { Include = v }, rerender: true)), 0);
+            Put(new StackPanel
+            {
+                Children =
+                {
+                    new TextBlock { Text = $"#{t.Stream} {t.Codec ?? st?.CodecName} {t.Language}" + (t.Title is { Length: > 0 } ti ? $" · {ti}" : ""), FontWeight = FontWeight.SemiBold, TextTrimming = TextTrimming.CharacterEllipsis },
+                    Ui.Muted((t.File == _job.SourcePath ? "" : Path.GetFileName(t.File) + " · ") + Details(st), 11.5),
+                },
+                Opacity = t.Include || t.Burn ? 1 : 0.55,
+            }, 1);
+            if (outputs)
+            {
+                var combo = Ui.Combo(OutputChoices(kind), t.Output, v => UpdateTrack(idx, x => x with { Output = v }, rerender: kind == "audio"));
+                combo.IsEnabled = t.Include;
+                Put(combo, 2);
+            }
+            if (outputs && kind == "audio")
+            {
+                bool copies = string.Equals(t.Output, nameof(AudioCodec.Copy), StringComparison.OrdinalIgnoreCase);
+                var kbps = Ui.Number(t.Bitrate ?? 0, 0, 1536, 16, v => UpdateTrack(idx, x => x with { Bitrate = v > 0 ? (int)v : null }), "0");
+                kbps.ShowButtonSpinner = false;
+                kbps.IsEnabled = !copies && t.Include;
+                ToolTip.SetTip(kbps, L.T("kb/s per stereo pair; 0 = the setting below"));
+                Put(kbps, 3);
+            }
+            if (kind == "subtitle" && p.UsesVideoFilters)
+            {
+                var rb = new RadioButton { GroupName = "burn" + _job.Id, IsChecked = t.Burn, Content = L.T("Burn") };
+                rb.IsCheckedChanged += (_, _) =>
+                {
+                    if (rb.IsChecked != true) return;
+                    var l = Materialize();
+                    for (int j = 0; j < l.Count; j++) if (l[j].Kind == "subtitle") l[j] = l[j] with { Burn = j == idx };
+                    Save(true);
+                };
+                Put(rb, 4);
+            }
+            r++;
+        }
+        box.Children.Add(grid);
+        if (kind == "audio" && outputs)
+            box.Children.Add(Ui.Muted(L.T("\"Job setting\" follows the codec and bitrate chosen below for every track.")));
+        if (kind == "subtitle" && p.UsesVideoFilters && rows.Any(x => x.t.Burn))
+            box.Children.Add(Ui.Button(L.T("Don't burn any subtitle"), () =>
+            {
+                var l = Materialize();
+                for (int j = 0; j < l.Count; j++) l[j] = l[j] with { Burn = false };
+                Save(true);
+            }));
+        return Ui.Card(box);
+    }
+
+    private Control AudioTab() => new StackPanel { Spacing = 14, Children = { PerTrack("audio"), Form(FormSection.Audio), Ui.Muted(L.T("Volume, normalisation, downmix and sample rate: Filters tab.")) } };
+
+    private Control SubtitlesTab() => new StackPanel { Spacing = 14, Children = { PerTrack("subtitle"), Form(FormSection.Subtitles) } };
+
+    // ------------------------------------------------------------------ output
+
     private Control OutputTab()
     {
         var p = _settings.ProfileDefinition;
-        var form = new SettingsForm(_settings, () => _queue.Settings.Capabilities, full: true, () => _queue.Tools) { AllowedContainers = _a!.AllowedContainers };
-        form.Changed += s => { _settings = s; Save(true); };
+        var form = Form(FormSection.Output);
 
         var right = new StackPanel { Spacing = 14 };
         {

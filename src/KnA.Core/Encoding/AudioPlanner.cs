@@ -225,7 +225,7 @@ public static class AudioPlanner
     }
 
     /// <summary>Builds "-c:a:N …" options for output audio stream number <paramref name="outIndex"/>.</summary>
-    public static List<string> BuildArgs(AudioTrackPlan plan, int outIndex, AudioFilterSettings filters)
+    public static List<string> BuildArgs(AudioTrackPlan plan, int outIndex, AudioFilterSettings filters, string? extra = null)
     {
         string n = outIndex.ToString(CultureInfo.InvariantCulture);
         if (plan.IsCopy) return [$"-c:a:{n}", "copy"];
@@ -243,6 +243,7 @@ public static class AudioPlanner
         }
         if (AudioEncoderSet.IsExperimental(encoder)) l.AddRange([$"-strict:a:{n}", "experimental"]);
         if (FilterBuilder.Audio(filters, encoder, plan.Channels) is { } af) l.AddRange([$"-filter:a:{n}", af]);
+        if (!plan.IsExternal) l.AddRange(ToolArguments.ForStream(extra, 'a', outIndex));
         return l;
     }
 
@@ -250,22 +251,24 @@ public static class AudioPlanner
     /// qaac arguments (reads a WAV from stdin): constrained VBR at the planned bitrate (true VBR q91 without one),
     /// HE-AAC with --he. Apple's encoder: the best AAC there is, LC and HE.
     /// </summary>
-    public static List<string> QaacArgs(AudioTrackPlan plan, string output)
+    public static List<string> QaacArgs(AudioTrackPlan plan, string output, string? extra = null)
     {
         var l = new List<string> { "--ignorelength", "--silent", "--no-delay" };
         if (plan.HeAac) l.Add("--he");
         if (plan.Kbps is { } k) l.AddRange(["--cvbr", k.ToString(CultureInfo.InvariantCulture)]);
         else l.AddRange(["--tvbr", "91"]);
+        l = ToolArguments.Merge(l, extra, l.Count);
         l.AddRange(["-o", output, "-"]);
         return l;
     }
 
     /// <summary>fdkaac arguments (reads a WAV from stdin) for an external AAC track.</summary>
-    public static List<string> FdkaacArgs(AudioTrackPlan plan, string output)
+    public static List<string> FdkaacArgs(AudioTrackPlan plan, string output, string? extra = null)
     {
         var l = new List<string> { "--ignorelength", "-S", "-p", plan.HeAac ? "5" : "2" };
         if (plan.Kbps is { } k) l.AddRange(["-m", "0", "-b", (k * 1000).ToString(CultureInfo.InvariantCulture)]);
         else l.AddRange(["-m", "4"]);
+        l = ToolArguments.Merge(l, extra, l.Count);
         l.AddRange(["-o", output, "-"]);
         return l;
     }

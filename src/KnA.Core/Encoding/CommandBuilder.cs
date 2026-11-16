@@ -141,12 +141,14 @@ public static class CommandBuilder
 
     public static CompiledJob Compile(CompileContext ctx)
     {
+        if (ctx.Settings.ProfileDefinition is { IsKeyframes: true } or { IsDemux: true }) throw new InvalidOperationException("Use the dedicated builder for this profile.");
+        var issues = new List<ValidationIssue>();
+        // Target file size → average video bitrate (no-op when the job doesn't use it or it is already resolved).
+        if (ctx.Preview is null) ctx = SizePlanner.Resolve(ctx, issues);
         var s = ctx.Settings;
         var p = s.ProfileDefinition;
-        if (p.IsKeyframes || p.IsDemux) throw new InvalidOperationException("Use the dedicated builder for this profile.");
 
         var media = new Dictionary<string, MediaInfo>(ctx.Media) { [ctx.Source.Path] = ctx.Source };
-        var issues = new List<ValidationIssue>();
         var tracks = ctx.Edit.Tracks ?? TrackPlanner.Default(ctx.Source, s);
         var preview = ctx.Preview;
         var chunk = ctx.Chunk;
@@ -453,7 +455,7 @@ public static class CommandBuilder
                 else
                 {
                     body.AddRange(["-map", AudioInput(t, ast, inputs, ctx)]);
-                    body.AddRange(AudioPlanner.BuildArgs(aplan, audioOut, s.AudioFilters));
+                    body.AddRange(AudioPlanner.BuildArgs(aplan, audioOut, s.AudioFilters, s.Arguments.AudioFfmpeg));
                 }
                 if (container == "mxf" && !aplan.IsCopy) body.AddRange([$"-ar:a:{audioOut.ToString(CultureInfo.InvariantCulture)}", "48000"]); // MXF: 48 kHz only
                 body.AddRange(StreamMetadata(outIndex, t));
@@ -480,6 +482,7 @@ public static class CommandBuilder
                     continue;
                 }
                 body.AddRange(["-map", $"{inputs.Get(t.File, t.DelaySeconds)}:{t.Stream}", $"-c:s:{subOut}", codec]);
+                if (codec != "copy") body.AddRange(ToolArguments.ForStream(s.Arguments.Subtitles, 's', subOut));
                 body.AddRange(StreamMetadata(outIndex, t));
                 subOut++;
                 outIndex++;
@@ -624,6 +627,7 @@ public static class CommandBuilder
             case "mxf": a2.AddRange(["-f", "mxf"]); break;
         }
         a2.AddRange(ctx.Options.ExtraArguments);
+        if (!p.IsImages) foreach (var (opt, value) in VideoEncoders.ParseExtra(s.Arguments.Muxer ?? "")) { a2.Add(opt); if (value is not null) a2.Add(value); }
         a2.AddRange(ProgressArgs);
 
         string output;

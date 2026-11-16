@@ -188,6 +188,8 @@ public static class JobRunner
     /// </summary>
     private static async Task<int> RunSegmentsAsync(QueueJob job, RunnerContext ctx, CompileContext cc, CompiledJob full, string workDir, CancellationToken ct)
     {
+        // The size target is for the whole file: resolved before the parts change the trim (and so the duration).
+        cc = SizePlanner.Resolve(cc);
         var parts = job.Edit.KeptParts(job.Media!.Duration.TotalSeconds);
         var ext = full.Container is "mp4" or "mov" or "mkv" or "webm" or "avi" or "ts" or "mxf" ? full.Container : "mkv";
         var files = new List<string>();
@@ -379,7 +381,7 @@ public static class JobRunner
             ff.AddRange([.. KnA.Core.Media.Discs.DiscSource.InputArgs(input), "-map", $"0:{index}", "-vn", "-ac", plan.Channels.ToString(System.Globalization.CultureInfo.InvariantCulture)]);
             if (FilterBuilder.Audio(cc.Settings.AudioFilters, "fdkaac", plan.Channels) is { } af) ff.AddRange(["-af", af]);
             ff.AddRange(["-c:a", "pcm_s16le", "-f", "wav", "-"]);
-            var args = useQaac ? AudioPlanner.QaacArgs(plan, output) : AudioPlanner.FdkaacArgs(plan, output);
+            var args = useQaac ? AudioPlanner.QaacArgs(plan, output, cc.Settings.Arguments.Qaac) : AudioPlanner.FdkaacArgs(plan, output, cc.Settings.Arguments.Fdkaac);
             job.AppendLog($"{toolName}: {Path.GetFileName(input)} #{index} → AAC{(plan.HeAac ? " HE" : "")} {plan.Kbps}k {plan.Channels}ch");
             job.AppendLog("  " + new EncodePlan(ff, "-").CommandLine(ctx.Tools.Ffmpeg) + " | " + new EncodePlan(args, output).CommandLine(tool));
             try { await PipeAsync(ctx, ff, tool, args, ct); }
@@ -387,7 +389,7 @@ public static class JobRunner
             {
                 // qaac failed (CoreAudioToolbox missing or broken): fdkaac (libfdk_aac) takes over.
                 job.AppendLog("Warning: qaac failed (" + ex.Message + "), fdkaac is used instead.");
-                await PipeAsync(ctx, ff, fallback, AudioPlanner.FdkaacArgs(plan, output), ct);
+                await PipeAsync(ctx, ff, fallback, AudioPlanner.FdkaacArgs(plan, output, cc.Settings.Arguments.Fdkaac), ct);
             }
             catch (InvalidOperationException ex) when (plan.HeAac && ex.Message.Contains("unsupported profile", StringComparison.OrdinalIgnoreCase))
             {
@@ -395,7 +397,7 @@ public static class JobRunner
                 var lc = plan with { HeAac = false, Kbps = Math.Max(96, (plan.Kbps ?? 64) * 2) };
                 job.AppendLog("Warning: this fdkaac has no HE-AAC, AAC-LC is used.");
                 job.Issues = [.. job.Issues, Containers.Warning("This fdkaac has no HE-AAC: AAC-LC was used.")];
-                await PipeAsync(ctx, ff, tool, AudioPlanner.FdkaacArgs(lc, output), ct);
+                await PipeAsync(ctx, ff, tool, AudioPlanner.FdkaacArgs(lc, output, cc.Settings.Arguments.Fdkaac), ct);
             }
             if (!File.Exists(output) || new FileInfo(output).Length == 0) throw new InvalidOperationException(toolName + " produced no output.");
             result[$"{t.File}|{t.Stream}"] = output;

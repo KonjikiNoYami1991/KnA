@@ -92,6 +92,53 @@ public sealed class QueueService : IDisposable
         return Tools;
     }
 
+    /// <summary>Programs whose parameters can be set by hand, for the parameter editors.</summary>
+    public static class ParameterTools
+    {
+        public const string Video = "video", Audio = "audio", Fdkaac = "fdkaac", Qaac = "qaac", Subtitles = "subtitles", Muxer = "muxer";
+    }
+
+    /// <summary>
+    /// Every option of the program that will run for <paramref name="tool"/> with these settings, read from its help:
+    /// the video encoder (FFmpeg encoder or NVEncC/QSVEncC/VCEEncC), the FFmpeg audio encoder, fdkaac, qaac, the
+    /// subtitle encoder, the muxer. Returns the program's name too ("libx265", "NVEncC"…).
+    /// </summary>
+    public async Task<(string Program, IReadOnlyList<ToolOption> Options)> ParameterOptionsAsync(string tool, JobSettings s, CancellationToken ct = default)
+    {
+        var t = Tools ?? throw new InvalidOperationException(L.T("FFmpeg was not found. Configure it in Settings."));
+        switch (tool)
+        {
+            case ParameterTools.Video when RigayaEncoders.Wanted(s) && JobRunner.RigayaFor(t).GetValueOrDefault(s.Backend) is { } exe:
+                return (RigayaEncoders.DisplayName(s.Backend), await ToolHelp.ProgramAsync(exe, ct));
+            case ParameterTools.Video:
+            {
+                var enc = Settings.Capabilities?.Resolve(s.EffectiveCodec, s.EffectiveBackend, s.EffectiveTenBit)?.Encoder
+                          ?? VideoEncoders.EncoderName(s.EffectiveCodec, s.EffectiveBackend) ?? "libx264";
+                return (enc, await ToolHelp.FfmpegEncoderAsync(t.Ffmpeg, enc, 'V', ct));
+            }
+            case ParameterTools.Audio:
+            {
+                var set = JobRunner.AudioEncodersFor(Settings.Capabilities, t);
+                var codec = s.AudioCodec is AudioCodec.Auto or AudioCodec.Copy ? AudioCodec.Aac : s.AudioCodec;
+                var enc = set.Best(codec) is { } b && !b.StartsWith("fdkaac", StringComparison.Ordinal) && b != AudioEncoderSet.Qaac ? b : "aac";
+                return (enc, await ToolHelp.FfmpegEncoderAsync(t.Ffmpeg, enc, 'A', ct));
+            }
+            case ParameterTools.Fdkaac when t.Fdkaac is { } fdk: return ("fdkaac", await ToolHelp.ProgramAsync(fdk, ct));
+            case ParameterTools.Qaac when t.Qaac is { } qaac: return ("qaac", await ToolHelp.ProgramAsync(qaac, ct));
+            case ParameterTools.Subtitles:
+            {
+                var enc = s.EffectiveContainer is "mp4" or "mov" ? "mov_text" : s.EffectiveContainer == "webm" ? "webvtt" : "ass";
+                return (enc, await ToolHelp.FfmpegEncoderAsync(t.Ffmpeg, enc, 'S', ct));
+            }
+            case ParameterTools.Muxer:
+            {
+                var mux = s.EffectiveContainer switch { "mkv" => "matroska", "ts" => "mpegts", var c => c };
+                return (mux, await ToolHelp.FfmpegMuxerAsync(t.Ffmpeg, mux, ct));
+            }
+            default: return (tool, []);
+        }
+    }
+
     public void SaveSettings(AppSettings? settings = null)
     {
         if (settings is not null) Settings = settings;
