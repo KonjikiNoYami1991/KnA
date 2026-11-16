@@ -158,7 +158,7 @@ public sealed record SettingsUpdate(
     int? StallTimeoutMinutes = null, int? KeepLogs = null, string? TempDirectory = null,
     List<string>? CustomFfmpegBuilds = null, Dictionary<string, string>? ToolPaths = null, string? FfmpegChannel = null,
     bool? DiscAllTitles = null, int? DiscMinMinutes = null, KnA.Core.Ai.AiSettings? Ai = null,
-    HardwareDecoding? HardwareDecoding = null, bool? ResumableEncoding = null);
+    HardwareDecoding? HardwareDecoding = null, bool? ResumableEncoding = null, string? AfterJobCommand = null, string? AfterQueueCommand = null);
 
 public sealed record UploadCreate(string Name, long Size, string? Folder);
 public sealed record UploadComplete(bool Enqueue, JobSettings? Settings, string? Preset, Guid? AttachTo, string? AttachToSource = null);

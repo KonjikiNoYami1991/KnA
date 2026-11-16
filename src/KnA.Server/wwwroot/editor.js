@@ -639,11 +639,19 @@ function renderVideo(body) {
   body.innerHTML = `<div class="two-col"><div id="sec-form"></div>
     <div><div class="section"><p class="muted small">${esc(t("Source"))}: ${esc(streamInfo(tracks().find(x => x.kind === "video"))?.details ?? "")}</p>
       <button class="btn sm" data-a="cmd"><svg><use href="#i-term"/></svg><span>${esc(t("Encoder command"))}</span></button>
+      <button class="btn sm" data-a="estimate">${esc(t("Estimate the final size"))}</button>
+      <p class="muted small" id="estimate">${esc(t("Encodes a few seconds in several places with these settings and predicts the final size."))}</p>
       <p class="muted small">${esc(t("Picture filters (crop, resize, denoise, VapourSynth/AviSynth scripts) are in the Filters tab; the cut in the Trim tab."))}</p></div></div></div>`;
   renderSettingsForm($("#sec-form", body), ed.settings, formOpts("video"));
   body.onchange = null;
   body.onclick = guard(async e => {
     if (e.target.closest("[data-a=cmd]")) { await saveNow(); showText(t("Encoder command"), await api("GET", `/api/jobs/${ed.id}/command`)); }
+    if (e.target.closest("[data-a=estimate]")) {
+      await saveNow();
+      $("#estimate").textContent = t("Encoding samples…");
+      const r = await api("POST", `/api/jobs/${ed.id}/estimate`, { settings: ed.settings, edit: ed.edit });
+      if ($("#estimate")) $("#estimate").textContent = r.text;
+    }
   });
 }
 

@@ -13,6 +13,14 @@ if (args is ["--bundle", var bundleRoot, var bundleIds])
     return await ComponentManager.BundleAsync(Path.GetFullPath(bundleRoot),
         bundleIds.Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries), Console.Out);
 
+// Headless encoding (scripts, scheduled tasks): KnA-server --encode <files> [--preset …] — see --help-cli.
+if (KnA.Core.Queue.CommandLine.Handles(args))
+{
+    using var cliCts = new CancellationTokenSource();
+    Console.CancelKeyPress += (_, e) => { e.Cancel = true; cliCts.Cancel(); };
+    return await KnA.Core.Queue.CommandLine.RunAsync(args, Console.Out, cliCts.Token);
+}
+
 var builder = WebApplication.CreateBuilder(new WebApplicationOptions
 {
     Args = args,
@@ -300,6 +308,17 @@ app.MapPost("/api/jobs/{id:guid}/size", (Guid id, SizeRequest req) =>
         ? Results.Ok(new { text = SizePlanner.Describe(b), b.VideoKbps, b.TooSmall })
         : Results.Ok(new { text = (string?)null, VideoKbps = 0, TooSmall = false });
 });
+// Compressibility check: short samples encoded with these settings predict the final size.
+app.MapPost("/api/jobs/{id:guid}/estimate", async (Guid id, SizeRequest req, CancellationToken ct) =>
+{
+    var j = queue.Find(id) ?? throw new KeyNotFoundException();
+    try
+    {
+        var e = await SizeEstimator.EstimateAsync(queue, j, req.Settings, req.Edit ?? j.Edit, ct: ct);
+        return Results.Ok(new { text = e.Describe(), e.Bytes });
+    }
+    catch (InvalidOperationException ex) { return Results.Ok(new { text = ex.Message, Bytes = 0L }); }
+});
 app.MapPut("/api/jobs/{id:guid}/edit", async (Guid id, EditRequest req, CancellationToken ct) =>
 {
     var j = queue.Find(id) ?? throw new KeyNotFoundException();
@@ -400,6 +419,9 @@ app.MapPut("/api/settings", (SettingsUpdate u) =>
     {
         if (u.FfmpegPath is not null) s.FfmpegPath = u.FfmpegPath.Length == 0 ? null : u.FfmpegPath;
         if (u.ExtraArguments is not null) s.ExtraArguments = u.ExtraArguments;
+        // They run programs on the server: advanced only, like the paths above.
+        if (u.AfterJobCommand is not null) s.AfterJobCommand = u.AfterJobCommand;
+        if (u.AfterQueueCommand is not null) s.AfterQueueCommand = u.AfterQueueCommand;
         if (u.CustomFfmpegBuilds is not null) s.CustomFfmpegBuilds = u.CustomFfmpegBuilds.Where(x => !string.IsNullOrWhiteSpace(x)).Select(x => x.Trim()).Distinct().ToList();
         if (u.ToolPaths is not null)
             s.ToolPaths = u.ToolPaths.Where(kv => ToolIds.All.Contains(kv.Key) && !string.IsNullOrWhiteSpace(kv.Value)).ToDictionary(kv => kv.Key, kv => kv.Value.Trim());

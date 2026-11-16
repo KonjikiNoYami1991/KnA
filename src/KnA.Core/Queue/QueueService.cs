@@ -486,6 +486,13 @@ public sealed class QueueService : IDisposable
                     next.Message = ex.Message;
                     JobChanged?.Invoke(next);
                 }
+                if (!ct.IsCancellationRequested && !string.IsNullOrWhiteSpace(Settings.AfterJobCommand))
+                {
+                    var cmd = QueueEvents.Expand(Settings.AfterJobCommand, next);
+                    var (exit, output) = await QueueEvents.RunAsync(cmd, next.Folder, ct: ct);
+                    next.AppendLog($"After-job command (exit {exit}): {cmd}" + (output.Length > 0 ? "\n" + output : ""));
+                    JobChanged?.Invoke(next);
+                }
             }
         }
         finally
@@ -494,6 +501,15 @@ public sealed class QueueService : IDisposable
             IsPaused = false;
             _running = false;
             QueueChanged?.Invoke();
+            if (completed && !string.IsNullOrWhiteSpace(Settings.AfterQueueCommand))
+            {
+                List<QueueJob> all;
+                lock (_lock) all = [.. _jobs];
+                var cmd = QueueEvents.Expand(Settings.AfterQueueCommand, null,
+                    all.Count(j => j.Status is JobStatus.Done or JobStatus.Warning), all.Count(j => j.Status == JobStatus.Error));
+                var (exit, output) = await QueueEvents.RunAsync(cmd);
+                Store.WriteEventLog($"After-queue command (exit {exit}): {cmd}" + (output.Length > 0 ? "\n" + output : ""));
+            }
             if (completed) QueueCompleted?.Invoke(Settings.PostAction);
         }
     }

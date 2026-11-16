@@ -432,6 +432,10 @@ $("#btn-settings").onclick = guard(async () => {
   $("#s-resumable").checked = s.resumableEncoding !== false;
   $("#s-ffmpeg").value = s.ffmpegPath ?? "";
   $("#s-extra").value = s.extraArguments ?? "";
+  $("#s-afterjob").value = s.afterJobCommand ?? "";
+  $("#s-afterqueue").value = s.afterQueueCommand ?? "";
+  $("#s-afterjob-note").textContent = t("Macros: {0}. Its output goes to the job's log; a failure never stops the queue.",
+    "{source} {name} {folder} {output} {outputfolder} {status} {message} {duration} {size} {date} {time}");
   $("#s-temp").value = s.tempDirectory ?? "";
   const info = await api("GET", "/api/info");
   state.advancedAllowed = info.advancedAllowed;
@@ -563,6 +567,7 @@ $("#btn-save-settings").onclick = guard(async () => {
   };
   if (state.advancedAllowed) Object.assign(body, {
     ffmpegPath: $("#s-ffmpeg").value.trim(), extraArguments: $("#s-extra").value, tempDirectory: $("#s-temp").value.trim(),
+    afterJobCommand: $("#s-afterjob").value.trim(), afterQueueCommand: $("#s-afterqueue").value.trim(),
     customFfmpegBuilds: $("#s-builds").value.split("\n").map(x => x.trim()).filter(Boolean),
     toolPaths: Object.fromEntries($$("#s-toolpaths input").map(i => [i.dataset.tool, i.value.trim()]).filter(([, v]) => v)),
   });

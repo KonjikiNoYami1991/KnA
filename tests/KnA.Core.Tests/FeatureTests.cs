@@ -551,3 +551,38 @@ public class FrameserverTests(FeatureFixture fx) : IClassFixture<FeatureFixture>
         Assert.Equal("aac", Assert.Single(m.Audio).CodecName);   // audio from the file
     }
 }
+
+public class EstimateAndEventsTests(FeatureFixture fx) : IClassFixture<FeatureFixture>
+{
+    [Fact]
+    public async Task Size_is_estimated_from_samples_and_events_run_after_each_job()
+    {
+        if (fx.Tools is null) return;
+        var src = Path.Combine(fx.Dir, "estimate.mkv");
+        var r = await ProcessRunner.RunAsync(fx.Tools.Ffmpeg, ["-hide_banner", "-v", "error", "-y", "-f", "lavfi", "-i", "testsrc2=size=640x360:rate=25:duration=30",
+            "-f", "lavfi", "-i", "sine=duration=30", "-c:v", "libx264", "-preset", "ultrafast", "-c:a", "aac", src]);
+        Assert.Equal(0, r.ExitCode);
+        var store = new SettingsStore(Path.Combine(fx.Dir, "data-estimate"));
+        using var q = new QueueService(store, restoreQueue: false);
+        var marker = Path.Combine(fx.Dir, "after-job.txt");
+        q.Settings.AfterJobCommand = OperatingSystem.IsWindows() ? $"echo {{status}} > \"{marker}\"" : $"echo {{status}} {{name}} > '{marker}'";
+        var s = new JobSettings { Profile = ProfileKind.Streaming, Codec = VideoCodec.H264, Quality = QualityLevel.Normal, Resolution = 360, Subtitles = SubtitleMode.None };
+        var job = Assert.Single(q.AddPaths([src], s));
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        while (job.Media is null && sw.Elapsed < TimeSpan.FromSeconds(30)) await Task.Delay(50);
+
+        var est = await SizeEstimator.EstimateAsync(q, job, job.Settings, job.Edit);
+        Assert.True(est.Samples >= 1 && est.Bytes > 0, est.Describe());
+
+        var done = new TaskCompletionSource();
+        q.QueueChanged += () => { if (!q.IsRunning) done.TrySetResult(); };
+        q.Start();
+        await done.Task.WaitAsync(TimeSpan.FromMinutes(3));
+        Assert.True(job.Status is JobStatus.Done or JobStatus.Warning, job.Message + "\n" + job.Log);
+        long real = new FileInfo(job.OutputPath!).Length;
+        // a short sampled estimate: same order of magnitude as the real file
+        Assert.InRange((double)est.Bytes / real, 0.4, 2.5);
+        Assert.Contains("estimate", File.ReadAllText(marker));
+        Assert.Contains("After-job command (exit 0)", job.Log);
+    }
+}

@@ -57,6 +57,10 @@ public sealed class AppSettings
     public string? OutputDirectory { get; set; }
     public JobSettings Defaults { get; set; } = new();
     public PostQueueAction PostAction { get; set; } = PostQueueAction.Nothing;
+    /// <summary>Command run after every job (macros: see <see cref="Queue.QueueEvents"/>); empty = none.</summary>
+    public string AfterJobCommand { get; set; } = "";
+    /// <summary>Command run when the queue has finished ({done}, {failed}); empty = none.</summary>
+    public string AfterQueueCommand { get; set; } = "";
     /// <summary>"System", "Light" or "Dark".</summary>
     public string Theme { get; set; } = "System";
     public List<string> FolderExtensions { get; set; } = [.. MediaExtensions.Video];
@@ -172,6 +176,14 @@ public sealed class SettingsStore
         var path = Path.Combine(LogsDirectory, $"crash-{DateTime.Now:yyyyMMdd-HHmmss}.log");
         try { File.WriteAllText(path, $"KnA {Queue.AppInfo.Version} ({where})\n{RuntimeInformationText()}\n\n{ex}"); } catch (IOException) { }
         return path;
+    }
+
+    /// <summary>Appends a line to logs/events.log (after-queue commands and other queue-level events).</summary>
+    public void WriteEventLog(string text)
+    {
+        try { File.AppendAllText(Path.Combine(LogsDirectory, "events.log"), $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] {text}\n"); }
+        catch (IOException) { }
+        catch (UnauthorizedAccessException) { }
     }
 
     private static string RuntimeInformationText() =>

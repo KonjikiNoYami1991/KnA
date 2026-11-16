@@ -279,6 +279,10 @@
       <section data-pane="advanced" hidden>
         <label class="field"><span data-i18n>FFmpeg path</span><input id="s-ffmpeg" data-i18n-ph="Auto-detect"></label>
         <label class="field"><span data-i18n>Extra FFmpeg arguments</span><input id="s-extra" class="mono" placeholder="-x265-params …"></label>
+        <label class="field"><span data-i18n>Command after each job</span><input id="s-afterjob" class="mono" placeholder="rsync -a {output} nas:/film/">
+          <small class="muted" id="s-afterjob-note"></small></label>
+        <label class="field"><span data-i18n>Command when the queue has finished</span><input id="s-afterqueue" class="mono" placeholder='curl -d "KnA: {done} done, {failed} failed" ntfy.sh/my-topic'>
+          <small class="muted" data-i18n>Macros: {done} {failed} {date} {time}. Logged in logs/events.log.</small></label>
         <label class="field"><span data-i18n>Temporary folder</span><input id="s-temp" data-i18n-ph="Data folder">
           <small class="muted" data-i18n>Subtitles, fonts, HDR metadata and previews. A fast SSD helps.</small></label>
         <label class="field"><span data-i18n>Custom FFmpeg builds (one per line)</span>

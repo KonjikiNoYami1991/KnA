@@ -899,6 +899,22 @@ public sealed class JobEditorWindow : Window
             var cmd = _a?.CommandLine ?? await _queue.PreviewCommandAsync(_job);
             await TextWindow.ShowAsync(this, L.T("Encoder command"), cmd);
         }));
+        // Compressibility check: a few short samples encoded exactly as the job will be predict the final size.
+        var estimate = Ui.Muted(L.T("Encodes a few seconds in several places with these settings and predicts the final size."));
+        info.Children.Add(Ui.Button(L.T("Estimate the final size"), async () =>
+        {
+            await SaveNowAsync(false);
+            estimate.Text = L.T("Encoding samples…");
+            try
+            {
+                var settings = _settings; var edit = _edit;
+                var e = await Task.Run(() => KnA.Core.Queue.SizeEstimator.EstimateAsync(_queue, _job, settings, edit, ct: _previewCts.Token));
+                estimate.Text = e.Describe();
+            }
+            catch (OperationCanceledException) { }
+            catch (Exception ex) { estimate.Text = ex.Message; }
+        }));
+        info.Children.Add(estimate);
         info.Children.Add(Ui.Muted(L.T("Picture filters (crop, resize, denoise, VapourSynth/AviSynth scripts) are in the Filters tab; the cut in the Trim tab.")));
         var g = Ui.Columns(form, Ui.Card(info));
         g.ColumnSpacing = 20;

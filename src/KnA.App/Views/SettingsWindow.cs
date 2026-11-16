@@ -24,6 +24,7 @@ public sealed class SettingsWindow : Window
     private string _language, _theme, _template;
     private string? _output, _ffmpeg, _vaapi, _temp;
     private string _extra;
+    private string _afterJob, _afterQueue;
     private bool _checkUpdates, _restoreQueue, _confirmClose;
     private ProcessPriority _priority;
     private HardwareDecoding _hwDecode;
@@ -46,7 +47,7 @@ public sealed class SettingsWindow : Window
         _watchService = watch;
         _s = queue.Settings;
         _language = _s.Language; _theme = _s.Theme; _template = _s.OutputNameTemplate;
-        _output = _s.OutputDirectory; _ffmpeg = _s.FfmpegPath; _vaapi = _s.VaapiDevice; _temp = _s.TempDirectory; _extra = _s.ExtraArguments;
+        _output = _s.OutputDirectory; _ffmpeg = _s.FfmpegPath; _vaapi = _s.VaapiDevice; _temp = _s.TempDirectory; _extra = _s.ExtraArguments; _afterJob = _s.AfterJobCommand; _afterQueue = _s.AfterQueueCommand;
         _checkUpdates = _s.CheckUpdatesOnStart; _restoreQueue = _s.RestoreQueue; _confirmClose = _s.ConfirmOnClose;
         _priority = _s.Priority; _hwDecode = _s.HardwareDecoding; _resumable = _s.ResumableEncoding; _post = _s.PostAction; _stall = _s.StallTimeoutMinutes; _keepLogs = _s.KeepLogs;
         _extensions = [.. _s.FolderExtensions];
@@ -251,6 +252,10 @@ public sealed class SettingsWindow : Window
             Ui.Field("Companion programs", Ui.Columns(toolGrid.Take(3).ToArray())),
             Ui.Columns(toolGrid.Skip(3).ToArray()),
             Ui.Field("Extra FFmpeg arguments", Ui.Text(_extra, v => _extra = v, "-x265-params …", mono: true)),
+            Ui.Field("Command after each job", Ui.Text(_afterJob, v => _afterJob = v, OperatingSystem.IsWindows() ? "copy {output} \\\\nas\\film" : "rsync -a {output} nas:/film/", mono: true),
+                L.T("Macros: {0}. Its output goes to the job's log; a failure never stops the queue.", string.Join(" ", KnA.Core.Queue.QueueEvents.Macros.Select(m => m.Macro)))),
+            Ui.Field("Command when the queue has finished", Ui.Text(_afterQueue, v => _afterQueue = v, "curl -d \"KnA: {done} done, {failed} failed\" ntfy.sh/my-topic", mono: true),
+                L.T("Macros: {done} {failed} {date} {time}. Logged in logs/events.log.")),
             Ui.Field("Temporary folder", WithBrowse(temp, true), L.T("Subtitles, fonts, HDR metadata and previews. A fast SSD helps.")),
             Ui.Card(tools));
     }
@@ -479,6 +484,8 @@ public sealed class SettingsWindow : Window
         s.VaapiDevice = _vaapi;
         s.FfmpegPath = _ffmpeg;
         s.ExtraArguments = _extra;
+        s.AfterJobCommand = _afterJob ?? "";
+        s.AfterQueueCommand = _afterQueue ?? "";
         s.TempDirectory = _temp;
         s.SendToPresets = [.. _sendTo];
         s.DiscAllTitles = _discAll;
