@@ -240,6 +240,60 @@ jobs:
             KnA-*.zip
             KnA-*.tar.gz
 
+  # ---------------------------------------------------------------- Docker image (ghcr.io/<owner>/kna)
+  # Each architecture on its own runner (no emulation), then one multi-arch tag. ":<version>" now; ":latest"
+  # follows when the draft release is published (docker-latest.yml), so nobody pulls an unreleased version.
+  docker:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-24.04, arch: amd64 }
+          - { os: ubuntu-24.04-arm, arch: arm64 }
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+      - name: Image name
+        run: echo "IMAGE=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/kna" >> "$GITHUB_ENV"
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/${{ matrix.arch }}
+          push: true
+          provenance: false
+          tags: ${{ env.IMAGE }}:${{ env.TAG }}-${{ matrix.arch }}
+          labels: |
+            org.opencontainers.image.source=https://github.com/${{ github.repository }}
+            org.opencontainers.image.version=${{ env.TAG }}
+            org.opencontainers.image.title=KnA - Konjiki no Autoencoder
+
+  docker-manifest:
+    needs: docker
+    runs-on: ubuntu-24.04
+    permissions:
+      packages: write
+    steps:
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+      - name: Multi-arch tag
+        run: |
+          IMAGE=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/kna
+          V=${TAG#v}
+          docker buildx imagetools create -t "$IMAGE:$V" "$IMAGE:$TAG-amd64" "$IMAGE:$TAG-arm64"
+
   release:
     needs: [fdkaac, build]
     if: ${{ !cancelled() && needs.build.result == 'success' }}

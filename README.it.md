@@ -279,19 +279,36 @@ curl -fsSL https://raw.githubusercontent.com/KonjikiNoYami1991/KnA/master/deploy
 Si aggiorna con `kna-update`. I due script, la modalità senza domande e i permessi dei bind mount sono spiegati in
 **[docs/PROXMOX.it.md](docs/PROXMOX.it.md)**.
 
-### Docker (server senza interfaccia)
+### Server Windows (servizio)
 
-L'immagine usa **solo bind mount** (nessun volume Docker): config, video e upload sono cartelle vere sull'host.
-Contiene l'FFmpeg statico del ramo di release più recente (BtbN), **fdkaac**, i driver VA-API/QSV/Vulkan e Python per il runtime AI.
+In un PowerShell da amministratore: scarica il pacchetto server, registra il servizio **KnA** (parte con Windows,
+si riavvia dopo un crash) e apre la porta nel firewall. Rieseguilo per aggiornare o cambiare le impostazioni.
 
-```bash
-git clone https://github.com/KonjikiNoYami1991/KnA.git && cd KnA
-# modifica docker-compose.yml: cartella dei video (bind mount), password consigliata
-mkdir -p ./config /mnt/anime/uploads
-RENDER_GID=$(getent group render | cut -d: -f3) docker compose up -d --build
+```powershell
+irm https://raw.githubusercontent.com/KonjikiNoYami1991/KnA/master/deploy/install-windows-server.ps1 | iex
 ```
 
-Argomenti di build: `FFMPEG=btbn-release` (predefinito) · `btbn-master` · `distro`; `FDKAAC=1`.
+Con opzioni: salva lo script, poi `.\install-windows-server.ps1 -MediaRoots "D:\Video;\\nas\film" -Password "segreta"`.
+Cartelle del NAS: usa percorsi UNC e `-ServiceUser "PC\nome"` (un servizio non vede le lettere di unità mappate).
+
+### Docker (server senza interfaccia)
+
+Un'**immagine pronta** per amd64 e arm64 viene pubblicata a ogni release: `ghcr.io/konjikinoyami1991/kna`.
+Solo bind mount (nessun volume Docker): config, video e upload sono cartelle vere sull'host. Dentro: FFmpeg (BtbN),
+**fdkaac**, NVEncC/QSVEncC, driver VA-API/QSV/Vulkan e Python per il runtime AI.
+
+```bash
+curl -fsSLO https://raw.githubusercontent.com/KonjikiNoYami1991/KnA/master/docker-compose.yml
+# modificalo: cartella dei video, PUID/PGID (id -u / id -g), una password
+docker compose up -d
+```
+
+`PUID`/`PGID` fanno scrivere a KnA i file come il tuo utente; i gruppi dei dispositivi GPU vengono aggiunti da soli.
+Aggiornamento: `docker compose pull && docker compose up -d`. Passo passo per **Synology, QNAP, UGREEN, Unraid e Portainer**:
+**[docs/DOCKER.it.md](docs/DOCKER.it.md)** ([English](docs/DOCKER.md)).
+
+Per compilare l'immagine da te: togli il commento alla sezione `build:` di docker-compose.yml (argomenti
+`FFMPEG=btbn-release` · `btbn-master` · `distro`; `FDKAAC=1`; `RIGAYA=1`) e lancia `docker compose up -d --build`.
 Per un LLM sull'host (Ollama, LM Studio…) usa `http://host.docker.internal:<porta>/v1`.
 
 Poi apri `http://<host>:8585`. Le variabili d'ambiente sono elencate in **[docs/PROXMOX.it.md](docs/PROXMOX.it.md#variabili-dambiente)**.

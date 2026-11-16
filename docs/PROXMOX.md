@@ -116,7 +116,8 @@ the FFmpeg build, the optional components and, if you want, the uid/gid of the s
 
 What it installs:
 
-- the self-contained server package of the newest KnA release in `/opt/kna` (no .NET SDK, nothing is compiled);
+- the complete server package of the newest KnA release in `/opt/kna` (no .NET SDK, nothing is compiled; from 3.3
+  it already contains FFmpeg, fdkaac and the GPU encoders, so nothing else is downloaded for them);
 - fonts, Vulkan (Mesa, including the CPU fallback) and `vainfo`;
 - Intel: the media driver (enabling Debian *non-free* / Ubuntu *multiverse* when needed) and oneVPL; AMD: Mesa VA-API;
 - FFmpeg: by default KnA downloads the newest static build itself (*Settings → Updates & components* updates it later);
@@ -233,7 +234,9 @@ Read from `/etc/kna/kna.env` by the service.
 | `KNA_VULKAN_DEVICE` | auto | Vulkan GPU for libplacebo / Anime4K (index or name part; `llvmpipe` = CPU) |
 | `KNA_AI_SCRIPT` | bundled | Path to `kna_upscale.py` (neural upscaler) |
 | `KNA_VSPIPE` | auto | Path to `vspipe` (VapourSynth) |
-| `KNA_ALLOW_ADVANCED` | `false` | Allows editing the FFmpeg path and extra arguments from the browser |
+| `KNA_ALLOW_ADVANCED` | `false` | Allows editing the FFmpeg path, extra arguments and the after-job / after-queue commands from the browser |
+| `PUID` / `PGID` | root | Docker only: the user the server runs as (files on your shares belong to it) |
+| `UMASK` | `002` | Docker only: permissions of new files |
 | `KNA_ALLOW_POWER_ACTIONS` | `false` | Allows "shut down / sleep when finished" |
 | `KNA_LOCK_COMPONENTS` | `false` | Forbids installing/updating FFmpeg and the other components from the browser |
 | `KNA_LANG` | auto | Forces the language (`it` or `en`); otherwise the browser decides, or *Settings → General* |

@@ -7,19 +7,26 @@
 name: kna
 services:
   kna:
-    build:
-      context: .
-      args:
-        FFMPEG: btbn-release      # btbn-release (newest stable branch) · btbn-master (nightly) · distro
-        FDKAAC: "1"               # standalone Fraunhofer AAC encoder inside the image
-        RIGAYA: "1"               # NVEncC / QSVEncC / VCEEncC (amd64) inside the image
-    image: kna:latest
+    # Ready-made image, amd64 and arm64 (updated with every KnA release: docker compose pull && docker compose up -d)
+    image: ghcr.io/konjikinoyami1991/kna:latest
+    # To build it yourself instead, replace the line above with this section and run: docker compose up -d --build
+    # build:
+    #   context: .
+    #   args:
+    #     FFMPEG: btbn-release      # btbn-release (newest stable branch) · btbn-master (nightly) · distro
+    #     FDKAAC: "1"               # standalone Fraunhofer AAC encoder inside the image
+    #     RIGAYA: "1"               # NVEncC / QSVEncC / VCEEncC (amd64) inside the image
+    # image: kna:latest
     container_name: kna
     restart: unless-stopped
     ports:
       - "8585:8585"
     environment:
       TZ: Europe/Rome
+      # The user KnA runs as: the files it writes on your shares belong to it (Linux: id -u / id -g;
+      # Synology: id <user> over SSH). Remove both to run as root.
+      PUID: "1000"
+      PGID: "1000"
       # Optional HTTP Basic password for the web UI (any user name). Strongly recommended.
       # KNA_PASSWORD: "change-me"
       # Read/write roots (browse, upload, outputs), ';' separated: the container side of the bind mounts below.
@@ -56,10 +63,9 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     # ---- Intel / AMD GPU (VA-API, Quick Sync, Vulkan): pass the render node
+    # (the groups of the device nodes are joined automatically at start: no group id to look up)
     devices:
       - /dev/dri:/dev/dri
-    group_add:
-      - "${RENDER_GID:-993}"             # gid of the "render" group on the host: getent group render
     # ---- NVIDIA GPU (NVENC + CUDA for the AI upscaler): needs nvidia-container-toolkit on the host, then uncomment
     # deploy:
     #   resources:

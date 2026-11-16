@@ -1,11 +1,15 @@
 # KnA - Konjiki no Autoencoder — headless web edition
 #
-#   docker compose up -d --build          (see docker-compose.yml: bind mounts only, no volumes)
-#   docker build -t kna .
-#   docker run -d -p 8585:8585 \
+# Ready-made image (amd64 and arm64, published with every release): ghcr.io/konjikinoyami1991/kna:latest
+#   docker compose up -d                  (see docker-compose.yml: bind mounts only, no volumes)
+#   docker run -d -p 8585:8585 -e PUID=1000 -e PGID=1000 \
 #     --mount type=bind,src=/srv/kna/config,dst=/config \
 #     --mount type=bind,src=/mnt/anime,dst=/media \
-#     kna
+#     ghcr.io/konjikinoyami1991/kna:latest
+# Build it yourself instead: docker build -t kna .   (or "docker compose up -d --build" with the build: section)
+#
+# PUID / PGID: the user the server runs as (files on your shares belong to it); GPU device groups are joined
+# automatically. Step-by-step guides for Synology, QNAP, UGREEN, Unraid and Portainer: docs/DOCKER.md.
 #
 # Hardware encoding:
 #   Intel / AMD (VA-API, Quick Sync, Vulkan):  --device /dev/dri:/dev/dri
@@ -114,6 +118,9 @@ RUN set -e; if ls /tmp/debs/*.deb >/dev/null 2>&1; then apt-get update; \
       for d in /tmp/debs/*.deb; do apt-get install -y --no-install-recommends "$d" || echo "skipped $d"; done; \
       rm -rf /var/lib/apt/lists/*; fi; rm -rf /tmp/debs
 
+COPY deploy/docker-entrypoint.sh /usr/local/bin/kna-entrypoint
+RUN chmod 755 /usr/local/bin/kna-entrypoint
+
 ENV KNA_DATA_DIR=/config \
     KNA_MEDIA_ROOTS=/media \
     KNA_UPLOAD_DIR=/media/uploads \
@@ -128,4 +135,4 @@ EXPOSE 8585
 WORKDIR /app
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s \
   CMD ["bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/8585 && printf 'GET /api/info HTTP/1.0\\r\\n\\r\\n' >&3 && grep -q 200 <&3"]
-ENTRYPOINT ["dotnet", "/app/kna-server.dll"]
+ENTRYPOINT ["/usr/local/bin/kna-entrypoint"]

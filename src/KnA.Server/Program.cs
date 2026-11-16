@@ -28,6 +28,10 @@ var builder = WebApplication.CreateBuilder(new WebApplicationOptions
     ContentRootPath = AppContext.BaseDirectory,
 });
 
+// Windows service (deploy/install-windows-server.ps1): start/stop from the Service Control Manager, events in the
+// Windows log. Does nothing when started from a console.
+builder.Host.UseWindowsService(o => o.ServiceName = "KnA");
+
 if (string.IsNullOrEmpty(Environment.GetEnvironmentVariable("ASPNETCORE_URLS")) && !args.Any(a => a.StartsWith("--urls")))
     builder.WebHost.UseUrls(AppEnv.Get("URLS") ?? "http://0.0.0.0:8585");
 builder.WebHost.ConfigureKestrel(k => k.Limits.MaxRequestBodySize = 4 << 20);

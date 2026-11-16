@@ -122,7 +122,8 @@ Il wizard chiede:
 
 Cosa installa:
 
-- il pacchetto server autonomo dell'ultima release di KnA in `/opt/kna` (niente .NET SDK, nessuna compilazione);
+- il pacchetto server completo dell'ultima release di KnA in `/opt/kna` (niente .NET SDK, nessuna compilazione; dalla 3.3
+  contiene già FFmpeg, fdkaac e gli encoder GPU, che quindi non vengono scaricati a parte);
 - font, Vulkan (Mesa, compreso il ripiego su CPU) e `vainfo`;
 - Intel: il media driver (abilitando *non-free* su Debian / *multiverse* su Ubuntu se serve) e oneVPL; AMD: Mesa VA-API;
 - FFmpeg: di base KnA scarica da sé l'ultima build statica, poi la aggiorna da *Impostazioni → Aggiornamenti e componenti*.
@@ -240,6 +241,8 @@ Il servizio le legge da `/etc/kna/kna.env`.
 | `KNA_AI_SCRIPT` | incluso | Percorso di `kna_upscale.py` (upscaler neurale) |
 | `KNA_VSPIPE` | auto | Percorso di `vspipe` (VapourSynth) |
 | `KNA_ALLOW_ADVANCED` | `false` | Permette di modificare dal browser il percorso di FFmpeg e gli argomenti extra |
+| `PUID` / `PGID` | root | Solo Docker: l'utente con cui gira il server (i file sulle condivisioni sono suoi) |
+| `UMASK` | `002` | Solo Docker: permessi dei nuovi file |
 | `KNA_ALLOW_POWER_ACTIONS` | `false` | Permette "spegni / sospendi alla fine" |
 | `KNA_LOCK_COMPONENTS` | `false` | Impedisce di installare/aggiornare FFmpeg e gli altri componenti dal browser |
 | `KNA_LANG` | auto | Forza la lingua (`it` o `en`); altrimenti decide il browser, o *Impostazioni → Generale* |

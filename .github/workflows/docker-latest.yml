@@ -1,0 +1,28 @@
+name: Docker latest
+
+# When a release is published (the draft made by release.yml, after the check), its image becomes
+# ghcr.io/<owner>/kna:latest — what docker-compose.yml pulls.
+on:
+  release:
+    types: [published]
+
+permissions:
+  packages: write
+
+jobs:
+  latest:
+    if: ${{ startsWith(github.event.release.tag_name, 'v') && !github.event.release.prerelease }}
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ github.token }}
+      - name: Tag latest
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          IMAGE=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/kna
+          docker buildx imagetools create -t "$IMAGE:latest" "$IMAGE:${TAG#v}"

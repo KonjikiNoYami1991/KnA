@@ -1,5 +1,84 @@
 # Changelog
 
+## v3.3.0 — unreleased
+
+### English
+
+**Fixes**
+- NVEncC / QSVEncC / VCEEncC with FFmpeg decoding: the size shown (and the final size estimated from it) was the raw
+  frames sent to the encoder (~600 Mb/s at 1080p: a "394 GB" film); it is now the encoded file.
+- HDR → SDR keeps 10 bits when the codec has them (AV1/HEVC "10-bit" presets no longer came out 8-bit), fewer bands.
+- The log shows only the commands that really run (no FFmpeg encoder command next to the NVEncC one) and lists the
+  tracks left out (e.g. PGS subtitles) instead of dropping them silently.
+- Dolby Vision found from the frames when the container has no configuration record (old mkvmerge remuxes).
+
+**Editor**
+- One tab per kind of stream: Tracks · Trim · **Video** · **Audio** · **Subtitles** · Filters · Output · Preview. Every
+  setting is in one place: the quality level and the hand-set rate control are a single choice; codec and bitrate of each
+  audio track, format and burning of each subtitle moved from Tracks to their tabs.
+- **Every parameter of every program**: the options of the encoder that will run (FFmpeg encoders, NVEncC/QSVEncC/VCEEncC),
+  of the audio encoders (FFmpeg, fdkaac, qaac), of the subtitle encoder and of the container are read from the program's
+  own help, searchable, with their allowed values; or written as text.
+- **Maximum file size**: the video bitrate is computed from the size minus audio (copied tracks at their real bitrate),
+  subtitles and container overhead, with a 3 % margin; a size larger than the video needs is capped.
+- **Size estimate** (compressibility check): a few seconds encoded in several places predict the final size.
+
+**Trim**
+- Thumbnails load first and in parallel (HDR tone mapped), a hover preview follows the pointer, the frame fits the window.
+- **Trim** button on every job: the cut alone, without the advanced editor (also in the web UI).
+
+**Automation**
+- Commands after each job and after the queue, with macros ({output}, {status}, {done}…).
+- Command line: `kna-server --encode <files> [--preset …] [--size MB] [--trim a-b] …`, `--list-presets`.
+
+**Releases and installation**
+- One complete package per system: 9 downloads instead of about 26 (KnA-Windows-x64.zip, KnA-macOS-AppleSilicon.zip,
+  KnA-Linux-x64.tar.gz, KnA-Server-…); fdkaac for the component manager in a separate "components" pre-release. The
+  in-app updater of 3.2.1 and older does not know the new names: download 3.3.0 once by hand.
+- Docker: ready-made image `ghcr.io/konjikinoyami1991/kna` (amd64 + arm64), PUID/PGID/UMASK, GPU groups joined
+  automatically; guides for Synology, QNAP, UGREEN, Unraid, Portainer (docs/DOCKER.md).
+- Linux/LXC installer uses the complete package (FFmpeg and GPU encoders included); Windows server as a service
+  (deploy/install-windows-server.ps1).
+
+### Italiano
+
+**Correzioni**
+- NVEncC / QSVEncC / VCEEncC con decodifica FFmpeg: la dimensione mostrata (e quella finale stimata) era dei fotogrammi
+  non compressi inviati all'encoder (~600 Mb/s a 1080p: un film da "394 GB"); ora è quella del file codificato.
+- HDR → SDR mantiene i 10 bit quando il codec li ha (i preset AV1/HEVC "10 bit" non escono più a 8 bit), meno banding.
+- Il log mostra solo i comandi eseguiti davvero (niente comando dell'encoder FFmpeg accanto a quello di NVEncC) ed elenca
+  le tracce escluse (es. sottotitoli PGS) invece di scartarle in silenzio.
+- Dolby Vision riconosciuto dai fotogrammi quando il contenitore non ha il record di configurazione (vecchi remux mkvmerge).
+
+**Editor**
+- Una scheda per tipo di flusso: Tracce · Taglio · **Video** · **Audio** · **Sottotitoli** · Filtri · Uscita · Anteprima.
+  Ogni impostazione sta in un solo posto: livello di qualità e controllo del bitrate a mano sono una sola scelta; codec e
+  bitrate di ogni traccia audio, formato e impressione di ogni sottotitolo sono passati da Tracce alle loro schede.
+- **Tutti i parametri di tutti i programmi**: le opzioni dell'encoder che verrà usato (encoder FFmpeg, NVEncC/QSVEncC/VCEEncC),
+  degli encoder audio (FFmpeg, fdkaac, qaac), dell'encoder dei sottotitoli e del contenitore vengono lette dall'help del
+  programma, con ricerca e valori ammessi; oppure scritte come testo.
+- **Dimensione massima del file**: il bitrate video è calcolato dalla dimensione meno audio (tracce copiate al loro bitrate
+  reale), sottotitoli e overhead del contenitore, con un margine del 3 %; una dimensione più grande del necessario viene limitata.
+- **Stima della dimensione** (compressibility check): qualche secondo codificato in più punti prevede la dimensione finale.
+
+**Taglio**
+- Le miniature arrivano per prime e in parallelo (HDR con tone mapping), un'anteprima segue il puntatore, il fotogramma
+  si adatta alla finestra.
+- Pulsante **Taglia** su ogni lavoro: solo il taglio, senza l'editor avanzato (anche nell'interfaccia web).
+
+**Automazione**
+- Comandi dopo ogni lavoro e a coda finita, con macro ({output}, {status}, {done}…).
+- Riga di comando: `kna-server --encode <file> [--preset …] [--size MB] [--trim a-b] …`, `--list-presets`.
+
+**Release e installazione**
+- Un pacchetto completo per sistema: 9 download invece di circa 26 (KnA-Windows-x64.zip, KnA-macOS-AppleSilicon.zip,
+  KnA-Linux-x64.tar.gz, KnA-Server-…); fdkaac per il component manager in una pre-release "components" separata.
+  L'aggiornamento interno della 3.2.1 e precedenti non conosce i nuovi nomi: scarica la 3.3.0 a mano una volta.
+- Docker: immagine pronta `ghcr.io/konjikinoyami1991/kna` (amd64 + arm64), PUID/PGID/UMASK, gruppi GPU aggiunti da soli;
+  guide per Synology, QNAP, UGREEN, Unraid, Portainer (docs/DOCKER.it.md).
+- L'installer Linux/LXC usa il pacchetto completo (FFmpeg ed encoder GPU inclusi); server Windows come servizio
+  (deploy/install-windows-server.ps1).
+
 ## v3.2.1 — 2026-11-14
 
 ### English
