@@ -8,9 +8,10 @@ namespace KnA.Core.Tools;
 public sealed record UpdateCheck(Version Current, ReleaseInfo? Latest, bool IsNewer, ReleaseAsset? Asset, string Message);
 
 /// <summary>
-/// Checks GitHub for a newer KnA release and (desktop builds) installs it in place.
-/// Release assets are expected to be named "KnA-desktop-{rid}.zip" / "KnA-server-{rid}.zip"
-/// (produced by .github/workflows/release.yml when a "v*" tag is pushed).
+/// Checks GitHub for a newer KnA release and installs it in place. One complete package per system
+/// (.github/workflows/release.yml): KnA-Windows-x64.zip, KnA-Windows-ARM64.zip, KnA-macOS-AppleSilicon.zip,
+/// KnA-macOS-Intel.zip, KnA-Linux-x64.tar.gz, KnA-Linux-ARM64.tar.gz and KnA-Server-{Windows-x64, Linux-x64,
+/// Linux-ARM64}; the update takes only the program files from it (tools, models and data stay as they are).
 /// </summary>
 public static class AppUpdater
 {
@@ -20,6 +21,22 @@ public static class AppUpdater
         (OperatingSystem.IsWindows() ? "win" : OperatingSystem.IsMacOS() ? "osx" : "linux") + "-" +
         (RuntimeInformation.OSArchitecture == Architecture.Arm64 ? "arm64" : "x64");
 
+    /// <summary>Package of a flavor ("desktop" / "server") for a runtime id, as the release workflow names it.</summary>
+    public static string AssetName(string flavor, string rid)
+    {
+        var (os, arch) = rid switch
+        {
+            "win-x64" => ("Windows", "x64"), "win-arm64" => ("Windows", "ARM64"),
+            "osx-arm64" => ("macOS", "AppleSilicon"), "osx-x64" => ("macOS", "Intel"),
+            "linux-arm64" => ("Linux", "ARM64"), _ => ("Linux", "x64"),
+        };
+        string ext = os == "Linux" ? "tar.gz" : "zip";
+        return flavor == "server" ? $"KnA-Server-{os}-{arch}.{ext}" : $"KnA-{os}-{arch}.{ext}";
+    }
+
+    /// <summary>Folders of a package that belong to the user's installation, never replaced by an update.</summary>
+    private static readonly string[] KeepFolders = ["tools", "ai", "data"];
+
     public static Version CurrentVersion => ReleaseInfo.ParseVersion(AppInfo.Version) ?? new Version(0, 0);
 
     public static async Task<UpdateCheck> CheckAsync(string flavor, CancellationToken ct = default)
@@ -28,7 +45,9 @@ public static class AppUpdater
         if (latest is null) return new UpdateCheck(CurrentVersion, null, false, null, L.T("No release has been published on GitHub yet."));
         var v = latest.Version;
         bool newer = v is not null && v > CurrentVersion;
-        var asset = latest.Assets.FirstOrDefault(a => a.Name.Equals($"KnA-{flavor}-{RuntimeId}.zip", StringComparison.OrdinalIgnoreCase));
+        var asset = latest.Assets.FirstOrDefault(a => a.Name.Equals(AssetName(flavor, RuntimeId), StringComparison.OrdinalIgnoreCase))
+                    // releases up to 3.2.1
+                    ?? latest.Assets.FirstOrDefault(a => a.Name.Equals($"KnA-{flavor}-{RuntimeId}.zip", StringComparison.OrdinalIgnoreCase));
         return new UpdateCheck(CurrentVersion, latest, newer, asset,
             newer ? L.T("Version {0} is available (you have {1}).", latest.Tag.TrimStart('v'), AppInfo.Version)
                   : L.T("You have the latest version ({0}).", AppInfo.Version));
@@ -47,15 +66,27 @@ public static class AppUpdater
         await ComponentManager.ExtractAsync(zip, staging, ct);
 
         var appDir = AppContext.BaseDirectory;
-        // Zips may contain a single top folder.
-        var root = Directory.GetFiles(staging).Length == 0 && Directory.GetDirectories(staging) is [var only] ? only : staging;
+        // Packages contain a single top folder (KnA/, KnA-server/, KnA.app/): the program files are inside it, in
+        // Contents/MacOS for the macOS app.
+        var root = staging;
+        while (Directory.GetFiles(root).Length == 0 && Directory.GetDirectories(root) is [var only]) root = only;
+        if (Directory.Exists(Path.Combine(root, "Contents", "MacOS"))) root = Path.Combine(root, "Contents", "MacOS");
         foreach (var file in Directory.EnumerateFiles(root, "*", SearchOption.AllDirectories))
         {
             var rel = Path.GetRelativePath(root, file);
+            var first = rel.Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)[0];
+            if (KeepFolders.Contains(first, StringComparer.OrdinalIgnoreCase) || rel.Equals(KnA.Core.Settings.AppEnv.PortableMarker, StringComparison.OrdinalIgnoreCase))
+                continue;
             var dst = Path.Combine(appDir, rel);
             Directory.CreateDirectory(Path.GetDirectoryName(dst)!);
             ComponentManager.ReplaceFile(file, dst);
+            if (!OperatingSystem.IsWindows() && Path.GetFileNameWithoutExtension(dst) is "KnA" or "kna-server" or "KnA-server")
+                File.SetUnixFileMode(dst, File.GetUnixFileMode(dst) | UnixFileMode.UserExecute | UnixFileMode.GroupExecute | UnixFileMode.OtherExecute);
         }
+        // macOS: the app's Info.plist carries the version shown by Finder.
+        var plist = Path.Combine(root, "..", "Info.plist");
+        if (OperatingSystem.IsMacOS() && File.Exists(plist) && Path.GetFileName(Path.GetDirectoryName(Path.TrimEndingDirectorySeparator(appDir))) == "Contents")
+            ComponentManager.ReplaceFile(Path.GetFullPath(plist), Path.Combine(appDir, "..", "Info.plist"));
         // From 3.2 the program is a single executable: the loose .NET/Avalonia files of an older version are
         // set aside (deleted at the next start), nothing else in the folder is touched.
         var shipped = Directory.EnumerateFiles(root).Select(Path.GetFileName).ToHashSet(StringComparer.OrdinalIgnoreCase);

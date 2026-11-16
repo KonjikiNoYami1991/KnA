@@ -224,11 +224,19 @@ Preset integrati, preset personali salvati da qualsiasi file e una **procedura g
 
 Scarica l'ultimo pacchetto da **[Releases](https://github.com/KonjikiNoYami1991/KnA/releases/latest)**:
 
-| Sistema | Pacchetto portable | Avvio |
-|---|---|---|
-| Windows x64 / Arm | `KnA-portable-win-x64.zip` · `KnA-portable-win-arm64.zip` | estrai dove vuoi (anche su chiavetta), apri `KnA\KnA.exe` |
-| Linux x64 / arm64 | `KnA-portable-linux-x64.tar.gz` · `KnA-portable-linux-arm64.tar.gz` | `tar xzf KnA-portable-*.tar.gz && ./KnA/KnA` |
-| macOS | `KnA-macOS-osx-arm64.app.zip` · `KnA-macOS-osx-x64.app.zip` | estrai e sposta `KnA.app` in Applicazioni |
+Un pacchetto completo per sistema: scarica quello del tuo computer, non serve altro.
+
+| Sistema | App desktop | Server (interfaccia web) | Avvio |
+|---|---|---|---|
+| Windows (quasi tutti i PC) | `KnA-Windows-x64.zip` | `KnA-Server-Windows-x64.zip` | estrai dove vuoi (anche su chiavetta), apri `KnA\KnA.exe` |
+| Windows su Arm (Snapdragon) | `KnA-Windows-ARM64.zip` | — | come sopra |
+| macOS, Apple M1–M4 | `KnA-macOS-AppleSilicon.zip` | Docker | estrai e sposta `KnA.app` in Applicazioni |
+| macOS, Intel | `KnA-macOS-Intel.zip` | Docker | come sopra |
+| Linux (quasi tutti i PC) | `KnA-Linux-x64.tar.gz` | `KnA-Server-Linux-x64.tar.gz` | `tar xzf KnA-Linux-x64.tar.gz && ./KnA/KnA` |
+| Linux su Arm (Raspberry Pi 5…) | `KnA-Linux-ARM64.tar.gz` | `KnA-Server-Linux-ARM64.tar.gz` | come sopra |
+
+Su macOS FFmpeg arriva da Homebrew (`brew install ffmpeg`): KnA lo trova da solo. Per i server la via più comoda
+sono Docker o gli installer Linux / Proxmox qui sotto, che scaricano da soli il pacchetto giusto.
 
 I pacchetti portable non richiedono installazioni (.NET e **FFmpeg** sono inclusi) e tengono tutto nella cartella del programma,
 ogni cosa nella sua sottocartella:
@@ -245,11 +253,11 @@ KnA\
   data\              impostazioni, preset, coda, log, file temporanei
 ```
 
-L'edizione server ha lo stesso pacchetto portable: `KnA-server-portable-<rid>` (zip su Windows, tar.gz su Linux).
+I pacchetti server hanno la stessa struttura (cartella `KnA-server`, programma `kna-server`).
 
 I componenti installati o aggiornati dall'app finiscono nelle stesse cartelle. Elimina `portable.txt` per usare
 la cartella dell'utente. Se la cartella è di sola lettura (es. Programmi) KnA ripiega sulla cartella dell'utente.
-`KnA-desktop-<rid>.zip` e `KnA-server-<rid>.zip` sono gli stessi programmi senza il marcatore portable (e sono quelli scaricati dall'aggiornamento interno).
+L'aggiornamento interno scarica lo stesso pacchetto e sostituisce solo i file del programma (strumenti, modelli e dati restano).
 
 ### Proxmox VE: un comando sull'host
 
@@ -352,8 +360,9 @@ dotnet publish src/KnA.Server -c Release -r linux-x64 --self-contained
 ```
 
 Il push di un tag `v*` avvia `.github/workflows/release.yml`, che compila per tutte le piattaforme e prepara una release **in bozza**
-con i pacchetti cercati dall'aggiornamento interno (`KnA-desktop-<rid>.zip`, `KnA-server-<rid>.zip`), i pacchetti **portable** per Windows/Linux (`KnA-portable-<rid>.zip` / `.tar.gz`), **fdkaac** incluso in ogni pacchetto
-(e pubblicato a parte per il component manager) e `KnA.app` con l'icona per macOS.
+con un pacchetto completo per sistema (la tabella sopra, gli stessi scaricati dall'aggiornamento interno) e `KnA.app`
+con l'icona per macOS. fdkaac è in ogni pacchetto; per il component manager è pubblicato anche nella pre-release
+`components`, così le release di versione elencano solo i pacchetti di KnA.
 
 ## Struttura del progetto
 

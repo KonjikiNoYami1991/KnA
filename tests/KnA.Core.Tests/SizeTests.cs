@@ -138,3 +138,22 @@ public class ToolArgumentsTests
         Assert.Equal(["-c", "1", "-dummy:s:0", "x"], ["-c", "1", .. ToolArguments.ForStream("-dummy x", 's', 0)]);
     }
 }
+
+public class ReleaseNamesTests
+{
+    [Fact]
+    public void One_package_per_system_as_the_workflow_names_them()
+    {
+        Assert.Equal("KnA-Windows-x64.zip", KnA.Core.Tools.AppUpdater.AssetName("desktop", "win-x64"));
+        Assert.Equal("KnA-Windows-ARM64.zip", KnA.Core.Tools.AppUpdater.AssetName("desktop", "win-arm64"));
+        Assert.Equal("KnA-macOS-AppleSilicon.zip", KnA.Core.Tools.AppUpdater.AssetName("desktop", "osx-arm64"));
+        Assert.Equal("KnA-macOS-Intel.zip", KnA.Core.Tools.AppUpdater.AssetName("desktop", "osx-x64"));
+        Assert.Equal("KnA-Linux-ARM64.tar.gz", KnA.Core.Tools.AppUpdater.AssetName("desktop", "linux-arm64"));
+        Assert.Equal("KnA-Server-Linux-x64.tar.gz", KnA.Core.Tools.AppUpdater.AssetName("server", "linux-x64"));
+        Assert.Equal("KnA-Server-Windows-x64.zip", KnA.Core.Tools.AppUpdater.AssetName("server", "win-x64"));
+        // every name the updater asks for is one the release workflow produces
+        var yml = File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "../../../../../.github/workflows/release.yml"));
+        foreach (var name in new[] { "Windows-x64", "Windows-ARM64", "macOS-AppleSilicon", "macOS-Intel", "Linux-x64", "Linux-ARM64" })
+            Assert.Contains("name: " + name, yml);
+    }
+}

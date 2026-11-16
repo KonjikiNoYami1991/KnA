@@ -454,11 +454,24 @@ else
   log "$(t "Downloading KnA $TAG ($RID)…" "Download di KnA $TAG ($RID)…")"
   tmp=$(mktemp -d "$(dirname "$INSTALL_DIR")/.kna-download.XXXXXX")
   trap 'rm -rf "$tmp"' EXIT
-  curl -fL --retry 3 --progress-bar -o "$tmp/kna.zip" "https://github.com/$REPO/releases/download/$TAG/KnA-server-$RID.zip" \
-    || die "$(t "Download failed." "Download non riuscito.")"
-  unzip -q "$tmp/kna.zip" -d "$tmp/kna"
+  # From 3.3 one complete package per system (FFmpeg, fdkaac, GPU encoders and models inside); up to 3.2.1 a
+  # program-only zip, the components then came from KnA's component manager.
+  case $RID in linux-arm64) PKG=KnA-Server-Linux-ARM64.tar.gz ;; *) PKG=KnA-Server-Linux-x64.tar.gz ;; esac
+  if curl -fL --retry 3 --progress-bar -o "$tmp/kna.tar.gz" "https://github.com/$REPO/releases/download/$TAG/$PKG" 2>/dev/null; then
+    mkdir -p "$tmp/x"
+    tar -xzf "$tmp/kna.tar.gz" -C "$tmp/x" || die "$(t "The package is damaged." "Il pacchetto è danneggiato.")"
+    mv "$tmp/x/KnA-server" "$tmp/kna" || die "$(t "Unexpected package layout." "Struttura del pacchetto inattesa.")"
+    # An installed service keeps its data in $DATA_DIR, not next to the program: no portable marker, no data folder.
+    # Models and shaders of an installed service live in $DATA_DIR (installed below as components when chosen).
+    rm -f "$tmp/kna/portable.txt"; rm -rf "$tmp/kna/data" "$tmp/kna/ai" "$tmp/kna/tools/shaders"
+  else
+    curl -fL --retry 3 --progress-bar -o "$tmp/kna.zip" "https://github.com/$REPO/releases/download/$TAG/KnA-server-$RID.zip" \
+      || die "$(t "Download failed." "Download non riuscito.")"
+    unzip -q "$tmp/kna.zip" -d "$tmp/kna"
+  fi
   [[ -f $tmp/kna/kna-server ]] || die "$(t "The package does not contain kna-server." "Il pacchetto non contiene kna-server.")"
-  chmod 755 "$tmp/kna/kna-server"; [[ -f $tmp/kna/tools/fdkaac ]] && chmod 755 "$tmp/kna/tools/fdkaac"
+  chmod 755 "$tmp/kna/kna-server"
+  find "$tmp/kna/tools" -type f \( -name 'ffmpeg' -o -name 'ffprobe' -o -name 'fdkaac' -o -name '*EncC*' -o -name '*encc*' -o -name '*_tool' \) -exec chmod 755 {} + 2>/dev/null || true
   echo "$TAG" > "$tmp/kna/.kna-version"
   if ((HAVE_SYSTEMD)) && systemctl is-active --quiet kna.service; then systemctl stop kna.service; fi
   rm -rf "$INSTALL_DIR.old"
@@ -610,9 +623,14 @@ if ((up < 0)); then
 elif ((!up)); then
   warn "$(t "KnA did not answer on port $KNA_PORT. Check: journalctl -u kna -e" "KnA non risponde sulla porta $KNA_PORT. Controlla: journalctl -u kna -e")"
 elif [[ $MODE == install ]]; then
-  ids=""; [[ $KNA_FFMPEG_SOURCE == btbn ]] && ids="ffmpeg"
+  ids=""; [[ $KNA_FFMPEG_SOURCE == btbn && ! -x $INSTALL_DIR/tools/ffmpeg/ffmpeg ]] && ids="ffmpeg"
   ids="$ids $KNA_COMPONENTS"
   for id in $ids; do
+    # Already in the package (complete packages from 3.3): nothing to download.
+    case $id in
+      nvencc|qsvencc|vceencc|dovi_tool|hdr10plus_tool)
+        if [[ -d $INSTALL_DIR/tools/$id ]] && [[ -n $(ls -A "$INSTALL_DIR/tools/$id" 2>/dev/null) ]]; then log "  ✓ $id ($(t "included" "incluso"))"; continue; fi ;;
+    esac
     log "$(t "Installing component: $id…" "Installazione del componente: $id…")"
     code=$(curl -sS "${auth[@]}" -o /tmp/kna-component.json -w '%{http_code}' -X POST --max-time 3600 "$api/api/components/$id/install" || echo 000)
     if [[ $code == 200 ]]; then

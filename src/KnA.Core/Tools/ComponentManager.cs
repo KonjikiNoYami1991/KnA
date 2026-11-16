@@ -203,6 +203,9 @@ public sealed partial class ComponentManager(string dataDirectory)
         return assets.FirstOrDefault(a => a.Name == FfmpegAssetName());
     }
 
+    /// <summary>Tag of the pre-release that carries the programs KnA builds itself (fdkaac), updated by every release.</summary>
+    public const string ComponentsTag = "components";
+
     /// <summary>fdkaac asset published by KnA's release workflow for this machine.</summary>
     public static string? FdkaacAssetName() => (OperatingSystem.IsWindows(), OperatingSystem.IsMacOS(), OperatingSystem.IsLinux(), Arch) switch
     {
@@ -216,7 +219,10 @@ public sealed partial class ComponentManager(string dataDirectory)
     private async Task InstallFdkaacAsync(string temp, IProgress<double>? progress, IProgress<string>? log, CancellationToken ct)
     {
         var name = FdkaacAssetName() ?? throw new PlatformNotSupportedException();
-        var rel = await GitHubReleases.LatestAsync(AppUpdater.Repository, ct) ?? throw new InvalidOperationException(L.T("No release found for {0}.", "KnA"));
+        // fdkaac lives in the rolling "components" release (the version releases only carry the KnA packages);
+        // releases up to 3.2.1 had it among their assets.
+        var rel = (await GitHubReleases.ByTagAsync(AppUpdater.Repository, ComponentsTag, ct) is { } comp && comp.Assets.Any(a => a.Name == name) ? comp : null)
+                  ?? await GitHubReleases.LatestAsync(AppUpdater.Repository, ct) ?? throw new InvalidOperationException(L.T("No release found for {0}.", "KnA"));
         var asset = rel.Assets.FirstOrDefault(a => a.Name == name)
                     ?? throw new InvalidOperationException(L.T("No download for this platform in {0} {1}.", "KnA", rel.Tag));
         var archive = Path.Combine(temp, asset.Name);
