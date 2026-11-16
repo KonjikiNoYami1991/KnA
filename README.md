@@ -142,6 +142,14 @@ validated field by field and checked against the hardware detection; nothing cha
   (keep, move to `_done`, delete). Scanning works on NAS shares and bind mounts; a file is taken once it stops growing.
 - Every job's result downloads from the ⬇ button in the queue.
 
+### Subtitle OCR
+
+Picture subtitles of Blu-rays (PGS) become text, like in Subtitle Edit: KnA decodes them and reads them with Tesseract 5
+and the language model of each track (downloaded on first use). Choose "Text (OCR)" for a track, turn on "Convert picture
+subtitles to text" for every file, or export one track with "OCR → .srt". Settings → Components installs Tesseract
+(Windows) and the models; on Linux/macOS Tesseract comes from the system package (`apt install tesseract-ocr`,
+`brew install tesseract`), already in the Docker image.
+
 ### Smart drag & drop
 Desktop and web: videos, scripts, discs and folders are queued; **subtitles, audio and fonts** join the job they are dropped on or the video
 with the same name (`Ep01.ita.ass` → `Ep01.mkv`; with hardsub the subtitle becomes the burned one); `.json` **presets** are imported;

@@ -140,6 +140,7 @@ public sealed partial class ComponentManager(string dataDirectory)
                 path?.StartsWith(dataDirectory, StringComparison.OrdinalIgnoreCase) ?? false, latest, update, QuietvoidTarget() is not null, note));
         }
         list.AddRange(await CheckExternalAsync(tools, online, ct));
+        list.AddRange(await CheckOcrAsync(ct));
         list.AddRange(await CheckModelsAsync(ct));
         return list;
     }
@@ -159,6 +160,8 @@ public sealed partial class ComponentManager(string dataDirectory)
             else if (id is "nvencc" or "qsvencc" or "vceencc") await InstallRigayaAsync(id, temp, progress, log, ct);
             else if (id == "qaac") await InstallQaacAsync(temp, progress, log, ct);
             else if (id == "vapoursynth") await InstallVapourSynthAsync(temp, progress, log, ct);
+            else if (id == "tesseract") await InstallTesseractAsync(temp, progress, log, ct);
+            else if (id.StartsWith("ocr:", StringComparison.Ordinal)) await InstallOcrModelAsync(id, progress, log, ct);
             else if (id.StartsWith("model:", StringComparison.Ordinal) || id.StartsWith("llm:", StringComparison.Ordinal)) await InstallModelAsync(id, progress, log, ct);
             else throw new ArgumentException("Unknown component " + id);
         }

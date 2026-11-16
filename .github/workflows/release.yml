@@ -153,9 +153,10 @@ jobs:
 
           # Everything else is installed by KnA's own component manager (same folders and checks as in the app).
           models="model:realesr-animevideov3,model:RealESRGAN_x4plus_anime_6B,model:realesr-general-x4v3,model:RealESRGAN_x4plus,model:RealESRGAN_x2plus"
-          common="anime4k,fsrcnnx,$models"
+          # subtitle OCR: Tesseract (Windows; Linux/macOS use the system package) and the most used language models
+          common="anime4k,fsrcnnx,ocr:eng,ocr:ita,$models"
           case "${{ matrix.rid }}" in
-            win-x64)     ids="nvencc,qsvencc,vceencc,qaac,vapoursynth,dovi_tool,hdr10plus_tool,$common" ;;
+            win-x64)     ids="nvencc,qsvencc,vceencc,qaac,vapoursynth,dovi_tool,hdr10plus_tool,tesseract,$common" ;;
             linux-x64)   ids="nvencc,qsvencc,vceencc,dovi_tool,hdr10plus_tool,$common" ;;
             linux-arm64) ids="dovi_tool,hdr10plus_tool,$common" ;;
             *)           ids="$common" ;;   # win-arm64 is built on an x64 runner: only platform-neutral parts

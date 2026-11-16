@@ -27,6 +27,15 @@
 - Thumbnails load first and in parallel (HDR tone mapped), a hover preview follows the pointer, the frame fits the window.
 - **Trim** button on every job: the cut alone, without the advanced editor (also in the web UI).
 
+**Subtitle OCR (like Subtitle Edit)**
+- Blu-ray picture subtitles (PGS) become text: KnA decodes the pictures itself and reads them with **Tesseract 5** and the
+  language model of the track (official tessdata_best, downloaded on first use). Per track ("Text (OCR)" in the Subtitles
+  tab), for every file ("Convert picture subtitles to text" in the settings and presets), or as a standalone
+  "OCR → .srt" export. MP4 and players without PGS support get real subtitles.
+- Settings → Components: Tesseract (Windows: the same 5.5.0 package Subtitle Edit uses; Linux/macOS: system package,
+  installed by the Linux installer and in the Docker image) and the models of 12 languages. Windows packages include
+  Tesseract; every package includes the Italian and English models.
+
 **Automation**
 - Commands after each job and after the queue, with macros ({output}, {status}, {done}…).
 - Command line: `kna-server --encode <files> [--preset …] [--size MB] [--trim a-b] …`, `--list-presets`.
@@ -65,6 +74,15 @@
 - Le miniature arrivano per prime e in parallelo (HDR con tone mapping), un'anteprima segue il puntatore, il fotogramma
   si adatta alla finestra.
 - Pulsante **Taglia** su ogni lavoro: solo il taglio, senza l'editor avanzato (anche nell'interfaccia web).
+
+**OCR dei sottotitoli (come Subtitle Edit)**
+- I sottotitoli immagine dei Blu-ray (PGS) diventano testo: KnA decodifica da sé le immagini e le legge con **Tesseract 5**
+  e il modello della lingua della traccia (tessdata_best ufficiali, scaricati al primo uso). Per traccia ("Testo (OCR)"
+  nella scheda Sottotitoli), per ogni file ("Converti i sottotitoli immagine in testo" nelle impostazioni e nei preset)
+  oppure come esportazione "OCR → .srt". MP4 e i lettori senza PGS ottengono sottotitoli veri.
+- Impostazioni → Componenti: Tesseract (Windows: lo stesso pacchetto 5.5.0 di Subtitle Edit; Linux/macOS: pacchetto di
+  sistema, installato dall'installer Linux e nell'immagine Docker) e i modelli di 12 lingue. I pacchetti Windows includono
+  Tesseract; tutti i pacchetti includono i modelli italiano e inglese.
 
 **Automazione**
 - Comandi dopo ogni lavoro e a coda finita, con macro ({output}, {status}, {done}…).

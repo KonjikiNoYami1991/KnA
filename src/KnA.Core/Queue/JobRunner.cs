@@ -77,6 +77,7 @@ public static class JobRunner
 
             // ------------------------------------------------------------ prepare
             Directory.CreateDirectory(workDir);
+            baseCtx = await OcrSubtitlesAsync(job, baseCtx, workDir, ctx, ct);
             PreparedSubtitles? subs = null;
             var burnTrack = check.Tracks.FirstOrDefault(t => t.Burn && t.Kind == "subtitle");
             if (burnTrack is not null && p.UsesVideoFilters)
@@ -252,6 +253,40 @@ public static class JobRunner
             return Encoding.Chapters.Write(Path.Combine(dir, job.Id.ToString("N") + ".txt"), job.Edit.Chapters, job.Media.Duration.TotalSeconds);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return null; }
+    }
+
+    /// <summary>
+    /// Picture subtitles chosen as text (track output "ocr", or the preset's "convert picture subtitles") are read
+    /// with OCR first: each becomes an SRT file that replaces the track, with its language, title and flags.
+    /// </summary>
+    private static async Task<CompileContext> OcrSubtitlesAsync(QueueJob job, CompileContext cc, string workDir, RunnerContext ctx, CancellationToken ct)
+    {
+        var media = new Dictionary<string, MediaInfo>(cc.Media) { [cc.Source.Path] = cc.Source };
+        var tracks = (cc.Edit.Tracks ?? TrackPlanner.Default(cc.Source, cc.Settings)).ToList();
+        var wanted = tracks.Select((t, i) => (t, i))
+            .Where(x => x.t.Include && x.t.Kind == "subtitle" && Ocr.SubtitleOcr.Wanted(x.t, cc.Settings)
+                        && TrackPlanner.Lookup(x.t, media) is SubtitleStream st && Ocr.SubtitleOcr.CanRead(st.CodecName))
+            .ToList();
+        if (wanted.Count == 0) return cc;
+        var tesseract = Ocr.SubtitleOcr.LocateTesseract(ctx.Store.DataDirectory)
+                        ?? throw new InvalidOperationException(L.T("OCR needs Tesseract: install it in Settings → Components (Linux: apt install tesseract-ocr; macOS: brew install tesseract)."));
+        var prober = new MediaProber(ctx.Tools.Ffprobe);
+        foreach (var (t, i) in wanted)
+        {
+            job.Stage = L.T("Subtitle OCR ({0})", t.Language ?? "und");
+            ctx.Changed(job);
+            var srt = Path.Combine(workDir, $"ocr-{i}.srt");
+            var progress = new Progress<double>(pc => { job.Progress = new EncodeProgress(TimeSpan.FromSeconds(pc), TimeSpan.FromSeconds(100), 0, 0, 0, 0, false); ctx.Changed(job); });
+            var r = await Ocr.SubtitleOcr.RecognizeAsync(ctx.Tools.Ffmpeg, tesseract, ctx.Store.DataDirectory, t.File, t.Stream, t.Language, srt, workDir,
+                progress, line => job.AppendLog(line), ct);
+            if (r.Subtitles == 0) job.AppendLog(L.T("OCR: no text found in track #{0}: it is left out.", t.Stream));
+            var m = await prober.ProbeAsync(srt, ct, requireVideo: false);
+            media[srt] = m;
+            tracks[i] = t with { File = srt, Stream = m.Subtitles.FirstOrDefault()?.Index ?? 0, Codec = "subrip", Output = null, Include = r.Subtitles > 0 };
+        }
+        job.Progress = null;
+        media.Remove(cc.Source.Path);
+        return cc with { Edit = cc.Edit with { Tracks = tracks }, Media = media };
     }
 
     public static CompileContext BuildContext(QueueJob job, RunnerContext ctx) => BuildContext(job, ctx.Settings, ctx.Tools, ctx.Store.DataDirectory);

@@ -370,6 +370,8 @@ apt)
   [[ -n $icu ]] && base+=("$icu")
   [[ -n $ssl ]] && base+=("$ssl")
   pm_install "${base[@]}"
+  # Subtitle OCR (picture subtitles → text): the engine; KnA downloads the language models itself.
+  pm_try tesseract-ocr
   has_gpu intel && pm_try "$(pick_pkg intel-media-va-driver-non-free intel-media-va-driver)" i965-va-driver libvpl2 libmfx-gen1.2 libmfx-gen1
   # Newer releases ship the VA driver inside mesa-libgallium; mesa-va-drivers is then a transitional package.
   has_gpu amd && pm_try mesa-va-drivers
@@ -381,6 +383,7 @@ dnf)
   pm_refresh
   pm_install ca-certificates curl unzip xz tar findutils shadow-utils util-linux procps-ng fontconfig dejavu-sans-fonts \
              libicu openssl-libs vulkan-loader mesa-vulkan-drivers libva-utils
+  pm_try tesseract   # subtitle OCR
   if [[ $KNA_RPMFUSION == auto ]]; then
     if has_gpu amd || has_gpu intel; then KNA_RPMFUSION=yes; else KNA_RPMFUSION=no; fi
   fi
@@ -414,6 +417,7 @@ pacman)
   pm_refresh
   # The VA-API driver for AMD (and the other Mesa drivers) is part of the mesa package.
   pm_install ca-certificates curl unzip xz tar fontconfig ttf-dejavu icu openssl vulkan-icd-loader mesa libva-utils
+  pm_try tesseract   # subtitle OCR
   has_gpu amd && pm_try vulkan-radeon
   has_gpu intel && pm_try intel-media-driver vpl-gpu-rt libvpl vulkan-intel
   PY_PKGS=(python python-pip)

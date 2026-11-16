@@ -80,12 +80,13 @@ function streamInfo(tp) {
   return f?.streams.find(s => s.index === tp.stream);
 }
 
-const subtitleOutputs = [["", "Automatic"], ["copy", "Copy (no re-encoding)"], ["srt", "SRT"], ["ass", "ASS"], ["webvtt", "WebVTT"], ["mov_text", "mov_text (MP4)"]];
+const subtitleOutputs = [["", "Automatic"], ["copy", "Copy (no re-encoding)"], ["srt", "SRT"], ["ass", "ASS"], ["webvtt", "WebVTT"], ["mov_text", "mov_text (MP4)"], ["ocr", "Text (OCR, picture subtitles)"]];
+const isPgs = tp => ["hdmv_pgs_subtitle", "pgssub"].includes(tp.codec ?? streamInfo(tp)?.codec);
 function outputOptions(kind, current) {
   let opts = [];
   if (kind === "video") opts = [["", t("Profile (encode)")], ["copy", t("Copy (no re-encoding)")]];
   else if (kind === "audio") opts = [["", t("Job setting")], ...(state.options.audioCodecs ?? []).filter(o => o.value !== "Auto").map(o => [o.value, o.label])];
-  else if (kind === "subtitle") opts = subtitleOutputs.map(([v, l]) => [v, v === "" || v === "copy" ? t(l) : l]);
+  else if (kind === "subtitle") opts = subtitleOutputs.map(([v, l]) => [v, v === "" || v === "copy" || v === "ocr" ? t(l) : l]);
   return opts.map(([v, l]) => `<option value="${esc(v)}" ${(current ?? "").toLowerCase() === v.toLowerCase() ? "selected" : ""}>${esc(l)}</option>`).join("");
 }
 
@@ -670,6 +671,7 @@ function renderStreams(body, kind) {
         <td><span class="codec">#${tp.stream} ${esc(tp.codec ?? si?.codec ?? "")} ${esc(tp.language ?? "")}</span>${tp.title ? ` · ${esc(tp.title)}` : ""}<div class="details">${esc(si?.details ?? "")}</div></td>
         ${outputs ? `<td><select data-f="output" ${tp.include ? "" : "disabled"}>${outputOptions(kind, tp.output)}</select></td>` : ""}
         ${outputs && kind === "audio" ? `<td><input class="delay" type="number" min="0" step="16" data-f="bitrate" value="${tp.bitrate ?? ""}" placeholder="auto" ${copies || !tp.include ? "disabled" : ""} title="${esc(t("kb/s per stereo pair; 0 = the setting below"))}"></td>` : ""}
+        ${kind === "subtitle" ? `<td>${isPgs(tp) ? `<button class="btn sm ghost" data-a="ocr" data-i="${i}" title="${esc(t("Reads this picture track with OCR and saves it as an SRT file."))}">OCR → .srt</button>` : ""}</td>` : ""}
         ${kind === "subtitle" && p.usesVideoFilters ? `<td><label class="check"><input type="radio" name="burn" data-f="burn" ${tp.burn ? "checked" : ""}>${esc(t("Burn"))}</label></td>` : ""}
       </tr>`;
     }).join("")}</tbody></table>` : `<p class="muted small">${esc(t("No tracks of this kind."))}</p>`}
@@ -690,6 +692,15 @@ function renderStreams(body, kind) {
   };
   body.onclick = guard(async e => {
     if (e.target.closest("[data-a=no-burn]")) { materialize().forEach(x => { x.burn = false; }); saveAndRender(); }
+    const ob = e.target.closest("[data-a=ocr]");
+    if (ob) {
+      const tp = tracks()[+ob.dataset.i];
+      ob.disabled = true; ob.textContent = t("Reading…");
+      try {
+        const r = await api("POST", `/api/jobs/${ed.id}/ocr`, { file: tp.file, stream: tp.stream, language: tp.language });
+        toast(t("OCR: {0} subtitles written to {1}.", r.subtitles, r.path), "ok");
+      } finally { ob.disabled = false; ob.textContent = "OCR → .srt"; }
+    }
   });
 }
 

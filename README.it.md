@@ -142,6 +142,15 @@ validato campo per campo e confrontato con il rilevamento hardware; non cambia n
   (lasciare, spostare in `_done`, eliminare). La scansione funziona anche su NAS e bind mount; un file viene preso quando smette di crescere.
 - Il risultato di ogni lavoro si scarica dal pulsante ⬇ della coda.
 
+
+### OCR dei sottotitoli
+
+I sottotitoli immagine dei Blu-ray (PGS) diventano testo, come in Subtitle Edit: KnA li decodifica e li legge con
+Tesseract 5 e il modello della lingua di ogni traccia (scaricato al primo uso). Scegli "Testo (OCR)" per una traccia,
+attiva "Converti i sottotitoli immagine in testo" per tutti i file, o esporta una traccia con "OCR → .srt".
+Impostazioni → Componenti installa Tesseract (Windows) e i modelli; su Linux/macOS Tesseract arriva dal pacchetto di
+sistema (`apt install tesseract-ocr`, `brew install tesseract`), già presente nell'immagine Docker.
+
 ### Drag & drop intelligente
 Desktop e web: video, script, dischi e cartelle vanno in coda; **sottotitoli, audio e font** si agganciano al lavoro su cui li rilasci
 o al video con lo stesso nome (`Ep01.ita.ass` → `Ep01.mkv`; in hardsub il sottotitolo diventa quello impresso); i **preset** `.json` vengono importati;

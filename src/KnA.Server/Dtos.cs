@@ -147,6 +147,7 @@ public sealed record IdsRequest(List<Guid> Ids);
 public sealed record UpdateJobsRequest(List<Guid> Ids, JobSettings Settings);
 public sealed record ParameterOptionsRequest(string Tool, JobSettings Settings);
 public sealed record SizeRequest(JobSettings Settings, JobEdit? Edit);
+public sealed record OcrRequest(string File, int Stream, string? Language);
 public sealed record EditRequest(JobSettings? Settings, JobEdit Edit);
 public sealed record ClearRequest(List<JobStatus> Statuses);
 public sealed record MoveRequest(int Delta);

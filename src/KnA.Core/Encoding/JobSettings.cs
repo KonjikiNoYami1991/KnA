@@ -276,6 +276,8 @@ public sealed record JobSettings
     public ProSettings Pro { get; init; } = new();
     /// <summary>How the picture is enlarged when the target resolution is above the source (AI upscaling).</summary>
     public UpscaleSettings Upscale { get; init; } = new();
+    /// <summary>Picture subtitles (Blu-ray PGS) become text (SRT/ASS/mov_text) through OCR, like Subtitle Edit.</summary>
+    public bool OcrPictureSubtitles { get; init; }
     /// <summary>Prefer a "same name.ass/.srt" file next to the video for hardsub.</summary>
     public bool UseSidecarSubtitles { get; init; } = true;
     /// <summary>Output container ("mkv", "mp4"…), null = profile default.</summary>
@@ -322,7 +324,7 @@ public sealed record JobSettings
                 Arguments = r.Arguments with { AudioFfmpeg = preset.Arguments.AudioFfmpeg, Fdkaac = preset.Arguments.Fdkaac, Qaac = preset.Arguments.Qaac },
             };
         if (parts.HasFlag(PresetParts.Subtitles))
-            r = r with { Subtitles = preset.Subtitles, UseSidecarSubtitles = preset.UseSidecarSubtitles };
+            r = r with { Subtitles = preset.Subtitles, UseSidecarSubtitles = preset.UseSidecarSubtitles, OcrPictureSubtitles = preset.OcrPictureSubtitles, Arguments = r.Arguments with { Subtitles = preset.Arguments.Subtitles } };
         if (parts.HasFlag(PresetParts.Filters))
             r = r with { VideoFilters = preset.VideoFilters, Frameserver = preset.Frameserver };
         if (parts.HasFlag(PresetParts.Tracks))

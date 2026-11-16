@@ -312,6 +312,20 @@ app.MapPost("/api/jobs/{id:guid}/size", (Guid id, SizeRequest req) =>
         ? Results.Ok(new { text = SizePlanner.Describe(b), b.VideoKbps, b.TooSmall })
         : Results.Ok(new { text = (string?)null, VideoKbps = 0, TooSmall = false });
 });
+// Subtitle OCR of one picture track (PGS) into an SRT next to the source, outside the queue.
+app.MapPost("/api/jobs/{id:guid}/ocr", async (Guid id, OcrRequest req, CancellationToken ct) =>
+{
+    var j = queue.Find(id) ?? throw new KeyNotFoundException();
+    if (!browser.IsAllowed(req.File)) return Results.Problem(L.T("Outside the allowed media roots: {0}", req.File), statusCode: 403);
+    var dir = Path.GetDirectoryName(j.SourcePath) ?? "";
+    if (!browser.IsWritable(dir)) return Results.Problem(L.T("Outside the allowed media roots: {0}", dir), statusCode: 403);
+    try
+    {
+        var r = await queue.OcrTrackAsync(j, req.File, req.Stream, req.Language, null, null, ct);
+        return Results.Ok(new { path = r.SrtPath, r.Subtitles, r.Pictures, r.Language });
+    }
+    catch (InvalidOperationException ex) { return Results.Problem(ex.Message, statusCode: 400); }
+});
 // Compressibility check: short samples encoded with these settings predict the final size.
 app.MapPost("/api/jobs/{id:guid}/estimate", async (Guid id, SizeRequest req, CancellationToken ct) =>
 {

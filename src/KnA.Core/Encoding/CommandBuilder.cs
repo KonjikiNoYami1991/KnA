@@ -466,8 +466,11 @@ public static class CommandBuilder
             foreach (var t in tracks.Where(t => t.Include && t.Kind == "subtitle"))
             {
                 var sst = TrackPlanner.Lookup(t, media) as SubtitleStream;
+                bool ocr = KnA.Core.Ocr.SubtitleOcr.Wanted(t, s);
+                // Picture track to read with OCR: the runner replaces it with the SRT before encoding (not in previews).
+                if (ocr && sst is not null && KnA.Core.Ocr.SubtitleOcr.CanRead(sst.CodecName)) continue;
                 var codec = Containers.SubtitleCodec(restOnly ? "mkv" : container, sst, t.Codec);
-                if (t.Output is { Length: > 0 } wanted)
+                if (t.Output is { Length: > 0 } wanted && !ocr)
                 {
                     var chosen = Containers.ChosenSubtitleCodec(restOnly ? "mkv" : container, sst, t.Codec, wanted);
                     if (chosen is null)

@@ -217,7 +217,8 @@ public sealed class JobEditorWindow : Window
         "audio" => new (string?, string)[] { (null, L.T("Job setting")) }
             .Concat(Enum.GetValues<AudioCodec>().Where(c => c != AudioCodec.Auto).Select(c => ((string?)c.ToString(), c.Display()))),
         "subtitle" => new (string?, string)[] { (null, L.T("Automatic")) }
-            .Concat(Containers.SubtitleOutputs.Select(o => ((string?)o.Value, o.Value == "copy" ? L.T("Copy (no re-encoding)") : o.Label))),
+            .Concat(Containers.SubtitleOutputs.Select(o => ((string?)o.Value, o.Value == "copy" ? L.T("Copy (no re-encoding)") : o.Label)))
+            .Append((KnA.Core.Ocr.SubtitleOcr.OutputValue, L.T("Text (OCR, picture subtitles)"))),
         _ => [],
     };
 
@@ -966,6 +967,32 @@ public sealed class JobEditorWindow : Window
                 kbps.IsEnabled = !copies && t.Include;
                 ToolTip.SetTip(kbps, L.T("kb/s per stereo pair; 0 = the setting below"));
                 Put(kbps, 3);
+            }
+            if (kind == "subtitle" && st is SubtitleStream { CodecName: var cn } && KnA.Core.Ocr.SubtitleOcr.CanRead(cn))
+            {
+                // Subtitle Edit's "OCR → save as": the text version next to the video, outside the queue
+                var ocrBtn = new Button { Content = "OCR → .srt", Classes = { "ghost" } };
+                ToolTip.SetTip(ocrBtn, L.T("Reads this picture track with OCR and saves it as an SRT file."));
+                var track = t;
+                ocrBtn.Click += async (_, _) =>
+                {
+                    var pick = await StorageProvider.SaveFilePickerAsync(new FilePickerSaveOptions
+                    {
+                        SuggestedFileName = Path.GetFileNameWithoutExtension(_job.SourcePath) + (track.Language is { Length: > 0 } lg ? "." + lg : "") + ".srt",
+                        FileTypeChoices = [new FilePickerFileType("SRT") { Patterns = ["*.srt"] }],
+                    });
+                    if (pick?.TryGetLocalPath() is not { } path) return;
+                    ocrBtn.IsEnabled = false;
+                    var prog = new Progress<double>(v => ocrBtn.Content = $"OCR {v:0}%");
+                    try
+                    {
+                        var r = await Task.Run(() => _queue.OcrTrackAsync(_job, track.File, track.Stream, track.Language, path, prog));
+                        _issues.Children.Add(Ui.Note(L.T("OCR: {0} subtitles written to {1}.", r.Subtitles, path)));
+                    }
+                    catch (Exception ex) { _issues.Children.Add(Ui.Note(ex.Message, true)); }
+                    finally { ocrBtn.Content = "OCR → .srt"; ocrBtn.IsEnabled = true; }
+                };
+                Put(ocrBtn, 3);
             }
             if (kind == "subtitle" && p.UsesVideoFilters)
             {

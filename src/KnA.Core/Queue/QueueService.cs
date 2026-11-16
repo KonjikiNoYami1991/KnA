@@ -139,6 +139,24 @@ public sealed class QueueService : IDisposable
         }
     }
 
+    /// <summary>
+    /// OCR of one picture subtitle track of a job into an SRT file (Subtitle Edit's "OCR → save"), outside the
+    /// queue. <paramref name="srtPath"/> null = next to the source, "name.lang.srt".
+    /// </summary>
+    public async Task<Ocr.OcrResult> OcrTrackAsync(QueueJob job, string file, int stream, string? language, string? srtPath,
+        IProgress<double>? progress = null, CancellationToken ct = default)
+    {
+        var tools = Tools ?? throw new InvalidOperationException(L.T("FFmpeg was not found. Configure it in Settings."));
+        var tesseract = Ocr.SubtitleOcr.LocateTesseract(Store.DataDirectory)
+                        ?? throw new InvalidOperationException(L.T("OCR needs Tesseract: install it in Settings → Components (Linux: apt install tesseract-ocr; macOS: brew install tesseract)."));
+        srtPath ??= Path.Combine(Path.GetDirectoryName(job.SourcePath) ?? ".",
+            Path.GetFileNameWithoutExtension(job.SourcePath) + (language is { Length: > 0 } l ? "." + l : "") + (stream > 0 ? "." + stream.ToString(System.Globalization.CultureInfo.InvariantCulture) : "") + ".srt");
+        var work = Path.Combine(Store.TempDirectory, "ocr-" + Guid.NewGuid().ToString("N")[..8]);
+        Directory.CreateDirectory(work);
+        try { return await Ocr.SubtitleOcr.RecognizeAsync(tools.Ffmpeg, tesseract, Store.DataDirectory, file, stream, language, srtPath, work, progress, null, ct); }
+        finally { try { Directory.Delete(work, true); } catch (IOException) { } }
+    }
+
     /// <summary>What a maximum file size leaves for each stream of <paramref name="job"/> with these settings and edits.</summary>
     public SizeBudget? SizeBudget(QueueJob job, JobSettings settings, JobEdit? edit = null)
     {
