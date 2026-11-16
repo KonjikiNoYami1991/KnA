@@ -882,14 +882,9 @@ public sealed class JobEditorWindow : Window
     /// <summary>What a target size leaves for each stream of this file, with the current tracks and trim.</summary>
     private string? SizeText(JobSettings s)
     {
-        try
-        {
-            var ctx = KnA.Core.Queue.JobRunner.BuildContext(_job, _queue.Settings, _queue.Tools) with { Settings = s, Edit = _edit };
-            if (SizePlanner.For(ctx) is not { } b) return null;
-            var text = SizePlanner.Describe(b);
-            return b.TooSmall ? "⚠ " + text + "\n" + L.T("Too small for this duration: the video gets the minimum and the file will be bigger.") : text;
-        }
-        catch (Exception ex) when (ex is InvalidOperationException or NullReferenceException) { return null; }
+        if (_queue.SizeBudget(_job, s, _edit) is not { } b) return null;
+        var text = SizePlanner.Describe(b);
+        return b.TooSmall ? "⚠ " + text + "\n" + L.T("Too small for this duration: the video gets the minimum and the file will be bigger.") : text;
     }
 
     private Control VideoTab()

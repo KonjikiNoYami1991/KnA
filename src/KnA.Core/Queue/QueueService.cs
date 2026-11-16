@@ -139,6 +139,15 @@ public sealed class QueueService : IDisposable
         }
     }
 
+    /// <summary>What a maximum file size leaves for each stream of <paramref name="job"/> with these settings and edits.</summary>
+    public SizeBudget? SizeBudget(QueueJob job, JobSettings settings, JobEdit? edit = null)
+    {
+        if (job.Media is null) return null;
+        var ctx = JobRunner.BuildContext(job, Settings, Tools) with { Settings = settings };
+        if (edit is not null) ctx = ctx with { Edit = edit };
+        return SizePlanner.For(ctx);
+    }
+
     public void SaveSettings(AppSettings? settings = null)
     {
         if (settings is not null) Settings = settings;

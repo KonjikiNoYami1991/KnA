@@ -8,6 +8,13 @@ public sealed record SizeBudget(double Seconds, double TargetKbits, double Audio
 {
     /// <summary>Less than this is not a usable picture at any resolution: the size is too small for the duration.</summary>
     public bool TooSmall => VideoKbps < SizePlanner.MinimumVideoKbps;
+    /// <summary>
+    /// Above this the picture doesn't improve visibly (≈0.35 bit per pixel per frame of the output): a larger size is a
+    /// limit, not a goal, so the video stops here and the file stays smaller. 0 = unknown picture size.
+    /// </summary>
+    public int CeilingKbps { get; init; }
+    public int EffectiveKbps => Math.Max(SizePlanner.MinimumVideoKbps, CeilingKbps > 0 ? Math.Min(VideoKbps, CeilingKbps) : VideoKbps);
+    public bool Capped => CeilingKbps > 0 && VideoKbps > CeilingKbps;
 }
 
 /// <summary>
@@ -88,7 +95,15 @@ public static class SizePlanner
             .Select(t => TrackPlanner.Lookup(t, media))
             .Sum(st => st is null ? 0 : st.SizeBytes > 0 ? st.SizeBytes * seconds / sourceSeconds : st.BitRate / 8.0 * seconds);
         var container = s.EffectiveContainer;
-        return Plan(s.Encoder.TargetSizeMB.Value, seconds, AudioKbps(tracks, media, s, container, ctx.Options.AudioEncoders), subtitleBytes, container);
+        var budget = Plan(s.Encoder.TargetSizeMB.Value, seconds, AudioKbps(tracks, media, s, container, ctx.Options.AudioEncoders), subtitleBytes, container);
+        if (ctx.Source.PrimaryVideo is { Width: > 0, Height: > 0 } v)
+        {
+            double h = s.ProfileDefinition.UsesResolution && s.Resolution > 0 && s.Resolution < v.Height ? s.Resolution : v.Height;
+            double w = v.Width * h / v.Height;
+            double fps = s.VideoFilters.Fps ?? (v.FrameRate > 0 ? v.FrameRate : 25);
+            budget = budget with { CeilingKbps = (int)(w * h * fps * 0.35 / 1000) };
+        }
+        return budget;
     }
 
     /// <summary>
@@ -99,7 +114,7 @@ public static class SizePlanner
     {
         if (For(ctx) is not { } b) return ctx;
         var o = ctx.Settings.Encoder;
-        int kbps = Math.Max(b.VideoKbps, MinimumVideoKbps);
+        int kbps = b.EffectiveKbps;
         if (b.TooSmall)
             issues?.Add(Containers.Warning("{0} MB is too small for {1}: the video gets the minimum ({2} kb/s) and the file will be bigger.",
                 o.TargetSizeMB!.Value.ToString("0.#", System.Globalization.CultureInfo.CurrentCulture), Format(b.Seconds), MinimumVideoKbps));
@@ -115,7 +130,8 @@ public static class SizePlanner
 
     public static string Describe(SizeBudget b) =>
         L.T("Video {0} kb/s · audio {1} kb/s · subtitles {2} kb/s · container {3} kb/s ({4})",
-            b.VideoKbps, Math.Round(b.AudioKbps), Math.Round(b.SubtitleKbps, 1), Math.Round(b.OverheadKbps), Format(b.Seconds));
+            b.EffectiveKbps, Math.Round(b.AudioKbps), Math.Round(b.SubtitleKbps, 1), Math.Round(b.OverheadKbps), Format(b.Seconds))
+        + (b.Capped ? " · " + L.T("more than this video needs: the file will be smaller") : "");
 
     private static string Format(double seconds)
     {

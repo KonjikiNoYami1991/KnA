@@ -947,5 +947,6 @@ public static partial class L
         ["All {0} parameters"] = "Tutti i parametri di {0}",
         ["{0} MB is too small for {1}: the video gets the minimum ({2} kb/s) and the file will be bigger."] = "{0} MB sono troppo pochi per {1}: il video riceve il minimo ({2} kb/s) e il file sarà più grande.",
         ["Video {0} kb/s · audio {1} kb/s · subtitles {2} kb/s · container {3} kb/s ({4})"] = "Video {0} kb/s · audio {1} kb/s · sottotitoli {2} kb/s · contenitore {3} kb/s ({4})",
+        ["more than this video needs: the file will be smaller"] = "più di quanto serva a questo video: il file sarà più piccolo",
     };
 }

@@ -70,7 +70,8 @@ function renderIssues() {
 function renderTab() {
   const body = $("#ed-body");
   body.onchange = body.oninput = body.onclick = null;
-  ({ tracks: renderTracks, trim: renderTrim, filters: renderFilters, output: renderOutput, preview: renderPreview })[ed.tab](body);
+  ({ tracks: renderTracks, trim: renderTrim, video: renderVideo, audio: b => renderStreams(b, "audio"), subtitles: b => renderStreams(b, "subtitle"),
+     filters: renderFilters, output: renderOutput, preview: renderPreview })[ed.tab](body);
 }
 
 // ---------------------------------------------------------------- tracks
@@ -148,9 +149,8 @@ function renderTracks(body) {
         <th>${esc(t("Use"))}</th><th>${esc(t("Source"))}</th><th>${esc(t("Stream"))}</th>
         ${k !== "attachment" ? `<th>${esc(t("Language"))}</th>` : ""}<th class="hide-sm">${esc(k === "attachment" ? t("File name") : t("Title"))}</th>
         ${k !== "attachment" ? `<th>${esc(t("Delay (ms)"))}</th>` : ""}
-        ${outputs && k !== "attachment" ? `<th>${esc(t("Output"))}</th>` : ""}${outputs && k === "audio" ? `<th>kb/s</th>` : ""}
+        ${outputs && k === "video" ? `<th>${esc(t("Output"))}</th>` : ""}
         ${k === "audio" || k === "subtitle" ? `<th>${esc(t("Default"))}</th><th>${esc(t("Forced"))}</th>` : ""}
-        ${k === "subtitle" && p.usesVideoFilters ? `<th>${esc(t("Burn"))}</th>` : ""}
         <th></th></tr></thead><tbody>
         ${rows.map(({ tp, i }) => {
           const si = streamInfo(tp);
@@ -164,17 +164,15 @@ function renderTracks(body) {
             ${k !== "attachment" ? `<td><input class="lang" data-f="language" value="${esc(tp.language ?? "")}" maxlength="3" placeholder="und"></td>` : ""}
             <td class="hide-sm"><input data-f="title" value="${esc(tp.title ?? "")}" ${k === "attachment" && !standalone ? "readonly" : ""}></td>
             ${k !== "attachment" ? `<td><input class="delay" type="number" step="10" data-f="delayMs" value="${tp.delayMs || 0}"></td>` : ""}
-            ${outputs && k !== "attachment" ? `<td><select data-f="output">${outputOptions(k, tp.output)}</select></td>` : ""}
-            ${outputs && k === "audio" ? `<td><input class="delay" type="number" min="0" step="16" data-f="bitrate" value="${tp.bitrate ?? ""}" placeholder="auto" ${copies ? "disabled" : ""} title="${esc(t("Per stereo pair; 0 = job setting"))}"></td>` : ""}
+            ${outputs && k === "video" ? `<td><select data-f="output">${outputOptions(k, tp.output)}</select></td>` : ""}
             ${k === "audio" || k === "subtitle" ? `<td><input type="checkbox" data-f="default" ${tp.default ? "checked" : ""}></td><td><input type="checkbox" data-f="forced" ${tp.forced ? "checked" : ""}></td>` : ""}
-            ${k === "subtitle" && p.usesVideoFilters ? `<td><input type="radio" name="burn" data-f="burn" ${tp.burn ? "checked" : ""}></td>` : ""}
             <td class="row"><button class="btn icon ghost sm" data-a="up" title="${esc(t("Move up"))}"><svg><use href="#i-up"/></svg></button>
               <button class="btn icon ghost sm" data-a="down" title="${esc(t("Move down"))}"><svg><use href="#i-down"/></svg></button>
               ${standalone ? `<button class="btn icon ghost sm" data-a="rm-att" title="${esc(t("Remove"))}"><svg><use href="#i-x"/></svg></button>` : ""}</td>
           </tr>`;
         }).join("")}
       </tbody></table>
-      ${k === "subtitle" && p.usesVideoFilters ? `<button class="btn sm ghost" data-a="no-burn" ${rows.some(r => r.tp.burn) ? "" : "disabled"}>${esc(t("Don't burn any subtitle"))}</button>` : ""}
+      ${outputs && (k === "audio" || k === "subtitle") ? `<p class="muted small">${esc(k === "audio" ? t("Codec and bitrate of each track: Audio tab.") : t("Format of each track and burning into the picture: Subtitles tab."))}</p>` : ""}
       </div>`;
     }).join("")}
     ${p.isKeyframes || p.isImages ? "" : renderChapters()}`;
@@ -603,7 +601,7 @@ function renderOutput(body) {
         <div class="row"><button class="btn sm" data-a="cmd"><svg><use href="#i-term"/></svg><span>${esc(t("FFmpeg command"))}</span></button></div>
       </div>
     </div>`;
-  renderSettingsForm($("#out-form", body), ed.settings, { full: true, allowedContainers: ed.analysis.allowedContainers, onChange: () => saveAndRender() });
+  renderSettingsForm($("#out-form", body), ed.settings, formOpts("output"));
   body.onchange = e => {
     if (e.target.id === "out-folder") { ed.edit.outputFolder = e.target.value.trim() || null; save(); }
   };
@@ -626,6 +624,64 @@ function renderOutput(body) {
     }
     if (a === "ai-analyze") { await saveNow(); await analyzeJob(ed.id, ed.settings, applyAi); }
     if (a === "ai-ask") { await saveNow(); openAssistant(applyAi, ed.id); }
+  });
+}
+
+// ---------------------------------------------------------------- video / audio / subtitles
+// One tab per kind of stream: every setting appears in exactly one place.
+const formOpts = section => ({
+  full: true, section, allowedContainers: ed.analysis.allowedContainers, onChange: () => saveAndRender(), onQuietChange: () => save(),
+  sizeInfo: async s => (await api("POST", `/api/jobs/${ed.id}/size`, { settings: s, edit: ed.edit })).text,
+});
+
+function renderVideo(body) {
+  const v = ed.analysis.files[0];
+  body.innerHTML = `<div class="two-col"><div id="sec-form"></div>
+    <div><div class="section"><p class="muted small">${esc(t("Source"))}: ${esc(streamInfo(tracks().find(x => x.kind === "video"))?.details ?? "")}</p>
+      <button class="btn sm" data-a="cmd"><svg><use href="#i-term"/></svg><span>${esc(t("Encoder command"))}</span></button>
+      <p class="muted small">${esc(t("Picture filters (crop, resize, denoise, VapourSynth/AviSynth scripts) are in the Filters tab; the cut in the Trim tab."))}</p></div></div></div>`;
+  renderSettingsForm($("#sec-form", body), ed.settings, formOpts("video"));
+  body.onchange = null;
+  body.onclick = guard(async e => {
+    if (e.target.closest("[data-a=cmd]")) { await saveNow(); showText(t("Encoder command"), await api("GET", `/api/jobs/${ed.id}/command`)); }
+  });
+}
+
+/** Per-track choices of one kind (audio: codec + bitrate; subtitles: format + burning), then the section's settings. */
+function renderStreams(body, kind) {
+  const list = tracks();
+  const p = profileOf(ed.settings.profile);
+  const outputs = p.encodesVideo || p.isRemux;
+  const rows = list.map((tp, i) => ({ tp, i })).filter(x => x.tp.kind === kind);
+  body.innerHTML = `<div class="section"><h3>${esc(kind === "audio" ? t("Audio tracks") : t("Subtitle tracks"))}</h3>
+    ${rows.length ? `<table class="tracks"><tbody>${rows.map(({ tp, i }) => {
+      const si = streamInfo(tp);
+      const copies = (tp.output ?? "").toLowerCase() === "copy";
+      return `<tr class="${tp.include || tp.burn ? "" : "off"}" data-i="${i}">
+        <td><input type="checkbox" data-f="include" ${tp.include ? "checked" : ""}></td>
+        <td><span class="codec">#${tp.stream} ${esc(tp.codec ?? si?.codec ?? "")} ${esc(tp.language ?? "")}</span>${tp.title ? ` · ${esc(tp.title)}` : ""}<div class="details">${esc(si?.details ?? "")}</div></td>
+        ${outputs ? `<td><select data-f="output" ${tp.include ? "" : "disabled"}>${outputOptions(kind, tp.output)}</select></td>` : ""}
+        ${outputs && kind === "audio" ? `<td><input class="delay" type="number" min="0" step="16" data-f="bitrate" value="${tp.bitrate ?? ""}" placeholder="auto" ${copies || !tp.include ? "disabled" : ""} title="${esc(t("kb/s per stereo pair; 0 = the setting below"))}"></td>` : ""}
+        ${kind === "subtitle" && p.usesVideoFilters ? `<td><label class="check"><input type="radio" name="burn" data-f="burn" ${tp.burn ? "checked" : ""}>${esc(t("Burn"))}</label></td>` : ""}
+      </tr>`;
+    }).join("")}</tbody></table>` : `<p class="muted small">${esc(t("No tracks of this kind."))}</p>`}
+    ${kind === "audio" && outputs && rows.length ? `<p class="muted small">${esc(t("\"Job setting\" follows the codec and bitrate chosen below for every track."))}</p>` : ""}
+    ${kind === "subtitle" && p.usesVideoFilters && rows.some(r => r.tp.burn) ? `<button class="btn sm ghost" data-a="no-burn">${esc(t("Don't burn any subtitle"))}</button>` : ""}
+    </div><div id="sec-form"></div>
+    ${kind === "audio" ? `<p class="muted small">${esc(t("Volume, normalisation, downmix and sample rate: Filters tab."))}</p>` : ""}`;
+  renderSettingsForm($("#sec-form", body), ed.settings, formOpts(kind === "audio" ? "audio" : "subtitles"));
+  body.onchange = e => {
+    const tr = e.target.closest("tr[data-i]"); const f = e.target.dataset.f;
+    if (!tr || !f) return;
+    const l = materialize(); const tp = l[+tr.dataset.i];
+    if (f === "output") tp.output = e.target.value || null;
+    else if (f === "bitrate") tp.bitrate = Number(e.target.value) > 0 ? Number(e.target.value) : null;
+    else if (f === "burn") l.forEach(x => { if (x.kind === "subtitle") x.burn = x === tp; });
+    else tp[f] = e.target.checked;
+    saveAndRender();
+  };
+  body.onclick = guard(async e => {
+    if (e.target.closest("[data-a=no-burn]")) { materialize().forEach(x => { x.burn = false; }); saveAndRender(); }
   });
 }
 

@@ -264,7 +264,7 @@ app.MapPost("/api/jobs", (AddJobsRequest req) =>
 {
     var denied = req.Paths.Where(p => !browser.IsAllowed(p)).ToList();
     if (denied.Count > 0) return Results.Problem(L.T("Outside the allowed media roots: {0}", denied[0]), statusCode: 403);
-    var added = queue.AddPaths(req.Paths, req.Settings, req.Extensions);
+    var added = queue.AddPaths(req.Paths, req.Settings ?? new JobSettings(), req.Extensions);
     return Results.Ok(new { added = added.Count });
 });
 app.MapPost("/api/jobs/remove", (IdsRequest req) => { queue.Remove(req.Ids); return Results.Ok(); });
@@ -285,6 +285,20 @@ app.MapGet("/api/jobs/{id:guid}/analysis", async (Guid id, CancellationToken ct)
 {
     var j = queue.Find(id) ?? throw new KeyNotFoundException();
     return Results.Ok(AnalysisDto.From(await queue.AnalyzeAsync(j, ct), j.SourcePath));
+});
+// Every option of the program that runs for a stream (read from its own help), for the parameter editors.
+app.MapPost("/api/tools/options", async (ParameterOptionsRequest req, CancellationToken ct) =>
+{
+    var (program, options) = await queue.ParameterOptionsAsync(req.Tool, req.Settings, ct);
+    return Results.Ok(new { program, options = options.Select(o => new { o.Name, o.Argument, o.Description, o.Values }) });
+});
+// What a maximum file size leaves for each stream of a job.
+app.MapPost("/api/jobs/{id:guid}/size", (Guid id, SizeRequest req) =>
+{
+    var j = queue.Find(id) ?? throw new KeyNotFoundException();
+    return queue.SizeBudget(j, req.Settings, req.Edit) is { } b
+        ? Results.Ok(new { text = SizePlanner.Describe(b), b.VideoKbps, b.TooSmall })
+        : Results.Ok(new { text = (string?)null, VideoKbps = 0, TooSmall = false });
 });
 app.MapPut("/api/jobs/{id:guid}/edit", async (Guid id, EditRequest req, CancellationToken ct) =>
 {

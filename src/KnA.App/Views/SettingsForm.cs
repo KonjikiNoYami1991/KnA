@@ -333,7 +333,14 @@ public sealed class SettingsForm : StackPanel
         rc.Add((RateControl.Bitrate, L.T("Average bitrate")));
         rc.Add((RateControl.TargetSize, L.T("Maximum file size")));
         var mode = o.RateControl == RateControl.Quality && quality is null ? RateControl.Auto : o.RateControl;
-        Children.Add(Ui.Field("Rate control", Ui.Combo(rc, mode, v => SetO(x => x with { RateControl = v }, true))));
+        // The values shown as defaults are stored with the choice (a number on screen is never ignored).
+        Children.Add(Ui.Field("Rate control", Ui.Combo(rc, mode, v => SetO(x => x with
+        {
+            RateControl = v,
+            BitrateKbps = v == RateControl.Bitrate ? x.BitrateKbps ?? 6000 : x.BitrateKbps,
+            TargetSizeMB = v == RateControl.TargetSize ? x.TargetSizeMB ?? 4096 : x.TargetSizeMB,
+            QualityValue = v == RateControl.Quality && quality is { } dq ? x.QualityValue ?? Math.Round((dq.Min + dq.Max) / 2.5) : x.QualityValue,
+        }, true))));
         switch (mode)
         {
             case RateControl.Auto:
