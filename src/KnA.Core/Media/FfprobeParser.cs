@@ -180,6 +180,20 @@ public static class FfprobeParser
                             DolbyVisionCompatibility = Int(item, "dv_bl_signal_compatibility_id"),
                             DolbyVisionHasEnhancementLayer = Int(item, "el_present_flag") == 1,
                         };
+                    else if (hdr.DolbyVisionProfile is null)
+                    {
+                        // RPU in the frames but no configuration record in the container (old mkvmerge remuxes of
+                        // UHD Blu-rays): the base layer tells the profile family. PQ BT.2020 = HDR10 compatible
+                        // (profile 7/8.1, handled as 8.1); anything else = profile 5 (no fallback).
+                        bool pq = v.ColorTransfer == "smpte2084";
+                        bool hlg = v.ColorTransfer == "arib-std-b67";
+                        hdr = hdr with
+                        {
+                            DolbyVisionProfile = pq || hlg ? 8 : 5,
+                            DolbyVisionCompatibility = pq ? 1 : hlg ? 4 : 0,
+                            DolbyVisionHasEnhancementLayer = Int(item, "el_bit_depth") is > 0 && Int(item, "disable_residual_flag") == 0,
+                        };
+                    }
                 }
                 else if (type.Contains("Mastering display", StringComparison.OrdinalIgnoreCase) && Str(item, "red_x") is not null)
                 {

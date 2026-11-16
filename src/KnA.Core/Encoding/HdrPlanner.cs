@@ -155,6 +155,8 @@ public static class HdrPlanner
     private static HdrPlan ToneMap(VideoStream v, JobSettings s, HdrEnvironment env, List<ValidationIssue> issues)
     {
         var hdr = v.Hdr;
+        // 10-bit SDR when the encoder takes it (HEVC/AV1/VP9…): tone mapping makes smooth gradients that 8 bits band.
+        string fmt = s.EffectiveTenBit ? "yuv420p10le" : "yuv420p";
         string filter;
         if (env.HasLibplacebo)
         {
@@ -163,7 +165,7 @@ public static class HdrPlanner
             // stretches dim ones towards white (the "too bright" SDR), and contrast_recovery lifts flat areas further.
             filter = $"libplacebo=tonemapping={LibplaceboCurve(s.ToneMap)}" +
                      (s.ToneMapDynamic ? "" : ":peak_detect=0:contrast_recovery=0") +
-                     ":colorspace=bt709:color_primaries=bt709:color_trc=bt709:range=tv:format=yuv420p";
+                     $":colorspace=bt709:color_primaries=bt709:color_trc=bt709:range=tv:format={fmt}";
         }
         else
         {
@@ -177,7 +179,7 @@ public static class HdrPlanner
             }
             string tin = hdr.IsHlg ? "arib-std-b67" : "smpte2084";
             filter = $"zscale=tin={tin}:min=bt2020nc:pin=bt2020:rin=tv:t=linear:npl=100,format=gbrpf32le," +
-                     $"zscale=p=bt709,tonemap=tonemap={ZscaleCurve(s.ToneMap)}:desat=0,zscale=t=bt709:m=bt709:r=tv,format=yuv420p";
+                     $"zscale=p=bt709,tonemap=tonemap={ZscaleCurve(s.ToneMap)}:desat=0,zscale=t=bt709:m=bt709:r=tv,format={fmt}";
         }
         // The frames still carry the source's HDR side data (mastering display, MaxCLL/MaxFALL, HDR10+): recent FFmpeg
         // passes it to the encoder, which writes it into the SDR file, and players/TVs then treat it as HDR.

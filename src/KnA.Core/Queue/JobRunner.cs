@@ -111,7 +111,14 @@ public static class JobRunner
             job.OutputPath = compiled.Plan.OutputPath;
             job.CommandLine = compiled.Plan.CommandLine(ctx.Tools.Ffmpeg);
             job.AppendLog("");
-            job.AppendLog("Command: " + job.CommandLine);
+            // With NVEncC/QSVEncC/VCEEncC the FFmpeg-only command is never run: the runner logs the real ones
+            // (one command per step), so the log no longer shows two different video encoders.
+            if (compiled.Rigaya is null) job.AppendLog("Command: " + job.CommandLine);
+            // Nothing disappears silently: the tracks left out (profile, track rules or the user's choice) are listed.
+            var skipped = compiled.Tracks.Where(t => !t.Include && !t.Burn && t.Kind is "audio" or "subtitle").ToList();
+            if (skipped.Count > 0)
+                job.AppendLog(L.T("Tracks not included (enable them in Tracks): {0}", string.Join(", ", skipped.Select(t =>
+                    $"#{t.Stream} {t.Kind} {t.Codec}{(t.Language is { Length: > 0 } lg ? " " + lg : "")}{(t.Title is { Length: > 0 } ti ? " \"" + ti + "\"" : "")}"))));
             job.AppendLog("");
             if (p.IsImages)
             {

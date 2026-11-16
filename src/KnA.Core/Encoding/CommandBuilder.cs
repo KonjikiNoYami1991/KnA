@@ -299,7 +299,7 @@ public static class CommandBuilder
             inputs.AddOptions(vin, VideoEncoders.HwDecodeArgs(ctx.Options.HardwareDecoding,
                 p.AllowsHardware ? s.EffectiveBackend : EncoderBackend.Software, ctx.Options.VaapiDevice));
         var backend = preview is null ? (p.Kind == ProfileKind.RemuxMp4 ? s.EffectiveBackend : s.EffectiveBackend) : EncoderBackend.Software;
-        bool tenBit = preview is null && s.EffectiveTenBit && hdr.Action != HdrAction.ToneMap;
+        bool tenBit = preview is null && s.EffectiveTenBit;
 
         var body = new List<string>();
         bool plainPicture = false;   // no FFmpeg filter at all (a plain resize at most): the rigaya encoder can read the source itself

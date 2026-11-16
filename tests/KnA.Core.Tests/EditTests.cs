@@ -262,6 +262,27 @@ public class ToneMapTests
         Assert.Contains("tonemap=mobius", zs.Filter);
         Assert.EndsWith(HdrPlanner.StripHdrSideData, zs.Filter);
     }
+
+    [Fact]
+    public void Tone_mapped_av1_stays_ten_bit_and_h264_is_eight_bit()
+    {
+        var v = new VideoStream { Width = 3840, Height = 2160, ColorTransfer = "smpte2084", Hdr = new HdrInfo { Format = HdrFormat.Hdr10 } };
+        var env = new HdrEnvironment(true, true, false, false);
+        var av1 = new JobSettings { Profile = ProfileKind.UniversalMkv, Codec = VideoCodec.AV1, TenBit = true, Hdr = HdrMode.ToneMapSdr };
+        Assert.Contains("format=yuv420p10le", HdrPlanner.Plan(v, av1, false, false, env).Filter);
+        var h264 = av1 with { Codec = VideoCodec.H264 };
+        Assert.DoesNotContain("yuv420p10le", HdrPlanner.Plan(v, h264, false, false, env).Filter);
+    }
+
+    [Fact]
+    public void Dolby_vision_rpu_in_frames_without_configuration_record_is_detected()
+    {
+        var v = new VideoStream { Width = 3840, Height = 2160, ColorTransfer = "smpte2084", Hdr = new HdrInfo { Format = HdrFormat.Hdr10 } };
+        var media = new MediaInfo { Path = "x.mkv", Video = [v] };
+        FfprobeParser.ApplyFrameSideData(media, """{"frames":[{"side_data_list":[{"side_data_type":"Dolby Vision Metadata","rpu_type":2,"el_bit_depth":10,"disable_residual_flag":1}]}]}""");
+        Assert.Equal(HdrFormat.DolbyVision, v.Hdr.Format);
+        Assert.False(v.Hdr.DolbyVisionWithoutFallback);
+    }
 }
 
 public class ResumeTests(FeatureFixture fx) : IClassFixture<FeatureFixture>

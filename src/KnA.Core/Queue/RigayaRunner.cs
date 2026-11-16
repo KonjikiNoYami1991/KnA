@@ -42,7 +42,8 @@ public static class RigayaRunner
         {
             var args = native.ToList();
             args[^1] = video;
-            job.AppendLog($"Command ({name}, GPU reader): " + new EncodePlan(args, video).CommandLine(exe));
+            job.CommandLine = new EncodePlan(args, video).CommandLine(exe);
+            job.AppendLog($"Command ({name}, GPU reader): " + job.CommandLine);
             exit = await RunChainAsync([(exe, args, "")], workDir, ctx,
                 line => Progress(job, ctx, RigayaEncoders.ParseProgress(line, final.OutputDuration, frameRate)), job, ct);
             if (exit != 0)
@@ -70,11 +71,15 @@ public static class RigayaRunner
                         Frameserver.VsPipeVideoArgs(src.Script, src.StartFrame, src.EndFrame), "[vspipe] "));
             chain.Add((ctx.Tools.Ffmpeg, y4m.Plan.Arguments.ToList(), "[ffmpeg] "));
             chain.Add((exe, encArgs, ""));
-            job.AppendLog($"Command ({name}, FFmpeg pipe): " + y4m.Plan.CommandLine(ctx.Tools.Ffmpeg) + " | " + new EncodePlan(encArgs, video).CommandLine(exe));
+            job.CommandLine = y4m.Plan.CommandLine(ctx.Tools.Ffmpeg) + " | " + new EncodePlan(encArgs, video).CommandLine(exe);
+            job.AppendLog($"Command ({name}, FFmpeg pipe): " + job.CommandLine);
             var parser = new ProgressParser(y4m.OutputDuration);
             exit = await RunChainAsync(chain, workDir, ctx, line =>
             {
-                if (line.StartsWith("[ffmpeg] ", StringComparison.Ordinal) && parser.Feed(line[9..]) is { } pr) Progress(job, ctx, pr);
+                // FFmpeg's total_size is the raw y4m stream sent to the encoder (~600 Mb/s at 1080p): the size shown
+                // (and the final size estimated from it) must be the encoded file the encoder is writing.
+                if (line.StartsWith("[ffmpeg] ", StringComparison.Ordinal) && parser.Feed(line[9..]) is { } pr)
+                    Progress(job, ctx, pr with { SizeBytes = FileSize(video) });
             }, job, ct);
         }
 
@@ -164,6 +169,13 @@ public static class RigayaRunner
         {
             foreach (var p in procs) { ctx.Processes.Remove(p); p.Dispose(); }
         }
+    }
+
+    private static long FileSize(string path)
+    {
+        try { return File.Exists(path) ? new FileInfo(path).Length : 0; }
+        catch (IOException) { return 0; }
+        catch (UnauthorizedAccessException) { return 0; }
     }
 
     private static void TryDelete(string path)
