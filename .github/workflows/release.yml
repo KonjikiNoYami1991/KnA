@@ -22,6 +22,10 @@ on:
         description: "Leave the release as a draft"
         type: boolean
         default: true
+      test_package:
+        description: "Test package only (no release, no tag, no Docker image): the package to build, e.g. Windows-x64; empty = full release"
+        required: false
+        default: ""
 
 env:
   TAG: ${{ github.event_name == 'workflow_dispatch' && format('v{0}', inputs.version) || github.ref_name }}
@@ -85,22 +89,38 @@ jobs:
           path: out/
 
   # ---------------------------------------------------------------- KnA packages
+  # ---------------------------------------------------------------- which packages
+  # name = package suffix; server = also the server edition (Windows on Arm and Macs: desktop only, a Mac or Arm PC
+  # used as a server runs the Docker image or the Linux package in a VM). fdk: fdkaac build (Windows on Arm: x64,
+  # emulated). macos-14: the Homebrew tools bundled in KnA.app then run on macOS 14+; macos-15-intel: x86_64 builds.
+  # A test run (input test_package) builds that one package only and leaves it as a workflow artifact.
+  plan:
+    runs-on: ubuntu-24.04
+    outputs:
+      matrix: ${{ steps.m.outputs.matrix }}
+    steps:
+      - id: m
+        env:
+          TEST: ${{ inputs.test_package }}
+        run: |
+          all='[
+            {"os":"windows-latest","rid":"win-x64","fdk":"win-x64","name":"Windows-x64","server":true},
+            {"os":"windows-latest","rid":"win-arm64","fdk":"win-x64","name":"Windows-ARM64","server":false},
+            {"os":"macos-14","rid":"osx-arm64","fdk":"osx","name":"macOS-AppleSilicon","server":false},
+            {"os":"macos-15-intel","rid":"osx-x64","fdk":"osx","name":"macOS-Intel","server":false},
+            {"os":"ubuntu-24.04","rid":"linux-x64","fdk":"linux-x64","name":"Linux-x64","server":true},
+            {"os":"ubuntu-24.04-arm","rid":"linux-arm64","fdk":"linux-arm64","name":"Linux-ARM64","server":true}]'
+          if [ -n "$TEST" ]; then m=$(echo "$all" | jq -c --arg n "$TEST" 'map(select(.name == $n))'); else m=$(echo "$all" | jq -c .); fi
+          [ "$m" != "[]" ] || { echo "::error::Unknown package $TEST"; exit 1; }
+          echo "matrix=$m" >> "$GITHUB_OUTPUT"
+
   build:
-    needs: [fdkaac, tesseract]
-    if: ${{ !cancelled() }}
+    needs: [plan, fdkaac, tesseract]
+    if: ${{ !cancelled() && needs.plan.result == 'success' }}
     strategy:
       fail-fast: false
       matrix:
-        include:
-          # name = package suffix; server = also the server edition (Windows on Arm and Macs: desktop only,
-          # a Mac or Arm PC used as a server runs the Docker image or the Linux package in a VM).
-          - { os: windows-latest, rid: win-x64, fdk: win-x64, name: Windows-x64, server: true }
-          - { os: windows-latest, rid: win-arm64, fdk: win-x64, name: Windows-ARM64, server: false }   # fdkaac: x64 emulation
-          # macos-14: the Homebrew tools bundled in KnA.app then run on macOS 14 (Sonoma) and later
-          - { os: macos-14, rid: osx-arm64, fdk: osx, name: macOS-AppleSilicon, server: false }
-          - { os: macos-15-intel, rid: osx-x64, fdk: osx, name: macOS-Intel, server: false }   # Intel runner: Homebrew builds for x86_64
-          - { os: ubuntu-24.04, rid: linux-x64, fdk: linux-x64, name: Linux-x64, server: true }
-          - { os: ubuntu-24.04-arm, rid: linux-arm64, fdk: linux-arm64, name: Linux-ARM64, server: true }
+        include: ${{ fromJSON(needs.plan.outputs.matrix) }}
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
@@ -305,6 +325,7 @@ jobs:
   # Each architecture on its own runner (no emulation), then one multi-arch tag. ":<version>" now; ":latest"
   # follows when the draft release is published (docker-latest.yml), so nobody pulls an unreleased version.
   docker:
+    if: ${{ !inputs.test_package }}
     strategy:
       fail-fast: false
       matrix:
@@ -339,6 +360,7 @@ jobs:
 
   docker-manifest:
     needs: docker
+    if: ${{ !inputs.test_package }}
     runs-on: ubuntu-24.04
     permissions:
       packages: write
@@ -357,7 +379,7 @@ jobs:
 
   release:
     needs: [fdkaac, build]
-    if: ${{ !cancelled() && needs.build.result == 'success' }}
+    if: ${{ !cancelled() && needs.build.result == 'success' && !inputs.test_package }}
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
