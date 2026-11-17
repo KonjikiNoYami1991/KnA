@@ -157,3 +157,77 @@ public class ReleaseNamesTests
             Assert.Contains("name: " + name, yml);
     }
 }
+
+public class UpdaterTests
+{
+    private static async Task<(string Url, Action Stop)> Serve(byte[] body)
+    {
+        var l = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, 0);
+        l.Start();
+        int port = ((System.Net.IPEndPoint)l.LocalEndpoint).Port;
+        l.Stop();
+        var http = new System.Net.HttpListener();
+        http.Prefixes.Add($"http://127.0.0.1:{port}/");
+        http.Start();
+        _ = Task.Run(async () =>
+        {
+            while (http.IsListening)
+            {
+                try
+                {
+                    var c = await http.GetContextAsync();
+                    c.Response.ContentLength64 = body.Length;
+                    await c.Response.OutputStream.WriteAsync(body);
+                    c.Response.Close();
+                }
+                catch (Exception) { return; }
+            }
+        });
+        await Task.Yield();
+        return ($"http://127.0.0.1:{port}/KnA-Linux-x64.tar.gz", () => http.Stop());
+    }
+
+    private static byte[] Package()
+    {
+        using var ms = new MemoryStream();
+        using (var gz = new System.IO.Compression.GZipStream(ms, System.IO.Compression.CompressionLevel.Fastest, leaveOpen: true))
+        using (var tar = new System.Formats.Tar.TarWriter(gz))
+            foreach (var (name, text) in new[] { ("KnA/KnA", "new program"), ("KnA/portable.txt", "marker"), ("KnA/tools/ffmpeg/ffmpeg", "bundled ffmpeg"), ("KnA/lib.so", "new lib") })
+                tar.WriteEntry(new System.Formats.Tar.PaxTarEntry(System.Formats.Tar.TarEntryType.RegularFile, name) { DataStream = new MemoryStream(System.Text.Encoding.UTF8.GetBytes(text)) });
+        return ms.ToArray();
+    }
+
+    [Fact]
+    public async Task Update_replaces_program_files_only_and_checks_the_sha256()
+    {
+        var root = Directory.CreateTempSubdirectory("kna-upd-").FullName;
+        var app = Path.Combine(root, "app");
+        Directory.CreateDirectory(Path.Combine(app, "tools", "ffmpeg"));
+        File.WriteAllText(Path.Combine(app, "KnA"), "old program");
+        File.WriteAllText(Path.Combine(app, "tools", "ffmpeg", "ffmpeg"), "user's newer ffmpeg");
+        var pkg = Package();
+        var sha = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(pkg));
+        var (url, stop) = await Serve(pkg);
+        try
+        {
+            var bad = new KnA.Core.Tools.ReleaseAsset("KnA-Linux-x64.tar.gz", url, pkg.Length) { Sha256 = new string('0', 64) };
+            await Assert.ThrowsAsync<InvalidDataException>(() => KnA.Core.Tools.AppUpdater.InstallAsync(bad, Path.Combine(root, "data"), null, default, app));
+            Assert.Equal("old program", File.ReadAllText(Path.Combine(app, "KnA")));
+
+            var good = bad with { Sha256 = sha };
+            await KnA.Core.Tools.AppUpdater.InstallAsync(good, Path.Combine(root, "data"), null, default, app);
+            Assert.Equal("new program", File.ReadAllText(Path.Combine(app, "KnA")));
+            Assert.Equal("new lib", File.ReadAllText(Path.Combine(app, "lib.so")));
+            Assert.Equal("user's newer ffmpeg", File.ReadAllText(Path.Combine(app, "tools", "ffmpeg", "ffmpeg")));   // tools stay
+            Assert.False(File.Exists(Path.Combine(app, "portable.txt")));   // a non-portable copy stays non-portable
+        }
+        finally { stop(); }
+    }
+
+    [Fact]
+    public void Permission_is_a_real_write_test()
+    {
+        var p = KnA.Core.Tools.AppUpdater.CheckPermission();
+        Assert.True(p.CanInstall, p.Reason);   // the test folder is writable
+    }
+}

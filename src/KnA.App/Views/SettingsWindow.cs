@@ -26,7 +26,7 @@ public sealed class SettingsWindow : Window
     private KnA.Core.Queue.WorkLocation _work;
     private string _extra;
     private string _afterJob, _afterQueue;
-    private bool _checkUpdates, _restoreQueue, _confirmClose;
+    private bool _checkUpdates, _autoInstall, _restoreQueue, _confirmClose;
     private ProcessPriority _priority;
     private HardwareDecoding _hwDecode;
     private bool _resumable;
@@ -49,7 +49,7 @@ public sealed class SettingsWindow : Window
         _s = queue.Settings;
         _language = _s.Language; _theme = _s.Theme; _template = _s.OutputNameTemplate;
         _output = _s.OutputDirectory; _ffmpeg = _s.FfmpegPath; _vaapi = _s.VaapiDevice; _temp = _s.TempDirectory; _work = _s.WorkLocation; _extra = _s.ExtraArguments; _afterJob = _s.AfterJobCommand; _afterQueue = _s.AfterQueueCommand;
-        _checkUpdates = _s.CheckUpdatesOnStart; _restoreQueue = _s.RestoreQueue; _confirmClose = _s.ConfirmOnClose;
+        _checkUpdates = _s.CheckUpdatesOnStart; _autoInstall = _s.AutoInstallUpdates; _restoreQueue = _s.RestoreQueue; _confirmClose = _s.ConfirmOnClose;
         _priority = _s.Priority; _hwDecode = _s.HardwareDecoding; _resumable = _s.ResumableEncoding; _post = _s.PostAction; _stall = _s.StallTimeoutMinutes; _keepLogs = _s.KeepLogs;
         _extensions = [.. _s.FolderExtensions];
         _sendTo = [.. _s.SendToPresets];
@@ -143,6 +143,10 @@ public sealed class SettingsWindow : Window
                     L.T("Automatic = Italian on Italian systems/browsers, English otherwise.") + " " + L.T("Restart KnA to apply the language.")),
                 Ui.Field("Theme", Ui.Combo(new[] { ("System", L.T("Same as the system")), ("Light", L.T("Light theme")), ("Dark", L.T("Dark theme")) }, _theme, v => _theme = v))),
             Ui.Toggle(L.T("Check for updates at startup"), _checkUpdates, v => _checkUpdates = v),
+            Ui.Toggle(L.T("Install updates by themselves"), _autoInstall, v => _autoInstall = v),
+            Ui.Muted(AppUpdater.CheckPermission() is { CanInstall: false } np
+                ? "⚠ " + np.Reason
+                : L.T("Inside KnA: no scripts or helper programs, the package's SHA-256 is checked. The new version starts with the next launch.")),
             Ui.Toggle(L.T("Restore the queue at the next start"), _restoreQueue, v => _restoreQueue = v),
             Ui.Toggle(L.T("Ask before closing while encoding"), _confirmClose, v => _confirmClose = v),
             info);
@@ -474,6 +478,7 @@ public sealed class SettingsWindow : Window
         s.Language = _language;
         s.Theme = _theme;
         s.CheckUpdatesOnStart = _checkUpdates;
+        s.AutoInstallUpdates = _autoInstall;
         s.RestoreQueue = _restoreQueue;
         s.ConfirmOnClose = _confirmClose;
         s.OutputDirectory = _output;

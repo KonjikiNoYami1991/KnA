@@ -52,6 +52,7 @@ builder.Services.AddSingleton<WatchFolderService>();
 
 var app = builder.Build();
 var queue = app.Services.GetRequiredService<QueueService>();
+AutoUpdateResult autoUpdate = new(AutoUpdateState.UpToDate, "", new UpdateCheck(AppUpdater.CurrentVersion, null, false, null, ""));
 var hub = app.Services.GetRequiredService<EventHub>();
 var browser = app.Services.GetRequiredService<FileBrowser>();
 var uploads = app.Services.GetRequiredService<UploadService>();
@@ -455,6 +456,7 @@ app.MapPut("/api/settings", (SettingsUpdate u) =>
     if (u.FolderExtensions is not null) s.FolderExtensions = u.FolderExtensions;
     if (u.Theme is not null) s.Theme = u.Theme;
     if (u.CheckUpdatesOnStart is { } cu) s.CheckUpdatesOnStart = cu;
+    if (u.AutoInstallUpdates is { } ai2) s.AutoInstallUpdates = ai2;
     if (u.Language is { } lg) s.Language = lg is "it" or "en" ? lg : "Auto";
     if (u.RestoreQueue is { } rq) s.RestoreQueue = rq;
     if (u.OutputNameTemplate is { } nt) s.OutputNameTemplate = string.IsNullOrWhiteSpace(nt) ? OutputNaming.DefaultTemplate : nt;
@@ -511,10 +513,13 @@ app.MapGet("/api/updates", async (CancellationToken ct) =>
         var u = await AppUpdater.CheckAsync("server", ct);
         queue.Settings.LastUpdateCheck = DateTimeOffset.Now;
         queue.SaveSettings();
+        var perm = AppUpdater.CheckPermission();
         return Results.Ok(new
         {
             current = AppInfo.Version, latest = u.Latest?.Tag, isNewer = u.IsNewer, message = u.Message,
             url = u.Latest?.HtmlUrl, notes = u.Latest?.Body,
+            canInstall = perm.CanInstall && u.Asset is not null, reason = perm.Reason, isAdministrator = perm.IsAdministrator,
+            autoInstall = queue.Settings.AutoInstallUpdates, lastAuto = autoUpdate.Message, installed = autoUpdate.State == AutoUpdateState.Installed,
             howTo = IsContainer() ? L.T("Update the container: git pull && docker compose up -d --build")
                                   : L.T("Update the service: sudo kna-update"),
         });
@@ -587,6 +592,40 @@ app.Lifetime.ApplicationStopping.Register(() =>
 {
     queue.StopAsync().Wait(TimeSpan.FromSeconds(10));
     queue.SaveQueue();
+});
+
+// ---------------------------------------------------------------- automatic updates
+// Every 6 hours (at most once a day against GitHub): a newer server package is installed in place when the program
+// folder may be written (portable copy, Windows service in ProgramData); /opt/kna, Docker and read-only folders only
+// get the message. Once installed, a service restarts itself as soon as the queue is idle (systemd Restart=on-failure,
+// Windows service recovery: both restart a process that exits with an error code).
+_ = Task.Run(async () =>
+{
+    await Task.Delay(TimeSpan.FromMinutes(2));
+    while (true)
+    {
+        try
+        {
+            var st = queue.Settings;
+            if (st.CheckUpdatesOnStart && !(st.LastUpdateCheck is { } last && DateTimeOffset.Now - last < TimeSpan.FromHours(20)) && autoUpdate.State != AutoUpdateState.Installed)
+            {
+                var r = await AppUpdater.AutoUpdateAsync("server", store.DataDirectory, st.AutoInstallUpdates);
+                st.LastUpdateCheck = DateTimeOffset.Now;
+                queue.SaveSettings();
+                autoUpdate = r;
+                if (r.State != AutoUpdateState.UpToDate) Console.WriteLine("[KnA] " + r.Message);
+            }
+            bool service = Environment.GetEnvironmentVariable("INVOCATION_ID") is not null
+                           || (OperatingSystem.IsWindows() && Microsoft.Extensions.Hosting.WindowsServices.WindowsServiceHelpers.IsWindowsService());
+            if (autoUpdate.State == AutoUpdateState.Installed && service && !queue.IsRunning && !queue.OcrSessions.Values.Any(o => o.Busy))
+            {
+                Console.WriteLine("[KnA] Restarting into the new version.");
+                Environment.Exit(75);   // EX_TEMPFAIL: the service manager starts it again, now the new files
+            }
+        }
+        catch (Exception ex) when (ex is not OutOfMemoryException) { Console.Error.WriteLine("[KnA] update check: " + ex.Message); }
+        await Task.Delay(autoUpdate.State == AutoUpdateState.Installed ? TimeSpan.FromMinutes(5) : TimeSpan.FromHours(6));
+    }
 });
 
 app.Run();

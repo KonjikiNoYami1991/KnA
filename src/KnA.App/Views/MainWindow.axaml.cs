@@ -47,6 +47,10 @@ public partial class MainWindow : Window, IDialogService
                 BuildQuickPanel(vm);
                 vm.FormReloaded += () => BuildQuickPanel(vm);
                 await vm.CheckUpdatesOnStartAsync();
+                // KnA left open for days (queue on a server-like PC): the daily check keeps running
+                var timer = new Avalonia.Threading.DispatcherTimer { Interval = TimeSpan.FromHours(6) };
+                timer.Tick += async (_, _) => await vm.CheckUpdatesOnStartAsync();
+                timer.Start();
             }
         };
         Closing += async (_, e) =>

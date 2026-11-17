@@ -418,6 +418,7 @@ $("#btn-settings").onclick = guard(async () => {
   fillSelect($("#s-lang"), [{ value: "Auto", label: t("Automatic") }, { value: "it", label: "Italiano" }, { value: "en", label: "English" }], s.language ?? "Auto");
   fillSelect($("#s-theme"), [{ value: "System", label: t("Same as the system") }, { value: "Light", label: t("Light theme") }, { value: "Dark", label: t("Dark theme") }], s.theme ?? "System");
   $("#s-autoupd").checked = s.checkUpdatesOnStart;
+  $("#s-autoinstall").checked = s.autoInstallUpdates !== false;
   $("#s-restore").checked = s.restoreQueue;
   $("#s-output").value = s.outputDirectory ?? "";
   $("#s-template").value = s.outputNameTemplate ?? "{name} [{label}]";
@@ -556,7 +557,7 @@ async function saveAiOnly() {
 $("#btn-save-settings").onclick = guard(async () => {
   const body = {
     language: $("#s-lang").value, theme: $("#s-theme").value,
-    checkUpdatesOnStart: $("#s-autoupd").checked, restoreQueue: $("#s-restore").checked,
+    checkUpdatesOnStart: $("#s-autoupd").checked, autoInstallUpdates: $("#s-autoinstall").checked, restoreQueue: $("#s-restore").checked,
     outputDirectory: $("#s-output").value.trim(), outputNameTemplate: $("#s-template").value.trim(), workLocation: $("#s-work").value,
     priority: $("#s-priority").value, postAction: $("#s-post").value,
     stallTimeoutMinutes: Number($("#s-stall").value) || 10, keepLogs: Number($("#s-keeplogs").value) || 300,

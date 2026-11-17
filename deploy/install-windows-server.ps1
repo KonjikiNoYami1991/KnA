@@ -89,6 +89,8 @@ if (-not $existing) {
         -Description (T 'KnA web edition: video encoding queue with a browser interface.' 'KnA edizione web: coda di codifica video con interfaccia nel browser.') -StartupType Automatic | Out-Null
     # restart after 10 s, 30 s, 60 s when it stops unexpectedly
     sc.exe failure $Service reset= 86400 actions= restart/10000/restart/30000/restart/60000 | Out-Null
+    # also restart after a clean exit with an error code: KnA exits with 75 to start its freshly installed update
+    sc.exe failureflag $Service 1 | Out-Null
 }
 if ($ServiceUser) {
     $cred = Get-Credential -UserName $ServiceUser -Message (T 'Password of the account the service runs as' "Password dell'account con cui gira il servizio")

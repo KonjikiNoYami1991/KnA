@@ -1028,5 +1028,13 @@ public static partial class L
         ["Next to the video (hidden .kna-work folder)"] = "Accanto al video (cartella nascosta .kna-work)",
         ["In KnA's data folder"] = "Nella cartella dati di KnA",
         ["Next to the video: segments, resumable pieces and temporary files stay on the same disk as the video, not on the system drive. Read-only folders use the data folder by themselves."] = "Accanto al video: segmenti, pezzi ripristinabili e file temporanei restano sullo stesso disco del video, non sul disco di sistema. Le cartelle di sola lettura usano da sole la cartella dati.",
+        ["Install updates by themselves"] = "Installa gli aggiornamenti da solo",
+        ["Inside KnA: no scripts or helper programs, the package's SHA-256 is checked. The new version starts with the next launch."] = "Tutto dentro KnA: niente script né programmi di appoggio, l'impronta SHA-256 del pacchetto viene verificata. La nuova versione parte al prossimo avvio.",
+        ["Docker: update the image (docker compose pull && docker compose up -d)."] = "Docker: aggiorna l'immagine (docker compose pull && docker compose up -d).",
+        ["The program folder needs administrator rights ({0}): KnA only tells you about the update."] = "La cartella del programma richiede i diritti di amministratore ({0}): KnA ti avvisa soltanto dell'aggiornamento.",
+        ["Installed as a service: update with sudo kna-update (or kna-lxc.sh --update on the Proxmox host)."] = "Installato come servizio: aggiorna con sudo kna-update (o kna-lxc.sh --update sull'host Proxmox).",
+        ["No permission to write the program folder ({0}): KnA only tells you about the update."] = "Nessun permesso di scrittura nella cartella del programma ({0}): KnA ti avvisa soltanto dell'aggiornamento.",
+        ["No package for this system: download it from the release page."] = "Nessun pacchetto per questo sistema: scaricalo dalla pagina della release.",
+        ["KnA {0} is installed: it starts with the next launch."] = "KnA {0} è installato: parte al prossimo avvio.",
     };
 }

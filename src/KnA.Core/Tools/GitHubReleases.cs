@@ -4,7 +4,11 @@ using System.Text.Json;
 
 namespace KnA.Core.Tools;
 
-public sealed record ReleaseAsset(string Name, string Url, long Size);
+public sealed record ReleaseAsset(string Name, string Url, long Size)
+{
+    /// <summary>SHA-256 GitHub computes for every asset ("sha256:…" in the API), hex; null on old releases.</summary>
+    public string? Sha256 { get; init; }
+}
 
 public sealed record ReleaseInfo(string Tag, string Name, string? Body, string HtmlUrl, DateTimeOffset PublishedAt, IReadOnlyList<ReleaseAsset> Assets)
 {
@@ -77,7 +81,10 @@ public static class GitHubReleases
         var assets = new List<ReleaseAsset>();
         if (r.TryGetProperty("assets", out var arr))
             foreach (var a in arr.EnumerateArray())
-                assets.Add(new ReleaseAsset(S(a, "name"), S(a, "browser_download_url"), a.TryGetProperty("size", out var sz) ? sz.GetInt64() : 0));
+                assets.Add(new ReleaseAsset(S(a, "name"), S(a, "browser_download_url"), a.TryGetProperty("size", out var sz) ? sz.GetInt64() : 0)
+                {
+                    Sha256 = S(a, "digest") is { } dg && dg.StartsWith("sha256:", StringComparison.OrdinalIgnoreCase) ? dg[7..] : null,
+                });
         DateTimeOffset.TryParse(S(r, "published_at"), out var published);
         return new ReleaseInfo(S(r, "tag_name"), S(r, "name"), S(r, "body"), S(r, "html_url"), published, assets);
     }

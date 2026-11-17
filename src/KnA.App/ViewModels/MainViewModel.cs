@@ -366,19 +366,22 @@ public sealed partial class MainViewModel : ObservableObject
         OnPropertyChanged(nameof(Presets));
     }
 
-    /// <summary>Once a day at most: is a newer KnA published on GitHub?</summary>
+    /// <summary>
+    /// Once a day at most (at start and while KnA stays open): a newer KnA is installed by itself when the program
+    /// folder may be written, otherwise the banner only tells about it.
+    /// </summary>
     public async Task CheckUpdatesOnStartAsync()
     {
         var s = Queue.Settings;
         if (!s.CheckUpdatesOnStart || s.LastUpdateCheck is { } last && DateTimeOffset.Now - last < TimeSpan.FromHours(20)) return;
         try
         {
-            var u = await AppUpdater.CheckAsync("desktop");
+            var r = await Task.Run(() => AppUpdater.AutoUpdateAsync("desktop", Queue.Store.DataDirectory, s.AutoInstallUpdates));
             s.LastUpdateCheck = DateTimeOffset.Now;
             Queue.SaveSettings();
-            if (u.IsNewer) UpdateBanner = u.Message;
+            if (r.State != AutoUpdateState.UpToDate) UpdateBanner = r.Message;
         }
-        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or InvalidOperationException) { }
+        catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or InvalidOperationException or IOException or InvalidDataException or UnauthorizedAccessException) { }
     }
 
     [RelayCommand]

@@ -50,6 +50,16 @@
 - Commands after each job and after the queue, with macros ({output}, {status}, {done}…).
 - Command line: `kna-server --encode <files> [--preset …] [--size MB] [--trim a-b] …`, `--list-presets`.
 
+**Working files and updates**
+- Working files next to the source video (hidden `.kna-work`: temporary files, parallel segments, resumable pieces):
+  same disk as the video, nothing big on the system drive; read-only folders and discs use the data folder by themselves.
+  Removed when the job is done or taken out of the queue; never picked up as a source.
+- **Automatic updates** built in: checked once a day, installed by KnA itself when the program folder may be written
+  (no scripts, no PowerShell, no helper program from a temporary folder, SHA-256 of the package checked — what
+  antivirus/EDR products such as Sophos MDR flag is not there). Without permission (Program Files without
+  administrator, /opt/kna, Docker) it only tells you. Servers running as a service restart into the new version when
+  the queue is idle.
+
 **Releases and installation**
 - One complete package per system: 9 downloads instead of about 26 (KnA-Windows-x64.zip, KnA-macOS-AppleSilicon.zip,
   KnA-Linux-x64.tar.gz, KnA-Server-…); fdkaac for the component manager in a separate "components" pre-release. The
@@ -107,6 +117,16 @@
 **Automazione**
 - Comandi dopo ogni lavoro e a coda finita, con macro ({output}, {status}, {done}…).
 - Riga di comando: `kna-server --encode <file> [--preset …] [--size MB] [--trim a-b] …`, `--list-presets`.
+
+**File di lavoro e aggiornamenti**
+- File di lavoro accanto al video sorgente (cartella nascosta `.kna-work`: file temporanei, segmenti paralleli, pezzi
+  ripristinabili): stesso disco del video, niente di pesante sul disco di sistema; cartelle di sola lettura e dischi usano
+  da soli la cartella dati. Rimossi a fine lavoro o quando il lavoro esce dalla coda; mai presi come sorgenti.
+- **Aggiornamenti automatici** integrati: controllo una volta al giorno, installazione fatta da KnA stesso quando la
+  cartella del programma è scrivibile (niente script, niente PowerShell, nessun programma d'appoggio lanciato dalla
+  cartella temporanea, impronta SHA-256 del pacchetto verificata: ciò che antivirus/EDR come Sophos MDR segnalano non c'è).
+  Senza permessi (Programmi senza amministratore, /opt/kna, Docker) ti avvisa soltanto. I server installati come
+  servizio ripartono con la nuova versione a coda vuota.
 
 **Release e installazione**
 - Un pacchetto completo per sistema: 9 download invece di circa 26 (KnA-Windows-x64.zip, KnA-macOS-AppleSilicon.zip,

@@ -5,6 +5,10 @@ using KnA.Core.Queue;
 
 namespace KnA.Core.Tools;
 
+public enum AutoUpdateState { UpToDate, Available, NoPermission, Installed }
+
+public sealed record AutoUpdateResult(AutoUpdateState State, string Message, UpdateCheck Check);
+
 public sealed record UpdateCheck(Version Current, ReleaseInfo? Latest, bool IsNewer, ReleaseAsset? Asset, string Message);
 
 /// <summary>
@@ -34,6 +38,71 @@ public static class AppUpdater
         return flavor == "server" ? $"KnA-Server-{os}-{arch}.{ext}" : $"KnA-{os}-{arch}.{ext}";
     }
 
+    /// <summary>Whether this copy of KnA may update itself, and why not.</summary>
+    public sealed record Permission(bool CanInstall, bool IsAdministrator, string? Reason);
+
+    /// <summary>
+    /// Can this process replace its own files? Decided by a real write test in the program folder (the only thing
+    /// that matters: a portable copy on D:\ needs no administrator, Program Files or /opt/kna do), plus the cases
+    /// where updating in place is wrong (Docker image, macOS app bundle outside the user's reach). When it can't,
+    /// the user is only told: nothing is attempted, nothing asks for elevation.
+    /// </summary>
+    public static Permission CheckPermission()
+    {
+        bool admin = IsAdministrator();
+        if (ComponentManager.IsContainer())
+            return new(false, admin, L.T("Docker: update the image (docker compose pull && docker compose up -d)."));
+        var dir = AppContext.BaseDirectory;
+        try
+        {
+            var probe = Path.Combine(dir, ".kna-update-test-" + Guid.NewGuid().ToString("N"));
+            File.WriteAllText(probe, "");
+            var moved = probe + ".old";
+            File.Move(probe, moved);   // the update renames files in place: test that too
+            File.Delete(moved);
+            return new(true, admin, null);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
+        {
+            return new(false, admin, OperatingSystem.IsWindows() && !admin
+                ? L.T("The program folder needs administrator rights ({0}): KnA only tells you about the update.", dir)
+                : OperatingSystem.IsLinux() && Directory.Exists("/opt/kna") && dir.StartsWith("/opt/kna", StringComparison.Ordinal)
+                ? L.T("Installed as a service: update with sudo kna-update (or kna-lxc.sh --update on the Proxmox host).")
+                : L.T("No permission to write the program folder ({0}): KnA only tells you about the update.", dir));
+        }
+    }
+
+    /// <summary>Administrator (Windows, elevated) or root.</summary>
+    public static bool IsAdministrator()
+    {
+        try
+        {
+            if (OperatingSystem.IsWindows())
+                return new System.Security.Principal.WindowsPrincipal(System.Security.Principal.WindowsIdentity.GetCurrent())
+                    .IsInRole(System.Security.Principal.WindowsBuiltInRole.Administrator);
+            return Environment.IsPrivilegedProcess;
+        }
+        catch (Exception ex) when (ex is PlatformNotSupportedException or System.Security.SecurityException or UnauthorizedAccessException) { return false; }
+    }
+
+    /// <summary>
+    /// The automatic update: checks, and installs when allowed. Returns what happened, for the banner. Runs inside
+    /// KnA itself — no script, no PowerShell, no helper program started from a temporary folder, no elevation
+    /// prompt — and the package must match the SHA-256 GitHub publishes for it: the behaviours antivirus and EDR
+    /// products (Sophos MDR, Defender…) flag in updaters are simply not there.
+    /// </summary>
+    public static async Task<AutoUpdateResult> AutoUpdateAsync(string flavor, string dataDirectory, bool install, CancellationToken ct = default)
+    {
+        var check = await CheckAsync(flavor, ct);
+        if (!check.IsNewer || check.Latest is null) return new(AutoUpdateState.UpToDate, check.Message, check);
+        if (check.Asset is null) return new(AutoUpdateState.Available, check.Message + " " + L.T("No package for this system: download it from the release page."), check);
+        var perm = CheckPermission();
+        if (!install) return new(AutoUpdateState.Available, check.Message, check);
+        if (!perm.CanInstall) return new(AutoUpdateState.NoPermission, check.Message + " " + perm.Reason, check);
+        await InstallAsync(check.Asset, dataDirectory, null, ct);
+        return new(AutoUpdateState.Installed, L.T("KnA {0} is installed: it starts with the next launch.", check.Latest.Tag.TrimStart('v')), check);
+    }
+
     /// <summary>Folders of a package that belong to the user's installation, never replaced by an update.</summary>
     private static readonly string[] KeepFolders = ["tools", "ai", "data"];
 
@@ -57,15 +126,25 @@ public static class AppUpdater
     /// Downloads the release zip and swaps the program files. Running files are renamed to *.old first
     /// (allowed on Windows even for the running .exe), so the new version starts at the next launch.
     /// </summary>
-    public static async Task InstallAsync(ReleaseAsset asset, string dataDirectory, IProgress<double>? progress, CancellationToken ct)
+    public static async Task InstallAsync(ReleaseAsset asset, string dataDirectory, IProgress<double>? progress, CancellationToken ct, string? programDirectory = null)
     {
         var temp = Path.Combine(dataDirectory, "temp", "update-" + Guid.NewGuid().ToString("N"));
         var zip = Path.Combine(temp, asset.Name);
         await GitHubReleases.DownloadAsync(asset.Url, zip, progress, ct);
+        if (asset.Sha256 is { Length: 64 } expected)
+        {
+            await using var fs = File.OpenRead(zip);
+            var hash = Convert.ToHexString(await System.Security.Cryptography.SHA256.HashDataAsync(fs, ct));
+            if (!hash.Equals(expected, StringComparison.OrdinalIgnoreCase))
+            {
+                try { Directory.Delete(temp, true); } catch (IOException) { }
+                throw new InvalidDataException(L.T("Checksum mismatch for {0}.", asset.Name));
+            }
+        }
         var staging = Path.Combine(temp, "files");
         await ComponentManager.ExtractAsync(zip, staging, ct);
 
-        var appDir = AppContext.BaseDirectory;
+        var appDir = programDirectory ?? AppContext.BaseDirectory;
         // Packages contain a single top folder (KnA/, KnA-server/, KnA.app/): the program files are inside it, in
         // Contents/MacOS for the macOS app.
         var root = staging;

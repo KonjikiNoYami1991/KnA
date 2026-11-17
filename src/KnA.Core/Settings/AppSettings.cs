@@ -79,6 +79,8 @@ public sealed class AppSettings
     public string ExtraArguments { get; set; } = "";
     public FfmpegCapabilities? Capabilities { get; set; }
     public bool CheckUpdatesOnStart { get; set; } = true;
+    /// <summary>Install a new version by itself (when the program folder may be written; otherwise only tell).</summary>
+    public bool AutoInstallUpdates { get; set; } = true;
     public DateTimeOffset? LastUpdateCheck { get; set; }
     /// <summary>Preset names offered in the Windows "Send to" menu.</summary>
     public List<string> SendToPresets { get; set; } = [];
