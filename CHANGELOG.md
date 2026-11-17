@@ -64,6 +64,10 @@
 - One complete package per system: 9 downloads instead of about 26 (KnA-Windows-x64.zip, KnA-macOS-AppleSilicon.zip,
   KnA-Linux-x64.tar.gz, KnA-Server-…); fdkaac for the component manager in a separate "components" pre-release. The
   in-app updater of 3.2.1 and older does not know the new names: download 3.3.0 once by hand.
+- **Every package complete** (CLAUDE.md): Tesseract built statically for Linux, FFmpeg and Tesseract from Homebrew made
+  relocatable inside `KnA.app` (macOS 14+, no Homebrew needed), the archive engine (portable Python + py7zr) and the OCR
+  models everywhere, x64 tools in the Windows on Arm package. Only PyTorch (AI upscaler) and PaddleOCR stay outside:
+  KnA offers them with one click where they are needed.
 - Docker: ready-made image `ghcr.io/konjikinoyami1991/kna` (amd64 + arm64), PUID/PGID/UMASK, GPU groups joined
   automatically; guides for Synology, QNAP, UGREEN, Unraid, Portainer (docs/DOCKER.md).
 - Linux/LXC installer uses the complete package (FFmpeg and GPU encoders included); Windows server as a service
@@ -132,6 +136,10 @@
 - Un pacchetto completo per sistema: 9 download invece di circa 26 (KnA-Windows-x64.zip, KnA-macOS-AppleSilicon.zip,
   KnA-Linux-x64.tar.gz, KnA-Server-…); fdkaac per il component manager in una pre-release "components" separata.
   L'aggiornamento interno della 3.2.1 e precedenti non conosce i nuovi nomi: scarica la 3.3.0 a mano una volta.
+- **Ogni pacchetto completo** (CLAUDE.md): Tesseract compilato statico per Linux, FFmpeg e Tesseract di Homebrew resi
+  rilocabili dentro `KnA.app` (macOS 14+, senza Homebrew), il motore archivi (Python portabile + py7zr) e i modelli OCR
+  ovunque, strumenti x64 nel pacchetto Windows su Arm. Restano fuori solo PyTorch (upscaler AI) e PaddleOCR: KnA li
+  offre con un clic dove servono.
 - Docker: immagine pronta `ghcr.io/konjikinoyami1991/kna` (amd64 + arm64), PUID/PGID/UMASK, gruppi GPU aggiunti da soli;
   guide per Synology, QNAP, UGREEN, Unraid, Portainer (docs/DOCKER.it.md).
 - L'installer Linux/LXC usa il pacchetto completo (FFmpeg ed encoder GPU inclusi); server Windows come servizio

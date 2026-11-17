@@ -144,11 +144,11 @@ validated field by field and checked against the hardware detection; nothing cha
 
 ### Subtitle OCR
 
-Picture subtitles of Blu-rays (PGS) become text, like in Subtitle Edit: KnA decodes them and reads them with Tesseract 5
-and the language model of each track (downloaded on first use). Choose "Text (OCR)" for a track, turn on "Convert picture
-subtitles to text" for every file, or export one track with "OCR → .srt". Settings → Components installs Tesseract
-(Windows) and the models; on Linux/macOS Tesseract comes from the system package (`apt install tesseract-ocr`,
-`brew install tesseract`), already in the Docker image.
+Picture subtitles of Blu-rays (PGS) and DVDs (VobSub) become text, like in Subtitle Edit: KnA decodes them and reads
+them with Tesseract 5 and the language model of each track. Open the **OCR editor** of a track to check and correct
+every line, turn on "Convert picture subtitles to text" for every file, or choose "Text (OCR)" for a track. Tesseract
+and the Italian and English models are in every package (other languages download on first use); PaddleOCR, the
+second engine, installs with one click from the OCR editor.
 
 ### Smart drag & drop
 Desktop and web: videos, scripts, discs and folders are queued; **subtitles, audio and fonts** join the job they are dropped on or the video
@@ -243,7 +243,10 @@ One complete package per system — download the one for your computer, nothing 
 | Linux (most PCs) | `KnA-Linux-x64.tar.gz` | `KnA-Server-Linux-x64.tar.gz` | `tar xzf KnA-Linux-x64.tar.gz && ./KnA/KnA` |
 | Linux on Arm (Raspberry Pi 5…) | `KnA-Linux-ARM64.tar.gz` | `KnA-Server-Linux-ARM64.tar.gz` | as above |
 
-On macOS FFmpeg comes from Homebrew (`brew install ffmpeg`): KnA finds it by itself. Servers are easiest with
+Every package is complete: download, extract, use. FFmpeg, fdkaac, Tesseract with the Italian and English models, the
+archive engine, shaders and upscale models are inside (on macOS inside `KnA.app`, which needs macOS 14 or later; no
+Homebrew). Only two optional parts weigh gigabytes and depend on your GPU: **PyTorch** for the AI upscaler and
+**PaddleOCR**; KnA offers them with one click when you choose a feature that needs them. Servers are easiest with
 Docker or the Linux / Proxmox installers below, which download the right package by themselves.
 
 Portable packages need nothing installed (.NET and **FFmpeg** are included) and keep everything in the program folder,

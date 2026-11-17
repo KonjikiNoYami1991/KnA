@@ -28,6 +28,11 @@ public sealed class SettingsForm : StackPanel
     /// <summary>Text describing what a target size leaves for each stream (editor: depends on the file).</summary>
     public Func<JobSettings, string?>? SizeInfo { get; init; }
 
+    /// <summary>Installs a component (editor): offered where a feature needs one the packages don't carry (PyTorch).</summary>
+    public Func<string, Task>? InstallComponent { get; init; }
+    /// <summary>Whether the AI upscaler's Python + PyTorch is installed (editor).</summary>
+    public Func<bool>? AiRuntimeInstalled { get; init; }
+
     /// <summary>Loads a program's options for the parameter editors (editor only).</summary>
     public Func<string, JobSettings, CancellationToken, Task<(string Program, IReadOnlyList<ToolOption> Options)>>? ParameterOptions { get; init; }
 
@@ -193,6 +198,21 @@ public sealed class SettingsForm : StackPanel
                 UpscaleText.Description(up.Method)));
             if (up.Method == UpscaleMethod.Anime4K)
                 box.Children.Add(Ui.Field("Anime4K", Ui.Combo(Upscalers.Anime4KModes.Select(m => (m.Id, $"{m.Label} — {m.Description}")), up.Model ?? "A", v => Set(s with { Upscale = up with { Model = v } }))));
+            if (up.Method == UpscaleMethod.Neural && AiRuntimeInstalled?.Invoke() == false)
+            {
+                // PyTorch is the one part of the AI upscaler the packages can't carry (several GB, depends on the GPU)
+                var install = new Button { Content = L.T("Install the AI upscaler (Python + PyTorch, several GB)"), Classes = { "primary" } };
+                var note = Ui.Muted(L.T("Needed once for the neural models: KnA picks the PyTorch build for your GPU (CUDA, ROCm, Intel, Apple or CPU)."));
+                install.Click += async (_, _) =>
+                {
+                    install.IsEnabled = false;
+                    note.Text = L.T("Installing PyTorch ({0}): this can take a while…", "");
+                    try { await InstallComponent!("ai-runtime"); note.Text = L.T("Installed {0}.", "PyTorch"); install.IsVisible = false; }
+                    catch (Exception ex) { note.Text = ex.Message; install.IsEnabled = true; }
+                };
+                box.Children.Add(install);
+                box.Children.Add(note);
+            }
             if (up.Method == UpscaleMethod.Neural)
             {
                 var models = UpscaleModels.All.Select(m => (m.Id, m.Name)).ToList();

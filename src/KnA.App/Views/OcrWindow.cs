@@ -64,7 +64,26 @@ public sealed class OcrWindow : Window
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
 
         // ---------------------------------------------------------------- engine bar
-        var engine = Ui.Combo([("tesseract", "Tesseract 5"), ("paddleocr", "PaddleOCR (PP-OCRv5)")], _opt.Engine, v => _opt = _opt with { Engine = v, Language = null });
+        // PaddleOCR is not in the packages (about 1 GB): when chosen and missing, one click installs it here
+        var paddleInstall = new Button { Content = L.T("Install PaddleOCR (about 1 GB)"), Classes = { "primary" }, IsVisible = false };
+        void PaddleCheck() => paddleInstall.IsVisible = _opt.Engine == "paddleocr"
+            && (PaddleOcr.Locate(queue.Store.DataDirectory) is null || !PaddleOcr.ModelsInstalled(queue.Store.DataDirectory));
+        paddleInstall.Click += async (_, _) =>
+        {
+            paddleInstall.IsEnabled = false;
+            try
+            {
+                var log = new Progress<string>(l => _status.Text = l);
+                var pr = new Progress<double>(v => { _bar.IsVisible = true; _bar.Value = v; });
+                foreach (var id in new[] { "paddleocr", "paddleocr-models" })
+                    if (id == "paddleocr" ? PaddleOcr.Locate(queue.Store.DataDirectory) is null : !PaddleOcr.ModelsInstalled(queue.Store.DataDirectory))
+                        await Task.Run(() => queue.Components.InstallAsync(id, pr, log));
+                _status.Text = L.T("Installed {0}.", "PaddleOCR");
+            }
+            catch (Exception ex) { _status.Text = ex.Message; }
+            finally { _bar.IsVisible = false; paddleInstall.IsEnabled = true; PaddleCheck(); }
+        };
+        var engine = Ui.Combo([("tesseract", "Tesseract 5"), ("paddleocr", "PaddleOCR (PP-OCRv5)")], _opt.Engine, v => { _opt = _opt with { Engine = v, Language = null }; PaddleCheck(); });
         var lang = new TextBox { Text = _opt.Language ?? "", Watermark = L.T("from the track ({0})", session.Language ?? "und"), Width = 150 };
         lang.LostFocus += (_, _) => _opt = _opt with { Language = string.IsNullOrWhiteSpace(lang.Text) ? null : lang.Text.Trim() };
         ToolTip.SetTip(lang, L.T("Tesseract: ita, eng, jpn… (several: ita+eng). PaddleOCR: it, en, japan…"));
@@ -74,7 +93,8 @@ public sealed class OcrWindow : Window
         var sel = Ui.Button(L.T("Read selected again"), () => RunAsync(_list.SelectedItems!.OfType<Row>().Select(r => r.Line.Index).ToList()));
         var stop = Ui.Button(L.T("Stop"), () => { _cts?.Cancel(); return Task.CompletedTask; });
         var bar = new WrapPanel { Orientation = Orientation.Horizontal };
-        foreach (var c in new Control[] { Ui.Field("Engine", engine), Ui.Field("Language", lang), italic, fixes, all, sel, stop })
+        PaddleCheck();
+        foreach (var c in new Control[] { Ui.Field("Engine", engine), paddleInstall, Ui.Field("Language", lang), italic, fixes, all, sel, stop })
         {
             c.Margin = new Thickness(0, 0, 12, 6);
             c.VerticalAlignment = VerticalAlignment.Bottom;

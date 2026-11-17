@@ -1036,5 +1036,8 @@ public static partial class L
         ["No permission to write the program folder ({0}): KnA only tells you about the update."] = "Nessun permesso di scrittura nella cartella del programma ({0}): KnA ti avvisa soltanto dell'aggiornamento.",
         ["No package for this system: download it from the release page."] = "Nessun pacchetto per questo sistema: scaricalo dalla pagina della release.",
         ["KnA {0} is installed: it starts with the next launch."] = "KnA {0} è installato: parte al prossimo avvio.",
+        ["Install PaddleOCR (about 1 GB)"] = "Installa PaddleOCR (circa 1 GB)",
+        ["Install the AI upscaler (Python + PyTorch, several GB)"] = "Installa l'upscaler AI (Python + PyTorch, diversi GB)",
+        ["Needed once for the neural models: KnA picks the PyTorch build for your GPU (CUDA, ROCm, Intel, Apple or CPU)."] = "Serve una volta per i modelli neurali: KnA sceglie la versione di PyTorch adatta alla tua GPU (CUDA, ROCm, Intel, Apple o CPU).",
     };
 }

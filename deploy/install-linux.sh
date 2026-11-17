@@ -466,8 +466,9 @@ else
     tar -xzf "$tmp/kna.tar.gz" -C "$tmp/x" || die "$(t "The package is damaged." "Il pacchetto è danneggiato.")"
     mv "$tmp/x/KnA-server" "$tmp/kna" || die "$(t "Unexpected package layout." "Struttura del pacchetto inattesa.")"
     # An installed service keeps its data in $DATA_DIR, not next to the program: no portable marker, no data folder.
-    # Models and shaders of an installed service live in $DATA_DIR (installed below as components when chosen).
-    rm -f "$tmp/kna/portable.txt"; rm -rf "$tmp/kna/data" "$tmp/kna/ai" "$tmp/kna/tools/shaders"
+    # The package is complete (FFmpeg, Tesseract + models, archive engine, shaders, upscale models): KnA uses them in
+    # place; settings and downloads go to $DATA_DIR.
+    rm -f "$tmp/kna/portable.txt"; rm -rf "$tmp/kna/data"
   else
     curl -fL --retry 3 --progress-bar -o "$tmp/kna.zip" "https://github.com/$REPO/releases/download/$TAG/KnA-server-$RID.zip" \
       || die "$(t "Download failed." "Download non riuscito.")"

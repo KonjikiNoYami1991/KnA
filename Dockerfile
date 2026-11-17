@@ -101,8 +101,8 @@ RUN apt-get update \
  && apt-get install -y --no-install-recommends \
       aspnetcore-runtime-10.0 ca-certificates tzdata fontconfig fonts-dejavu-core fonts-noto-cjk \
       mesa-va-drivers vainfo libvulkan1 mesa-vulkan-drivers \
-      python3 python3-venv \
-      tesseract-ocr \
+      python3 python3-venv python3-pip \
+      tesseract-ocr tesseract-ocr-ita \
  && if [ "$FFMPEG" = "distro" ]; then apt-get install -y --no-install-recommends ffmpeg; fi \
  && if [ "$TARGETARCH" = "amd64" ] || [ -z "$TARGETARCH" ]; then \
       apt-get install -y --no-install-recommends intel-media-va-driver-non-free libvpl2 libmfx-gen1.2 ; \
@@ -119,6 +119,9 @@ RUN set -e; if ls /tmp/debs/*.deb >/dev/null 2>&1; then apt-get update; \
       for d in /tmp/debs/*.deb; do apt-get install -y --no-install-recommends "$d" || echo "skipped $d"; done; \
       rm -rf /var/lib/apt/lists/*; fi; rm -rf /tmp/debs
 
+# Archive engine (7-Zip packages, e.g. PaddleOCR): py7zr next to the program, used with the image's Python.
+RUN python3 -m pip install --no-cache-dir --break-system-packages --target /app/tools/archive/lib py7zr multivolumefile \
+ || python3 -m pip install --no-cache-dir --target /app/tools/archive/lib py7zr multivolumefile
 COPY deploy/docker-entrypoint.sh /usr/local/bin/kna-entrypoint
 RUN chmod 755 /usr/local/bin/kna-entrypoint
 

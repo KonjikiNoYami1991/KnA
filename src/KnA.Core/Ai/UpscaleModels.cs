@@ -33,7 +33,12 @@ public static class UpscaleModels
     public static (string Path, int Scale, UpscaleModel? Known) Resolve(string? id, string dataDirectory)
     {
         var known = All.FirstOrDefault(m => m.Id == (id ?? All[0].Id));
-        if (known is not null) return (Path.Combine(ModelDir(dataDirectory), known.File), known.Scale, known);
+        if (known is not null)
+        {
+            var path = Path.Combine(ModelDir(dataDirectory), known.File);
+            var bundled = KnA.Core.Settings.AppPaths.Bundled("ai", "models", known.File);
+            return (!File.Exists(path) && File.Exists(bundled) ? bundled : path, known.Scale, known);
+        }
         var file = id!;
         var m = System.Text.RegularExpressions.Regex.Match(Path.GetFileName(file), @"(?:^|[^a-z0-9])(?:x([1-8])|([1-8])x)(?:[^a-z0-9]|$)", System.Text.RegularExpressions.RegexOptions.IgnoreCase);
         int scale = m.Success ? int.Parse(m.Groups[1].Success ? m.Groups[1].Value : m.Groups[2].Value, CultureInfo.InvariantCulture) : 4;

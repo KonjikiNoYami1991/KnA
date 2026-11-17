@@ -40,7 +40,12 @@ public static class Upscalers
     public static List<string> VulkanDeviceArgs() =>
         ["-init_hw_device", "vulkan=vk" + (Settings.AppEnv.Get("VULKAN_DEVICE") is { } d ? ":" + d : ""), "-filter_hw_device", "vk"];
 
-    public static string ShaderDir(string dataDirectory) => Path.Combine(KnA.Core.Settings.AppPaths.Tools(dataDirectory), "shaders");
+    public static string ShaderDir(string dataDirectory)
+    {
+        var dir = Path.Combine(KnA.Core.Settings.AppPaths.Tools(dataDirectory), "shaders");
+        var bundled = KnA.Core.Settings.AppPaths.Bundled("tools", "shaders");
+        return !Directory.Exists(dir) && Directory.Exists(bundled) ? bundled : dir;
+    }
 
     /// <summary>Methods that run in FFmpeg's libplacebo filter.</summary>
     public static bool UsesLibplacebo(UpscaleMethod m) => m is UpscaleMethod.Placebo or UpscaleMethod.Anime4K or UpscaleMethod.Fsrcnnx;

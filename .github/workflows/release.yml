@@ -62,9 +62,31 @@ jobs:
             out/
             fdkaac-${{ matrix.target }}.*
 
+  # ---------------------------------------------------------------- Tesseract (subtitle OCR), static, Linux
+  # Windows uses the Tesseract 5.5.0 package Subtitle Edit ships (component "tesseract"); macOS the Homebrew build,
+  # made relocatable inside KnA.app (see the macOS step).
+  tesseract:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { os: ubuntu-24.04, target: linux-x64 }
+          - { os: ubuntu-24.04-arm, target: linux-arm64 }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Toolchain
+        run: sudo apt-get update && sudo apt-get install -y cmake
+      - name: Build
+        run: bash build/build-tesseract.sh out
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tesseract-${{ matrix.target }}
+          path: out/
+
   # ---------------------------------------------------------------- KnA packages
   build:
-    needs: fdkaac
+    needs: [fdkaac, tesseract]
     if: ${{ !cancelled() }}
     strategy:
       fail-fast: false
@@ -74,8 +96,9 @@ jobs:
           # a Mac or Arm PC used as a server runs the Docker image or the Linux package in a VM).
           - { os: windows-latest, rid: win-x64, fdk: win-x64, name: Windows-x64, server: true }
           - { os: windows-latest, rid: win-arm64, fdk: win-x64, name: Windows-ARM64, server: false }   # fdkaac: x64 emulation
-          - { os: macos-latest, rid: osx-arm64, fdk: osx, name: macOS-AppleSilicon, server: false }
-          - { os: macos-latest, rid: osx-x64, fdk: osx, name: macOS-Intel, server: false }
+          # macos-14: the Homebrew tools bundled in KnA.app then run on macOS 14 (Sonoma) and later
+          - { os: macos-14, rid: osx-arm64, fdk: osx, name: macOS-AppleSilicon, server: false }
+          - { os: macos-15-intel, rid: osx-x64, fdk: osx, name: macOS-Intel, server: false }   # Intel runner: Homebrew builds for x86_64
           - { os: ubuntu-24.04, rid: linux-x64, fdk: linux-x64, name: Linux-x64, server: true }
           - { os: ubuntu-24.04-arm, rid: linux-arm64, fdk: linux-arm64, name: Linux-ARM64, server: true }
     runs-on: ${{ matrix.os }}
@@ -116,8 +139,13 @@ jobs:
       #   (portable, embedded Python, BestSource, L-SMASH) · tools/dovi_tool, hdr10plus_tool · tools/shaders · ai/models
       #   (Real-ESRGAN) · data/ (settings, queue, logs, temp). PyTorch is not included: its build depends on the GPU
       #   (CUDA / ROCm / XPU / CPU) and weighs several GB, Settings → Components installs the right one.
+      - name: Tesseract (static build)
+        if: runner.os == 'Linux'
+        uses: actions/download-artifact@v4
+        with:
+          name: tesseract-${{ matrix.rid }}
+          path: tess
       - name: Tools bundle
-        if: runner.os != 'macOS'
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
@@ -126,7 +154,9 @@ jobs:
           b=bundle
           mkdir -p "$b/data" && touch "$b/portable.txt"
           if [ -d fdk/out ]; then mkdir -p "$b/tools/fdkaac" && cp fdk/out/* "$b/tools/fdkaac/"; fi
-          # FFmpeg: newest release-branch GPL build from BtbN for this platform
+          if [ -d tess ]; then mkdir -p "$b/tools/tesseract" && cp tess/* "$b/tools/tesseract/" && chmod 755 "$b/tools/tesseract/tesseract"; fi
+          # FFmpeg: newest release-branch GPL build from BtbN for this platform (macOS: Homebrew, next step)
+          if [ "$RUNNER_OS" != macOS ]; then
           case "${{ matrix.rid }}" in
             win-x64) t=win64 ;; win-arm64) t=winarm64 ;; linux-x64) t=linux64 ;; linux-arm64) t=linuxarm64 ;;
           esac
@@ -150,22 +180,45 @@ jobs:
           if [ -n "$lic" ]; then cp "$lic" "$b/tools/ffmpeg/LICENSE.txt"; fi
           printf '%s\n' "FFmpeg $asset - https://github.com/BtbN/FFmpeg-Builds (build scripts) and https://ffmpeg.org (source code)." \
             "GPL licensed: see LICENSE.txt. KnA runs it as a separate program." > "$b/tools/ffmpeg/SOURCE.txt"
+          fi
 
           # Everything else is installed by KnA's own component manager (same folders and checks as in the app).
           models="model:realesr-animevideov3,model:RealESRGAN_x4plus_anime_6B,model:realesr-general-x4v3,model:RealESRGAN_x4plus,model:RealESRGAN_x2plus"
-          # subtitle OCR: Tesseract (Windows; Linux/macOS use the system package) and the most used language models
-          common="anime4k,fsrcnnx,ocr:eng,ocr:ita,$models"
+          # Every package is complete (CLAUDE.md): OCR models, the archive engine (portable Python + py7zr), shaders,
+          # upscale models. Only PaddleOCR and PyTorch (GBs, GPU-specific) stay one click away in Settings → Components.
+          common="archive,anime4k,fsrcnnx,ocr:eng,ocr:ita,$models"
           case "${{ matrix.rid }}" in
             win-x64)     ids="nvencc,qsvencc,vceencc,qaac,vapoursynth,dovi_tool,hdr10plus_tool,tesseract,$common" ;;
             linux-x64)   ids="nvencc,qsvencc,vceencc,dovi_tool,hdr10plus_tool,$common" ;;
             linux-arm64) ids="dovi_tool,hdr10plus_tool,$common" ;;
-            *)           ids="$common" ;;   # win-arm64 is built on an x64 runner: only platform-neutral parts
+            # built on an x64 runner: x64 programs, which Windows on Arm runs through its x64 emulation
+            win-arm64)   ids="dovi_tool,hdr10plus_tool,tesseract,$common" ;;
+            *)           ids="dovi_tool,hdr10plus_tool,$common" ;;   # macOS (FFmpeg and Tesseract from the next step)
           esac
           # Absolute path: "dotnet run" starts in the project folder (pwd -W = Windows form under Git Bash).
           abs=$(cd "$b" && { pwd -W 2>/dev/null || pwd; })
           dotnet run --project src/KnA.Server -c Release -- --bundle "$abs" "$ids" || echo "::warning::Some components could not be bundled for ${{ matrix.rid }} (see the log)"
           rm -rf "$b/data/temp"
           du -sh "$b"/tools/* "$b"/ai 2>/dev/null || true
+      # macOS: FFmpeg and Tesseract from Homebrew, made relocatable (every library they load copied next to them and
+      # their load paths rewritten), so KnA.app works on a Mac without Homebrew.
+      - name: FFmpeg and Tesseract (macOS, relocatable)
+        if: runner.os == 'macOS'
+        run: |
+          brew install ffmpeg tesseract dylibbundler
+          for tool in ffmpeg tesseract; do
+            d=bundle/tools/$tool
+            mkdir -p "$d/libs"
+            if [ $tool = ffmpeg ]; then exes="ffmpeg ffprobe"; else exes="tesseract"; fi
+            args=()
+            for e in $exes; do cp "$(brew --prefix)/bin/$e" "$d/$e"; chmod 755 "$d/$e"; args+=(-x "$d/$e"); done
+            dylibbundler -od -b "${args[@]}" -d "$d/libs" -p @executable_path/libs/
+          done
+          printf '%s\n' "FFmpeg $(brew list --versions ffmpeg | cut -d' ' -f2) from Homebrew (https://formulae.brew.sh/formula/ffmpeg), libraries bundled with dylibbundler." \
+            "GPL licensed (https://ffmpeg.org/legal.html). KnA runs it as a separate program." > bundle/tools/ffmpeg/SOURCE.txt
+          printf '%s\n' "Tesseract $(brew list --versions tesseract | cut -d' ' -f2) from Homebrew, Apache-2.0 (https://github.com/tesseract-ocr/tesseract)." > bundle/tools/tesseract/SOURCE.txt
+          bundle/tools/ffmpeg/ffmpeg -hide_banner -version | head -1
+          bundle/tools/tesseract/tesseract --version | head -1
       - name: Portable layout
         if: runner.os != 'macOS'
         shell: bash
@@ -214,6 +267,10 @@ jobs:
           app=KnA.app
           mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
           cp -R out/desktop/. "$app/Contents/MacOS/"
+          # the complete tool set inside the app (read-only resources; settings and downloads go to the user's folder)
+          rm -rf "$app/Contents/MacOS/tools"
+          cp -R bundle/tools "$app/Contents/MacOS/tools"
+          if [ -d bundle/ai ]; then cp -R bundle/ai "$app/Contents/MacOS/ai"; fi
           cp branding/kna.icns "$app/Contents/Resources/kna.icns"
           cat > "$app/Contents/Info.plist" <<EOF
           <?xml version="1.0" encoding="UTF-8"?>
@@ -227,11 +284,14 @@ jobs:
             <key>CFBundleExecutable</key><string>KnA</string>
             <key>CFBundleIconFile</key><string>kna.icns</string>
             <key>CFBundlePackageType</key><string>APPL</string>
-            <key>LSMinimumSystemVersion</key><string>12.0</string>
+            <key>LSMinimumSystemVersion</key><string>14.0</string>
             <key>NSHighResolutionCapable</key><true/>
           </dict></plist>
           EOF
           sed -i '' 's/^          //' "$app/Contents/Info.plist"
+          # ad-hoc signature for every program and library (dylibbundler rewrote them; Apple Silicon refuses unsigned code)
+          find "$app/Contents/MacOS" -type f \( -perm -u+x -o -name '*.dylib' -o -name '*.so' \) -print0 \
+            | xargs -0 -n 50 codesign --force --sign - 2>/dev/null || true
           codesign --force --deep --sign - "$app" || true
           ditto -c -k --keepParent "$app" "KnA-${{ matrix.name }}.zip"
       - uses: actions/upload-artifact@v4

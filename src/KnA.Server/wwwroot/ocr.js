@@ -21,9 +21,14 @@ export async function openOcr(jobId, track, onUsed) {
   $("#ocr-lang").placeholder = t("from the track ({0})", r.language ?? "und");
   $("#ocr-italic").checked = o.detectItalic !== false;
   $("#ocr-fix").checked = o.fixCommonErrors !== false;
+  paddleCheck();
   await refresh();
   if (oc.lines.every(l => l.confidence < 0)) await run(null);
 }
+
+// PaddleOCR is not in the packages (about 1 GB): when chosen and missing, one click installs it here.
+const paddleCheck = () => { $("#ocr-paddle").hidden = !($("#ocr-engine").value === "paddleocr" && !state.tools?.paddleOcr); };
+$("#ocr-engine").onchange = paddleCheck;
 
 const options = () => ({ engine: $("#ocr-engine").value, language: $("#ocr-lang").value.trim() || null,
   detectItalic: $("#ocr-italic").checked, fixCommonErrors: $("#ocr-fix").checked });
@@ -100,6 +105,15 @@ $("#dlg-ocr").addEventListener("keydown", e => {
 });
 $("#dlg-ocr").onclick = guard(async e => {
   const a = e.target.closest("[data-a]")?.dataset.a; if (!a || !oc) return;
+  if (a === "install-paddle") {
+    const b = $("#ocr-paddle"); b.disabled = true;
+    try {
+      for (const id of ["paddleocr", "paddleocr-models"]) { $("#ocr-status").textContent = t("Installing {0}…", id); await api("POST", `/api/components/${id}/install`); }
+      state.tools = (await api("GET", "/api/state")).tools;
+      $("#ocr-status").textContent = t("Installed {0}.", "PaddleOCR");
+    } finally { b.disabled = false; paddleCheck(); }
+    return;
+  }
   if (a === "run") return run(null);
   if (a === "run-sel") return run([...(oc.sel.size ? oc.sel : new Set([oc.cur]))]);
   if (a === "prev") { await commit(); move(-1); }

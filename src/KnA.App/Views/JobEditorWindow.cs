@@ -874,6 +874,8 @@ public sealed class JobEditorWindow : Window
             AllowedContainers = _a!.AllowedContainers,
             SizeInfo = SizeText,
             ParameterOptions = (tool, s, ct) => _queue.ParameterOptionsAsync(tool, s, ct),
+            AiRuntimeInstalled = () => File.Exists(KnA.Core.Tools.ComponentManager.VenvPython(_queue.Store.DataDirectory)),
+            InstallComponent = id => Task.Run(() => _queue.Components.InstallAsync(id)),
         };
         form.Rebuild();   // the properties above are set after the constructor's first build
         form.Changed += s => { _settings = s; Save(true); };

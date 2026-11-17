@@ -26,6 +26,12 @@ public static class AppPaths
         PortableRoot(dataDirectory) is { } root ? Path.Combine(root, "tools") : Path.Combine(dataDirectory, "tools");
 
     /// <summary>The AI runtime: portable Python, the PyTorch environment (venv) and the models.</summary>
+    /// <summary>
+    /// A file or folder shipped inside the program folder (release packages, Docker image, macOS app bundle): read-only
+    /// resources used when the data folder has no copy of its own (an installed service, KnA.app).
+    /// </summary>
+    public static string Bundled(params string[] parts) => Path.Combine([AppContext.BaseDirectory, .. parts]);
+
     public static string Ai(string dataDirectory)
     {
         var legacy = Path.Combine(dataDirectory, "ai");

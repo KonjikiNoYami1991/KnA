@@ -145,11 +145,11 @@ validato campo per campo e confrontato con il rilevamento hardware; non cambia n
 
 ### OCR dei sottotitoli
 
-I sottotitoli immagine dei Blu-ray (PGS) diventano testo, come in Subtitle Edit: KnA li decodifica e li legge con
-Tesseract 5 e il modello della lingua di ogni traccia (scaricato al primo uso). Scegli "Testo (OCR)" per una traccia,
-attiva "Converti i sottotitoli immagine in testo" per tutti i file, o esporta una traccia con "OCR → .srt".
-Impostazioni → Componenti installa Tesseract (Windows) e i modelli; su Linux/macOS Tesseract arriva dal pacchetto di
-sistema (`apt install tesseract-ocr`, `brew install tesseract`), già presente nell'immagine Docker.
+I sottotitoli immagine dei Blu-ray (PGS) e dei DVD (VobSub) diventano testo, come in Subtitle Edit: KnA li decodifica e
+li legge con Tesseract 5 e il modello della lingua di ogni traccia. Apri l'**editor OCR** di una traccia per controllare
+e correggere ogni riga, attiva "Converti i sottotitoli immagine in testo" per tutti i file, o scegli "Testo (OCR)" per
+una traccia. Tesseract e i modelli italiano e inglese sono in ogni pacchetto (le altre lingue si scaricano al primo
+uso); PaddleOCR, il secondo motore, si installa con un clic dall'editor OCR.
 
 ### Drag & drop intelligente
 Desktop e web: video, script, dischi e cartelle vanno in coda; **sottotitoli, audio e font** si agganciano al lavoro su cui li rilasci
@@ -244,8 +244,11 @@ Un pacchetto completo per sistema: scarica quello del tuo computer, non serve al
 | Linux (quasi tutti i PC) | `KnA-Linux-x64.tar.gz` | `KnA-Server-Linux-x64.tar.gz` | `tar xzf KnA-Linux-x64.tar.gz && ./KnA/KnA` |
 | Linux su Arm (Raspberry Pi 5…) | `KnA-Linux-ARM64.tar.gz` | `KnA-Server-Linux-ARM64.tar.gz` | come sopra |
 
-Su macOS FFmpeg arriva da Homebrew (`brew install ffmpeg`): KnA lo trova da solo. Per i server la via più comoda
-sono Docker o gli installer Linux / Proxmox qui sotto, che scaricano da soli il pacchetto giusto.
+Ogni pacchetto è completo: scarichi, estrai, usi. FFmpeg, fdkaac, Tesseract con i modelli italiano e inglese, il motore
+archivi, shader e modelli di upscaling sono dentro (su macOS dentro `KnA.app`, che richiede macOS 14 o successivo; niente
+Homebrew). Solo due parti facoltative pesano gigabyte e dipendono dalla GPU: **PyTorch** per l'upscaler AI e
+**PaddleOCR**; KnA te li offre con un clic quando scegli una funzione che li usa. Per i server la via più comoda sono
+Docker o gli installer Linux / Proxmox qui sotto, che scaricano da soli il pacchetto giusto.
 
 I pacchetti portable non richiedono installazioni (.NET e **FFmpeg** sono inclusi) e tengono tutto nella cartella del programma,
 ogni cosa nella sua sottocartella:

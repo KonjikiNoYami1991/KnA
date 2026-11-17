@@ -92,6 +92,8 @@ export function renderSettingsForm(root, s, opts = {}) {
       <label class="field"><span>${esc(t("Method"))}</span><select data-k="upscale.method"></select>
         <small class="muted">${esc(o.upscaleMethods.find(m => m.value === (s.upscale?.method ?? "Standard"))?.description ?? "")}</small></label>
       ${s.upscale?.method === "Anime4K" ? `<label class="field"><span>Anime4K</span><select data-k="upscale.model"></select></label>` : ""}
+      ${s.upscale?.method === "Neural" && state.tools && !state.tools.aiRuntime ? `<div class="field"><button type="button" class="btn primary sm" data-install="ai-runtime">${esc(t("Install the AI upscaler (Python + PyTorch, several GB)"))}</button>
+        <small class="muted">${esc(t("Needed once for the neural models: KnA picks the PyTorch build for your GPU (CUDA, ROCm, Intel, Apple or CPU)."))}</small></div>` : ""}
       ${s.upscale?.method === "Neural" ? `<label class="field"><span>${esc(t("Model"))}</span><select data-k="upscale.model"></select>
         <small class="muted">${esc(o.neuralModels.find(m => m.value === (s.upscale?.model ?? o.neuralModels[0].value))?.description ?? "")}</small></label>` : ""}
       ${s.upscale?.method && s.upscale.method !== "Standard" ? `<label class="toggle"><input type="checkbox" data-k="upscale.alwaysApply" ${s.upscale.alwaysApply ? "checked" : ""}><span class="switch"></span><span>${esc(t("Also at the same size (restoration only)"))}</span></label>
@@ -186,7 +188,14 @@ export function renderSettingsForm(root, s, opts = {}) {
     if (k === "profile") { s.container = null; }
     changed();
   };
-  root.onclick = e => {
+  root.onclick = async e => {
+    const inst = e.target.closest("[data-install]");
+    if (inst) {
+      inst.disabled = true; inst.textContent = t("Installing {0}…", "PyTorch");
+      try { await api("POST", `/api/components/${inst.dataset.install}/install`); state.tools = (await api("GET", "/api/state")).tools; changed(); }
+      catch (err) { inst.disabled = false; inst.textContent = err.message; }
+      return;
+    }
     if (e.target.closest("[data-reset=encoder]")) { s.encoder = {}; changed(); return; }
     const b = e.target.closest("[data-k=codec] button");
     if (b) { s.codec = b.dataset.v; changed(); }
