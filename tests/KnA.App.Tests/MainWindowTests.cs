@@ -46,6 +46,41 @@ public class MainWindowTests
     }
 
     [AvaloniaFact]
+    public async Task Ocr_window_reads_and_shows_picture_subtitles()
+    {
+        var data = Directory.CreateTempSubdirectory("kna-ocr-").FullName;
+        var queue = new QueueService(new SettingsStore(data), restoreQueue: false);
+        var font = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf";
+        if (queue.Tools is null || !File.Exists(font) || KnA.Core.Ocr.SubtitleOcr.LocateTesseract(data) is null) return;
+        async Task<KnA.Core.Ocr.PgsWriter.Picture> Pic(string text, double a, double b)
+        {
+            var raw = Path.Combine(data, Guid.NewGuid().ToString("N") + ".gray");
+            await KnA.Core.Processing.ProcessRunner.RunAsync(queue.Tools.Ffmpeg, ["-v", "error", "-y", "-f", "lavfi", "-i", "color=black:s=900x80",
+                "-vf", $"drawtext=fontfile={font}:text='{text}':fontcolor=white:fontsize=46:x=20:y=14:borderw=3:bordercolor=0x101010",
+                "-frames:v", "1", "-pix_fmt", "gray", "-f", "rawvideo", raw]);
+            var g = File.ReadAllBytes(raw);
+            return new(a, b, 900, 80, g.Select(v => v > 200 ? (byte)1 : v > 90 ? (byte)3 : v > 8 ? (byte)2 : (byte)0).ToArray());
+        }
+        var sup = Path.Combine(data, "s.sup");
+        File.WriteAllBytes(sup, KnA.Core.Ocr.PgsWriter.Write([await Pic("Nice to meet you", 1, 2), await Pic("The weather is fine", 3, 4), await Pic("See you tomorrow", 5, 6)]));
+        var mkv = Path.Combine(data, "film.mkv");
+        await KnA.Core.Processing.ProcessRunner.RunAsync(queue.Tools.Ffmpeg, ["-v", "error", "-y", "-f", "lavfi", "-i", "color=black:s=320x180:d=7",
+            "-i", sup, "-copyts", "-map", "0:v", "-map", "1:s", "-c:v", "libx264", "-preset", "ultrafast", "-c:s", "copy", "-metadata:s:s:0", "language=eng", mkv]);
+        var job = queue.AddPaths([mkv], new JobSettings()).Single();
+        await Pump(() => job.Media is not null);
+        var session = await KnA.Core.Ocr.OcrSession.OpenAsync(queue, job, mkv, job.Media!.Subtitles[0].Index);
+        var w = new OcrWindow(queue, session) { Width = 1200, Height = 760 };
+        w.Show();
+        App.ApplyTheme("Dark");
+        await Pump(() => session.Lines.All(l => l.Confidence >= 0), 60000);
+        await Pump(() => false, 800);
+        Shot(w, "app-08-ocr.png");
+        Assert.Contains("weather", session.Lines[1].Text);
+        w.Close();
+        queue.Dispose();
+    }
+
+    [AvaloniaFact]
     public async Task Main_window_renders_and_runs_a_job()
     {
         var data = Directory.CreateTempSubdirectory("kna-app-").FullName;

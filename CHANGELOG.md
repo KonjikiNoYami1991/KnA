@@ -36,6 +36,16 @@
   installed by the Linux installer and in the Docker image) and the models of 12 languages. Windows packages include
   Tesseract; every package includes the Italian and English models.
 
+- **DVD subtitles (VobSub)** too, from MKV, VOB/MPEG and .sub/.idx: KnA decodes the pictures with their palette.
+- **OCR editor**, Subtitle Edit's OCR window improved: every picture next to its text, confidence colours and a "lines to
+  check" filter, italics per line, reading again only the selected lines, find/replace (also regex), Enter = keep and
+  next, then "Save SRT" or "Use in this job" (the SRT replaces the picture track). Desktop and web.
+- **Italics**: Tesseract 4/5 no longer reports font styles, so KnA measures the slant of the letters on the picture and
+  writes `<i>` by itself.
+- **PaddleOCR** (PP-OCRv5, the standalone build Subtitle Edit uses) as a second engine, CPU or NVIDIA GPU, Windows and
+  Linux x64; its 7-Zip packages are opened by a new **archive engine**: a standalone Python with py7zr, nothing installed
+  on the system.
+
 **Automation**
 - Commands after each job and after the queue, with macros ({output}, {status}, {done}…).
 - Command line: `kna-server --encode <files> [--preset …] [--size MB] [--trim a-b] …`, `--list-presets`.
@@ -83,6 +93,16 @@
 - Impostazioni → Componenti: Tesseract (Windows: lo stesso pacchetto 5.5.0 di Subtitle Edit; Linux/macOS: pacchetto di
   sistema, installato dall'installer Linux e nell'immagine Docker) e i modelli di 12 lingue. I pacchetti Windows includono
   Tesseract; tutti i pacchetti includono i modelli italiano e inglese.
+
+- Anche i **sottotitoli dei DVD (VobSub)**, da MKV, VOB/MPEG e .sub/.idx: KnA decodifica le immagini con la loro palette.
+- **Editor OCR**, la finestra OCR di Subtitle Edit migliorata: ogni immagine accanto al suo testo, colori di confidenza e
+  filtro "righe da controllare", corsivo per riga, rilettura delle sole righe selezionate, trova/sostituisci (anche regex),
+  Invio = conferma e prosegui, poi "Salva SRT" o "Usa in questo lavoro" (l'SRT sostituisce la traccia immagine). Desktop e web.
+- **Corsivi**: Tesseract 4/5 non riconosce più gli stili, quindi KnA misura l'inclinazione delle lettere sull'immagine e
+  scrive da sé i tag `<i>`.
+- **PaddleOCR** (PP-OCRv5, la build standalone usata da Subtitle Edit) come secondo motore, CPU o GPU NVIDIA, Windows e
+  Linux x64; i suoi pacchetti 7-Zip li apre un nuovo **motore archivi**: un Python standalone con py7zr, niente installato
+  nel sistema.
 
 **Automazione**
 - Comandi dopo ogni lavoro e a coda finita, con macro ({output}, {status}, {done}…).

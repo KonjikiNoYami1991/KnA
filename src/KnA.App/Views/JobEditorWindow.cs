@@ -970,27 +970,30 @@ public sealed class JobEditorWindow : Window
             }
             if (kind == "subtitle" && st is SubtitleStream { CodecName: var cn } && KnA.Core.Ocr.SubtitleOcr.CanRead(cn))
             {
-                // Subtitle Edit's "OCR → save as": the text version next to the video, outside the queue
-                var ocrBtn = new Button { Content = "OCR → .srt", Classes = { "ghost" } };
-                ToolTip.SetTip(ocrBtn, L.T("Reads this picture track with OCR and saves it as an SRT file."));
+                // Subtitle Edit's OCR window (improved): read, check and correct, then save or use in this job
+                var ocrBtn = new Button { Content = "OCR…", Classes = { "ghost" } };
+                ToolTip.SetTip(ocrBtn, L.T("Opens the OCR editor: every picture next to its text, to check and correct, then save as SRT or use in this job."));
                 var track = t;
                 ocrBtn.Click += async (_, _) =>
                 {
-                    var pick = await StorageProvider.SaveFilePickerAsync(new FilePickerSaveOptions
-                    {
-                        SuggestedFileName = Path.GetFileNameWithoutExtension(_job.SourcePath) + (track.Language is { Length: > 0 } lg ? "." + lg : "") + ".srt",
-                        FileTypeChoices = [new FilePickerFileType("SRT") { Patterns = ["*.srt"] }],
-                    });
-                    if (pick?.TryGetLocalPath() is not { } path) return;
                     ocrBtn.IsEnabled = false;
-                    var prog = new Progress<double>(v => ocrBtn.Content = $"OCR {v:0}%");
+                    ocrBtn.Content = L.T("Reading…");
                     try
                     {
-                        var r = await Task.Run(() => _queue.OcrTrackAsync(_job, track.File, track.Stream, track.Language, path, prog));
-                        _issues.Children.Add(Ui.Note(L.T("OCR: {0} subtitles written to {1}.", r.Subtitles, path)));
+                        await SaveNowAsync(false);
+                        var session = await Task.Run(() => KnA.Core.Ocr.OcrSession.OpenAsync(_queue, _job, track.File, track.Stream));
+                        var w = new OcrWindow(_queue, session) { Icon = Icon };
+                        await w.ShowDialog(this);
+                        if (w.UsedInJob)
+                        {
+                            _edit = _job.Edit;
+                            _a = await Task.Run(() => _queue.AnalyzeAsync(_job));
+                            RenderIssues();
+                            RenderTab();
+                        }
                     }
                     catch (Exception ex) { _issues.Children.Add(Ui.Note(ex.Message, true)); }
-                    finally { ocrBtn.Content = "OCR → .srt"; ocrBtn.IsEnabled = true; }
+                    finally { ocrBtn.Content = "OCR…"; ocrBtn.IsEnabled = true; }
                 };
                 Put(ocrBtn, 3);
             }

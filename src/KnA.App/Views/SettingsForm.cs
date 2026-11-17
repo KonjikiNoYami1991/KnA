@@ -254,7 +254,7 @@ public sealed class SettingsForm : StackPanel
                 Children.Add(Ui.Toggle(L.T("Prefer external .ass/.srt next to the video"), s.UseSidecarSubtitles, v => Set(s with { UseSidecarSubtitles = v }, false)));
             if (s.Subtitles == SubtitleMode.Softsub || _full)
             {
-                Children.Add(Ui.Toggle(L.T("Convert picture subtitles (PGS) to text with OCR"), s.OcrPictureSubtitles, v => Set(_s with { OcrPictureSubtitles = v }, false)));
+                Children.Add(Ui.Toggle(L.T("Convert picture subtitles (PGS, DVD) to text with OCR"), s.OcrPictureSubtitles, v => Set(_s with { OcrPictureSubtitles = v }, false)));
                 if (s.OcrPictureSubtitles)
                     Children.Add(Ui.Muted(L.T("Tesseract with the language model of each track, like Subtitle Edit: lighter files, and subtitles MP4 and players without PGS support can show. Settings → Components installs it.")));
             }

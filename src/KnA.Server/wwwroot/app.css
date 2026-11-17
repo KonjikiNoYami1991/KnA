@@ -393,3 +393,21 @@ details.upscale[open] > summary { color: color-mix(in srgb, var(--accent) 80%, v
 .param-row code { font-weight: 600; overflow: hidden; text-overflow: ellipsis; }
 .param-row small { grid-column: 1 / -1; margin-top: -2px; }
 @media (max-width: 640px) { .param-row { grid-template-columns: 1fr auto; } .param-row code { grid-column: 1 / -1; } }
+
+/* OCR editor */
+.ocr-bar { display: flex; flex-wrap: wrap; gap: 10px; align-items: flex-end; padding: 10px 16px; border-bottom: 1px solid var(--border); }
+.ocr-body { display: grid; grid-template-columns: 5fr 4fr; gap: 16px; padding: 12px 16px; min-height: 0; flex: 1; overflow: hidden; }
+.ocr-list-wrap { display: flex; flex-direction: column; min-height: 0; gap: 6px; }
+.ocr-list { overflow: auto; border: 1px solid var(--border); border-radius: 10px; flex: 1; min-height: 260px; max-height: calc(100dvh - 330px); }
+.ocr-row { display: grid; grid-template-columns: 6px 36px 140px 1fr auto 34px; gap: 8px; align-items: center; padding: 6px 10px; cursor: pointer; border-bottom: 1px solid var(--border); font-size: 13px; }
+.ocr-row .mk { width: 6px; height: 20px; border-radius: 3px; background: #888; }
+.ocr-row .mk.ok { background: #3cb371; } .ocr-row .mk.warn { background: #f0a020; } .ocr-row .mk.bad { background: #e05555; }
+.ocr-row .tx { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.ocr-row.on { background: color-mix(in srgb, var(--accent-2) 30%, transparent); }
+.ocr-row.sel { outline: 1px dashed var(--accent-2); outline-offset: -2px; }
+.ocr-editor { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.ocr-picture { background: #2a2a30; border-radius: 10px; padding: 14px; display: grid; place-items: center; min-height: 140px; }
+.ocr-picture img { max-width: 100%; }
+#ocr-text { font-size: 18px; width: 100%; resize: vertical; }
+.ocr-foot { display: flex; justify-content: space-between; gap: 10px; flex-wrap: wrap; padding: 10px 16px; border-top: 1px solid var(--border); }
+@media (max-width: 760px) { .ocr-body { grid-template-columns: 1fr; overflow: auto; } .ocr-list { max-height: 40dvh; } }

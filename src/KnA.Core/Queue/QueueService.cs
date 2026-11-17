@@ -139,6 +139,9 @@ public sealed class QueueService : IDisposable
         }
     }
 
+    /// <summary>Open OCR editor sessions (web editor), by id.</summary>
+    public System.Collections.Concurrent.ConcurrentDictionary<Guid, Ocr.OcrSession> OcrSessions { get; } = new();
+
     /// <summary>
     /// OCR of one picture subtitle track of a job into an SRT file (Subtitle Edit's "OCR → save"), outside the
     /// queue. <paramref name="srtPath"/> null = next to the source, "name.lang.srt".

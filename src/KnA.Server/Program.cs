@@ -326,6 +326,52 @@ app.MapPost("/api/jobs/{id:guid}/ocr", async (Guid id, OcrRequest req, Cancellat
     }
     catch (InvalidOperationException ex) { return Results.Problem(ex.Message, statusCode: 400); }
 });
+// ---------------------------------------------------------------- OCR editor (Subtitle Edit's OCR window, in the browser)
+object OcrLineDto(KnA.Core.Ocr.OcrLine l) => new { l.Index, start = l.Start.TotalSeconds, end = l.End.TotalSeconds, l.Text, l.Confidence, l.Italic, l.Forced, l.Edited };
+app.MapPost("/api/ocr/sessions", async (OcrOpenRequest req, CancellationToken ct) =>
+{
+    var j = queue.Find(req.JobId) ?? throw new KeyNotFoundException();
+    if (!browser.IsAllowed(req.File)) return Results.Problem(L.T("Outside the allowed media roots: {0}", req.File), statusCode: 403);
+    var s = await KnA.Core.Ocr.OcrSession.OpenAsync(queue, j, req.File, req.Stream, ct);
+    queue.OcrSessions[s.Id] = s;
+    return Results.Ok(new { s.Id, count = s.Lines.Count, s.Language, s.Codec, options = queue.Settings.Ocr });
+});
+app.MapGet("/api/ocr/{sid:guid}", (Guid sid) => queue.OcrSessions.TryGetValue(sid, out var s)
+    ? Results.Ok(new { s.Busy, s.Done, lines = s.Lines.Select(OcrLineDto), toCheck = s.Lines.Count(s.ToCheck) }) : Results.NotFound());
+app.MapGet("/api/ocr/{sid:guid}/image/{i:int}", (Guid sid, int i) => queue.OcrSessions.TryGetValue(sid, out var s)
+    ? Results.File(s.Png(i), "image/png") : Results.NotFound());
+app.MapPost("/api/ocr/{sid:guid}/run", (Guid sid, OcrRunRequest req) =>
+{
+    if (!queue.OcrSessions.TryGetValue(sid, out var s)) return Results.NotFound();
+    if (s.Busy) return Results.Ok(new { started = false });
+    var options = req.Options ?? queue.Settings.Ocr;
+    queue.Settings.Ocr = options with { Language = null };   // remembered as the default (jobs use it too)
+    queue.SaveSettings();
+    _ = Task.Run(async () => { try { await s.RecognizeAsync(queue, options, req.Only, null, CancellationToken.None); } catch (Exception ex) { Console.Error.WriteLine("OCR: " + ex.Message); } });
+    return Results.Ok(new { started = true });
+});
+app.MapPut("/api/ocr/{sid:guid}/lines/{i:int}", (Guid sid, int i, OcrEditRequest req) =>
+{
+    if (!queue.OcrSessions.TryGetValue(sid, out var s)) return Results.NotFound();
+    s.Edit(i, req.Text, req.Italic, req.Start is { } a ? TimeSpan.FromSeconds(a) : null, req.End is { } b ? TimeSpan.FromSeconds(b) : null);
+    return s.Line(i) is { } l ? Results.Ok(OcrLineDto(l)) : Results.NotFound();
+});
+app.MapPost("/api/ocr/{sid:guid}/replace", (Guid sid, OcrReplaceRequest req) =>
+{
+    if (!queue.OcrSessions.TryGetValue(sid, out var s)) return Results.NotFound();
+    try { return Results.Ok(new { changed = s.Replace(req.Find, req.Replace ?? "", req.Regex, false) }); }
+    catch (ArgumentException ex) { return Results.Problem(ex.Message, statusCode: 400); }
+});
+app.MapPost("/api/ocr/{sid:guid}/save", async (Guid sid, bool? use, CancellationToken ct) =>
+{
+    if (!queue.OcrSessions.TryGetValue(sid, out var s)) return Results.NotFound();
+    var path = s.DefaultSrtPath();
+    if (!browser.IsWritable(Path.GetDirectoryName(path) ?? "")) return Results.Problem(L.T("Outside the allowed media roots: {0}", path), statusCode: 403);
+    if (use == true) await s.UseInJobAsync(queue, path, ct); else await s.SaveAsync(path, ct);
+    return Results.Ok(new { path });
+});
+app.MapDelete("/api/ocr/{sid:guid}", (Guid sid) => { queue.OcrSessions.TryRemove(sid, out _); return Results.Ok(); });
+
 // Compressibility check: short samples encoded with these settings predict the final size.
 app.MapPost("/api/jobs/{id:guid}/estimate", async (Guid id, SizeRequest req, CancellationToken ct) =>
 {

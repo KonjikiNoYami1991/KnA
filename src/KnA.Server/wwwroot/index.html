@@ -162,6 +162,47 @@
   </div>
 </dialog>
 
+<!-- OCR editor (picture subtitles → text, like Subtitle Edit's OCR window) -->
+<dialog id="dlg-ocr" class="dialog xwide">
+  <div class="dialog-inner">
+    <header class="dialog-head">
+      <div class="grow min0"><h2 data-i18n>OCR</h2><div class="muted small ellipsis" id="ocr-sub"></div></div>
+      <button class="btn icon ghost" id="ocr-close" data-i18n-title="Close"><svg><use href="#i-x"/></svg></button>
+    </header>
+    <div class="ocr-bar">
+      <label class="field"><span data-i18n>Engine</span><select id="ocr-engine"><option value="tesseract">Tesseract 5</option><option value="paddleocr">PaddleOCR (PP-OCRv5)</option></select></label>
+      <label class="field"><span data-i18n>Language</span><input id="ocr-lang" class="mono" style="width:120px"></label>
+      <label class="check"><input type="checkbox" id="ocr-italic" checked><span data-i18n>Detect italics</span></label>
+      <label class="check"><input type="checkbox" id="ocr-fix" checked><span data-i18n>Fix common OCR errors</span></label>
+      <button class="btn primary sm" data-a="run" data-i18n>Read all</button>
+      <button class="btn sm" data-a="run-sel" data-i18n>Read selected again</button>
+      <span class="muted small" id="ocr-status"></span>
+    </div>
+    <div class="ocr-body">
+      <div class="ocr-list-wrap">
+        <label class="check small"><input type="checkbox" id="ocr-only"><span data-i18n>Only lines to check</span></label>
+        <div class="ocr-list" id="ocr-list" tabindex="0"></div>
+      </div>
+      <div class="ocr-editor">
+        <div class="ocr-picture"><img id="ocr-img" alt=""></div>
+        <textarea id="ocr-text" rows="3"></textarea>
+        <div class="row" style="flex-wrap:wrap;gap:8px">
+          <label class="check"><input type="checkbox" id="ocr-it"><span data-i18n>Italic</span></label>
+          <input id="ocr-start" class="mono" style="width:120px"><input id="ocr-end" class="mono" style="width:120px">
+          <button class="btn sm" data-a="prev">↑</button><button class="btn sm" data-a="next">↓</button>
+          <button class="btn sm" data-a="next-check" data-i18n>Next to check</button>
+        </div>
+      </div>
+    </div>
+    <footer class="ocr-foot">
+      <div class="row" style="gap:6px;flex-wrap:wrap"><input id="ocr-find" data-i18n-ph="Find"><input id="ocr-repl" data-i18n-ph="Replace with">
+        <label class="check"><input type="checkbox" id="ocr-rx">Regex</label><button class="btn sm" data-a="replace" data-i18n>Replace all</button></div>
+      <div class="row" style="gap:6px"><button class="btn sm" data-a="save" data-i18n>Save SRT next to the video</button>
+        <button class="btn primary sm" data-a="use" data-i18n>Use in this job</button></div>
+    </footer>
+  </div>
+</dialog>
+
 <!-- Preset wizard -->
 <dialog id="dlg-wizard" class="dialog">
   <form method="dialog" class="dialog-inner">

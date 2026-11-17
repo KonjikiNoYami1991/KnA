@@ -26,6 +26,29 @@ public static class PngWriter
         Chunk(fs, "IEND", []);
     }
 
+    /// <summary>RGBA picture (for showing subtitle pictures in the web OCR editor).</summary>
+    public static byte[] Rgba(int width, int height, byte[] rgba)
+    {
+        using var ms = new MemoryStream();
+        ms.Write([0x89, (byte)'P', (byte)'N', (byte)'G', 0x0D, 0x0A, 0x1A, 0x0A]);
+        var ihdr = new byte[13];
+        BigEndian(ihdr, 0, (uint)width);
+        BigEndian(ihdr, 4, (uint)height);
+        ihdr[8] = 8;
+        ihdr[9] = 6;   // RGBA
+        Chunk(ms, "IHDR", ihdr);
+        using var raw = new MemoryStream();
+        using (var z = new ZLibStream(raw, CompressionLevel.Fastest, leaveOpen: true))
+            for (int y = 0; y < height; y++)
+            {
+                z.WriteByte(0);
+                z.Write(rgba, y * width * 4, width * 4);
+            }
+        Chunk(ms, "IDAT", raw.ToArray());
+        Chunk(ms, "IEND", []);
+        return ms.ToArray();
+    }
+
     private static void Chunk(Stream s, string type, byte[] data)
     {
         var len = new byte[4];

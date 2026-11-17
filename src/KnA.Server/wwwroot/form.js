@@ -80,7 +80,7 @@ export function renderSettingsForm(root, s, opts = {}) {
     ${show.subs ? `<label class="field"><span>${esc(t("Subtitles"))}</span><select data-k="subtitles"></select>
       <small class="muted">${esc(t("Automatic plan: the editor (Tracks tab) can override it per file."))}</small></label>
       ${s.subtitles === "Hardsub" ? `<label class="toggle"><input type="checkbox" data-k="useSidecarSubtitles" ${s.useSidecarSubtitles ? "checked" : ""}><span class="switch"></span><span>${esc(t("Prefer external .ass/.srt next to the video"))}</span></label>` : ""}
-      ${s.subtitles === "Softsub" || full ? `<label class="toggle"><input type="checkbox" data-k="ocrPictureSubtitles" ${s.ocrPictureSubtitles ? "checked" : ""}><span class="switch"></span><span>${esc(t("Convert picture subtitles (PGS) to text with OCR"))}</span></label>
+      ${s.subtitles === "Softsub" || full ? `<label class="toggle"><input type="checkbox" data-k="ocrPictureSubtitles" ${s.ocrPictureSubtitles ? "checked" : ""}><span class="switch"></span><span>${esc(t("Convert picture subtitles (PGS, DVD) to text with OCR"))}</span></label>
         ${s.ocrPictureSubtitles ? `<small class="muted">${esc(t("Tesseract with the language model of each track, like Subtitle Edit: lighter files, and subtitles MP4 and players without PGS support can show. Settings → Components installs it."))}</small>` : ""}` : ""}` : ""}
     ${show.container ? `<label class="field"><span>${esc(t("Container"))}</span><select data-k="container"></select></label>` : ""}
     ${show.audio ? `<div class="grid2">

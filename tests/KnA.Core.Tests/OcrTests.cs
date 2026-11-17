@@ -6,62 +6,6 @@ using Xunit;
 
 namespace KnA.Core.Tests;
 
-/// <summary>Writes Blu-ray PGS (.sup) for tests: FFmpeg can read PGS but not create it.</summary>
-internal static class PgsWriter
-{
-    public sealed record Picture(double Start, double End, int Width, int Height, byte[] Indexed, int X = 100, int Y = 900);
-
-    public static byte[] Write(IEnumerable<Picture> pictures)
-    {
-        var o = new List<byte>();
-        foreach (var p in pictures)
-        {
-            long s = (long)(p.Start * 90000), e = (long)(p.End * 90000);
-            // PCS epoch start with one object
-            Seg(o, s, 0x16, [0x07, 0x80, 0x04, 0x38, 0x10, 0, 1, 0x80, 0, 0, 1, 0, 0, 0, 0, (byte)(p.X >> 8), (byte)p.X, (byte)(p.Y >> 8), (byte)p.Y]);
-            Seg(o, s, 0x17, [1, 0, (byte)(p.X >> 8), (byte)p.X, (byte)(p.Y >> 8), (byte)p.Y, (byte)(p.Width >> 8), (byte)p.Width, (byte)(p.Height >> 8), (byte)p.Height]);
-            // palette: 1 = white, 2 = black outline, 3 = grey (antialiasing); 0 stays transparent
-            Seg(o, s, 0x14, [0, 0, 1, 235, 128, 128, 255, 2, 16, 128, 128, 255, 3, 126, 128, 128, 255]);
-            var rle = Rle(p.Width, p.Height, p.Indexed);
-            int len = rle.Count + 4;
-            Seg(o, s, 0x15, [0, 0, 0, 0xC0, (byte)(len >> 16), (byte)(len >> 8), (byte)len, (byte)(p.Width >> 8), (byte)p.Width, (byte)(p.Height >> 8), (byte)p.Height, .. rle]);
-            Seg(o, s, 0x80, []);
-            // clear at the end
-            Seg(o, e, 0x16, [0x07, 0x80, 0x04, 0x38, 0x10, 0, 2, 0x00, 0, 0, 0]);
-            Seg(o, e, 0x80, []);
-        }
-        return [.. o];
-    }
-
-    private static void Seg(List<byte> o, long pts, byte type, byte[] payload)
-    {
-        o.AddRange([(byte)'P', (byte)'G', (byte)(pts >> 24), (byte)(pts >> 16), (byte)(pts >> 8), (byte)pts, 0, 0, 0, 0, type,
-            (byte)(payload.Length >> 8), (byte)payload.Length]);
-        o.AddRange(payload);
-    }
-
-    private static List<byte> Rle(int w, int h, byte[] px)
-    {
-        var r = new List<byte>();
-        for (int y = 0; y < h; y++)
-        {
-            int x = 0;
-            while (x < w)
-            {
-                byte c = px[y * w + x];
-                int n = 1;
-                while (x + n < w && px[y * w + x + n] == c && n < 16383) n++;
-                if (c != 0 && n < 3) for (int k = 0; k < n; k++) r.Add(c);
-                else if (c == 0) { r.Add(0); if (n < 64) r.Add((byte)n); else { r.Add((byte)(0x40 | (n >> 8))); r.Add((byte)n); } }
-                else { r.Add(0); if (n < 64) { r.Add((byte)(0x80 | n)); } else { r.Add((byte)(0xC0 | (n >> 8))); r.Add((byte)n); } r.Add(c); }
-                x += n;
-            }
-            r.Add(0); r.Add(0);
-        }
-        return r;
-    }
-}
-
 public class OcrTests(FeatureFixture fx) : IClassFixture<FeatureFixture>
 {
     private async Task<PgsWriter.Picture> TextPicture(string text, double start, double end, string font = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf")
@@ -244,5 +188,48 @@ public class OcrTests(FeatureFixture fx) : IClassFixture<FeatureFixture>
         var dst = Path.Combine(fx.Dir, "arch-out");
         await ArchiveEngine.ExtractAsync(data, archive, dst, default);
         Assert.Equal("seven zip ok", File.ReadAllText(Path.Combine(dst, "pkg", "a.txt")));
+    }
+
+    [Fact]
+    public async Task Ocr_session_reads_edits_and_replaces_the_picture_track_in_the_job()
+    {
+        if (fx.Tools is null) return;
+        var store = new KnA.Core.Settings.SettingsStore(Path.Combine(fx.Dir, "data-ocr-session"));
+        var tesseract = SubtitleOcr.LocateTesseract(store.DataDirectory);
+        if (tesseract is null || SubtitleOcr.FindModel(store.DataDirectory, tesseract, "eng") is null) return;
+        var dir = Path.Combine(fx.Dir, "session");
+        Directory.CreateDirectory(dir);
+        var sup = Path.Combine(dir, "s.sup");
+        File.WriteAllBytes(sup, PgsWriter.Write([await TextPicture("First line here", 1, 2), await TextPicture("Second one", 3, 4)]));
+        var mkv = Path.Combine(dir, "movie.mkv");
+        var r = await ProcessRunner.RunAsync(fx.Tools.Ffmpeg, ["-hide_banner", "-v", "error", "-y", "-f", "lavfi", "-i", "color=black:s=320x180:d=5",
+            "-i", sup, "-copyts", "-map", "0:v", "-map", "1:s", "-c:v", "libx264", "-preset", "ultrafast", "-c:s", "copy", "-metadata:s:s:0", "language=eng", mkv]);
+        Assert.True(r.ExitCode == 0, r.StdErr);
+        using var q = new KnA.Core.Queue.QueueService(store, restoreQueue: false);
+        var job = Assert.Single(q.AddPaths([mkv], new KnA.Core.Encoding.JobSettings { Subtitles = KnA.Core.Encoding.SubtitleMode.Softsub }));
+        var sw = System.Diagnostics.Stopwatch.StartNew();
+        while (job.Media is null && sw.Elapsed < TimeSpan.FromSeconds(30)) await Task.Delay(50);
+        var pgs = job.Media!.Subtitles.Single();
+
+        var s = await OcrSession.OpenAsync(q, job, mkv, pgs.Index);
+        Assert.Equal(2, s.Lines.Count);
+        await s.RecognizeAsync(q, new OcrOptions(), null, null, default);
+        Assert.Contains("First", s.Lines[0].Text);
+        Assert.True(s.Lines[0].Confidence > 50, s.Lines[0].Confidence.ToString());
+        Assert.True(s.Png(0).Length > 100);
+
+        s.Edit(1, text: "Second one, fixed by hand", italic: true);
+        await s.RecognizeAsync(q, new OcrOptions(), null, null, default);   // hand edits survive a new pass
+        Assert.Equal("Second one, fixed by hand", s.Lines[1].Text);
+        Assert.Equal(1, s.Replace("fixed by hand", "corrected", false, false));
+
+        var a = await s.UseInJobAsync(q, s.DefaultSrtPath());
+        Assert.EndsWith("movie.eng.srt", s.DefaultSrtPath());
+        Assert.Contains("<i>Second one, corrected</i>", File.ReadAllText(s.DefaultSrtPath()));
+        var subs = a.Tracks.Where(t => t.Kind == "subtitle").ToList();
+        Assert.False(subs.Single(t => t.File == mkv).Include);
+        var text = subs.Single(t => t.File == s.DefaultSrtPath());
+        Assert.True(text.Include);
+        Assert.Equal("eng", text.Language);
     }
 }
