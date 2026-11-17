@@ -161,6 +161,8 @@ public sealed partial class ComponentManager(string dataDirectory)
             else if (id == "qaac") await InstallQaacAsync(temp, progress, log, ct);
             else if (id == "vapoursynth") await InstallVapourSynthAsync(temp, progress, log, ct);
             else if (id == "tesseract") await InstallTesseractAsync(temp, progress, log, ct);
+            else if (id == "archive") await ArchiveEngine.InstallAsync(this, dataDirectory, temp, progress, log, ct);
+            else if (id.StartsWith("paddleocr", StringComparison.Ordinal)) await InstallPaddleOcrAsync(id, temp, progress, log, ct);
             else if (id.StartsWith("ocr:", StringComparison.Ordinal)) await InstallOcrModelAsync(id, progress, log, ct);
             else if (id.StartsWith("model:", StringComparison.Ordinal) || id.StartsWith("llm:", StringComparison.Ordinal)) await InstallModelAsync(id, progress, log, ct);
             else throw new ArgumentException("Unknown component " + id);
@@ -398,6 +400,10 @@ public sealed partial class ComponentManager(string dataDirectory)
     }
 
     private static bool Suitable(Version? v) => v is { Major: 3 } && PythonMinors.Contains(v.Minor);
+
+    /// <summary>KnA's portable Python, downloaded when missing (also used by the archive engine).</summary>
+    public async Task<string> EnsurePortablePythonAsync(string temp, IProgress<double>? progress, IProgress<string>? log, CancellationToken ct) =>
+        File.Exists(PortablePython(dataDirectory)) ? PortablePython(dataDirectory) : await InstallPortablePythonAsync(temp, progress, log, ct);
 
     /// <summary>Downloads the portable Python (python-build-standalone, with pip and venv) into the data folder.</summary>
     private async Task<string> InstallPortablePythonAsync(string temp, IProgress<double>? progress, IProgress<string>? log, CancellationToken ct)
@@ -679,7 +685,7 @@ public sealed partial class ComponentManager(string dataDirectory)
     private static string? Short(string? ffmpegVersionLine) =>
         ffmpegVersionLine?.Replace("ffmpeg version ", "").Split(" Copyright")[0].Trim();
 
-    private static bool IsContainer() =>
+    public static bool IsContainer() =>
         File.Exists("/.dockerenv") || Environment.GetEnvironmentVariable("DOTNET_RUNNING_IN_CONTAINER") == "true";
 
     private Dictionary<string, Installed> LoadState()

@@ -147,13 +147,14 @@ public sealed class QueueService : IDisposable
         IProgress<double>? progress = null, CancellationToken ct = default)
     {
         var tools = Tools ?? throw new InvalidOperationException(L.T("FFmpeg was not found. Configure it in Settings."));
-        var tesseract = Ocr.SubtitleOcr.LocateTesseract(Store.DataDirectory)
-                        ?? throw new InvalidOperationException(L.T("OCR needs Tesseract: install it in Settings → Components (Linux: apt install tesseract-ocr; macOS: brew install tesseract)."));
+        var tesseract = Ocr.SubtitleOcr.LocateTesseract(Store.DataDirectory) ?? "";
         srtPath ??= Path.Combine(Path.GetDirectoryName(job.SourcePath) ?? ".",
             Path.GetFileNameWithoutExtension(job.SourcePath) + (language is { Length: > 0 } l ? "." + l : "") + (stream > 0 ? "." + stream.ToString(System.Globalization.CultureInfo.InvariantCulture) : "") + ".srt");
         var work = Path.Combine(Store.TempDirectory, "ocr-" + Guid.NewGuid().ToString("N")[..8]);
         Directory.CreateDirectory(work);
-        try { return await Ocr.SubtitleOcr.RecognizeAsync(tools.Ffmpeg, tesseract, Store.DataDirectory, file, stream, language, srtPath, work, progress, null, ct); }
+        var media = file == job.SourcePath ? job.Media : job.ExternalMedia.GetValueOrDefault(file);
+        var codec = media?.Subtitles.FirstOrDefault(x => x.Index == stream)?.CodecName;
+        try { return await Ocr.SubtitleOcr.RecognizeAsync(tools.Ffmpeg, tesseract, Store.DataDirectory, file, stream, language, srtPath, work, progress, null, ct, codec, Settings.Ocr with { Language = null }); }
         finally { try { Directory.Delete(work, true); } catch (IOException) { } }
     }
 

@@ -57,6 +57,8 @@ public sealed class AppSettings
     public string? OutputDirectory { get; set; }
     public JobSettings Defaults { get; set; } = new();
     public PostQueueAction PostAction { get; set; } = PostQueueAction.Nothing;
+    /// <summary>Subtitle OCR: engine (Tesseract / PaddleOCR), italics, common fixes.</summary>
+    public Ocr.OcrOptions Ocr { get; set; } = new();
     /// <summary>Command run after every job (macros: see <see cref="Queue.QueueEvents"/>); empty = none.</summary>
     public string AfterJobCommand { get; set; } = "";
     /// <summary>Command run when the queue has finished ({done}, {failed}); empty = none.</summary>

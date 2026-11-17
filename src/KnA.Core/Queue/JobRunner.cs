@@ -268,8 +268,8 @@ public static class JobRunner
                         && TrackPlanner.Lookup(x.t, media) is SubtitleStream st && Ocr.SubtitleOcr.CanRead(st.CodecName))
             .ToList();
         if (wanted.Count == 0) return cc;
-        var tesseract = Ocr.SubtitleOcr.LocateTesseract(ctx.Store.DataDirectory)
-                        ?? throw new InvalidOperationException(L.T("OCR needs Tesseract: install it in Settings → Components (Linux: apt install tesseract-ocr; macOS: brew install tesseract)."));
+        var options = ctx.Settings.Ocr ?? new Ocr.OcrOptions();
+        var tesseract = Ocr.SubtitleOcr.LocateTesseract(ctx.Store.DataDirectory);
         var prober = new MediaProber(ctx.Tools.Ffprobe);
         foreach (var (t, i) in wanted)
         {
@@ -277,8 +277,9 @@ public static class JobRunner
             ctx.Changed(job);
             var srt = Path.Combine(workDir, $"ocr-{i}.srt");
             var progress = new Progress<double>(pc => { job.Progress = new EncodeProgress(TimeSpan.FromSeconds(pc), TimeSpan.FromSeconds(100), 0, 0, 0, 0, false); ctx.Changed(job); });
-            var r = await Ocr.SubtitleOcr.RecognizeAsync(ctx.Tools.Ffmpeg, tesseract, ctx.Store.DataDirectory, t.File, t.Stream, t.Language, srt, workDir,
-                progress, line => job.AppendLog(line), ct);
+            var codec = (TrackPlanner.Lookup(t, media) as SubtitleStream)?.CodecName;
+            var r = await Ocr.SubtitleOcr.RecognizeAsync(ctx.Tools.Ffmpeg, tesseract ?? "", ctx.Store.DataDirectory, t.File, t.Stream, t.Language, srt, workDir,
+                progress, line => job.AppendLog(line), ct, codec, options with { Language = null });
             if (r.Subtitles == 0) job.AppendLog(L.T("OCR: no text found in track #{0}: it is left out.", t.Stream));
             var m = await prober.ProbeAsync(srt, ct, requireVideo: false);
             media[srt] = m;

@@ -64,10 +64,9 @@ internal static class PgsWriter
 
 public class OcrTests(FeatureFixture fx) : IClassFixture<FeatureFixture>
 {
-    private async Task<PgsWriter.Picture> TextPicture(string text, double start, double end)
+    private async Task<PgsWriter.Picture> TextPicture(string text, double start, double end, string font = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf")
     {
         var raw = Path.Combine(fx.Dir, "txt-" + Guid.NewGuid().ToString("N")[..6] + ".gray");
-        var font = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf";
         var r = await ProcessRunner.RunAsync(fx.Tools!.Ffmpeg, ["-hide_banner", "-v", "error", "-y", "-f", "lavfi", "-i", "color=black:s=900x80",
             "-vf", $"drawtext=fontfile={font}:text='{text}':fontcolor=white:fontsize=46:x=20:y=14:borderw=3:bordercolor=0x101010",
             "-frames:v", "1", "-pix_fmt", "gray", "-f", "rawvideo", raw]);
@@ -152,5 +151,98 @@ public class OcrTests(FeatureFixture fx) : IClassFixture<FeatureFixture>
         var text = await ProcessRunner.RunAsync(fx.Tools.Ffmpeg, ["-hide_banner", "-v", "error", "-i", job.OutputPath!, "-map", "0:s:0", "-f", "srt", "-"]);
         Assert.Contains("jungle", text.StdOut);
         Assert.Contains("OCR:", job.Log);
+    }
+
+    private static SubtitleImage ToImage(PgsWriter.Picture p)
+    {
+        var rgba = new byte[p.Width * p.Height * 4];
+        for (int i = 0; i < p.Indexed.Length; i++)
+        {
+            byte v = p.Indexed[i] switch { 1 => 235, 3 => 128, 2 => 16, _ => 0 };
+            rgba[i * 4] = rgba[i * 4 + 1] = rgba[i * 4 + 2] = v;
+            rgba[i * 4 + 3] = p.Indexed[i] == 0 ? (byte)0 : (byte)255;
+        }
+        return new SubtitleImage(TimeSpan.Zero, TimeSpan.FromSeconds(1), p.Width, p.Height, rgba);
+    }
+
+    [Fact]
+    public async Task Italic_type_is_found_from_the_slant_of_the_letters()
+    {
+        if (fx.Tools is null) return;
+        var oblique = "/usr/share/fonts/truetype/dejavu/DejaVuSansMono-BoldOblique.ttf";
+        if (!File.Exists(oblique)) return;
+        var upright = ToImage(await TextPicture("Where are you going", 0, 1));
+        var italic = ToImage(await TextPicture("Where are you going", 0, 1, oblique));
+        Assert.False(Italic.IsItalic(upright), $"upright slant {Italic.Slant(upright)}");
+        Assert.True(Italic.IsItalic(italic), $"italic slant {Italic.Slant(italic)}");
+    }
+
+    [Fact]
+    public async Task Dvd_subtitles_are_read_like_pgs()
+    {
+        if (fx.Tools is null) return;
+        var data = Path.Combine(fx.Dir, "data-vobsub");
+        var tesseract = SubtitleOcr.LocateTesseract(data);
+        if (tesseract is null || SubtitleOcr.FindModel(data, tesseract, "eng") is null) return;
+        var sup = Path.Combine(fx.Dir, "dvd.sup");
+        File.WriteAllBytes(sup, PgsWriter.Write([await TextPicture("Keep the change", 1, 3)]));
+        var mkv = Path.Combine(fx.Dir, "dvd.mkv");
+        // FFmpeg turns picture subtitles into DVD ones (dvdsub encoder): a real VobSub track with its palette
+        var r = await ProcessRunner.RunAsync(fx.Tools.Ffmpeg, ["-hide_banner", "-v", "error", "-y", "-f", "lavfi", "-i", "color=black:s=720x480:d=5",
+            "-i", sup, "-copyts", "-map", "0:v", "-map", "1:s", "-c:v", "libx264", "-preset", "ultrafast", "-c:s", "dvdsub", "-metadata:s:s:0", "language=eng", mkv]);
+        Assert.True(r.ExitCode == 0, r.StdErr);
+        var media = await new MediaProber(fx.Tools.Ffprobe).ProbeAsync(mkv);
+        var track = Assert.Single(media.Subtitles);
+        Assert.Equal("dvd_subtitle", track.CodecName);
+        var images = await SubtitleOcr.LoadImagesAsync(fx.Tools.Ffmpeg, fx.Tools.Ffprobe, mkv, track.Index, track.CodecName, fx.Dir, default);
+        var img = Assert.Single(images);
+        Assert.Equal(1.0, img.Start.TotalSeconds, 1);
+        Assert.InRange(img.End.TotalSeconds, 2.8, 5.01);   // FFmpeg's PGS→DVD conversion carries no end: KnA falls back to 4 s
+        var srt = Path.Combine(fx.Dir, "dvd.srt");
+        var res = await SubtitleOcr.RecognizeAsync(fx.Tools.Ffmpeg, tesseract, data, mkv, track.Index, track.Language, srt, fx.Dir, codec: track.CodecName);
+        Assert.Equal(1, res.Subtitles);
+        Assert.Contains("change", File.ReadAllText(srt));
+    }
+
+    [Fact]
+    public void Tesseract_tsv_gives_lines_and_confidence_per_picture()
+    {
+        const string tsv = "level\tpage_num\tblock_num\tpar_num\tline_num\tword_num\tleft\ttop\twidth\theight\tconf\ttext\n"
+            + "5\t1\t1\t1\t1\t1\t0\t0\t1\t1\t96.5\tHello\n5\t1\t1\t1\t1\t2\t0\t0\t1\t1\t90.5\tthere\n"
+            + "5\t1\t1\t1\t2\t1\t0\t0\t1\t1\t80\tfriend\n5\t2\t1\t1\t1\t1\t0\t0\t1\t1\t50\tBye\n";
+        var pages = OcrEngine.ParseTsv(tsv).ToList();
+        Assert.Equal((1, "Hello there\nfriend", 89.0), (pages[0].Page, pages[0].Text, Math.Round(pages[0].Confidence, 1)));
+        Assert.Equal("Bye", pages[1].Text);
+    }
+
+    [Fact]
+    public void Paddleocr_result_lines_are_parsed()
+    {
+        var b = PaddleOcr.ParseBox("[2025/01/01 10:00:00] ppocr INFO: [[[92.0, 56.0], [735.0, 60.0], [734.0, 118.0], [91.0, 113.0]], ('My mommy always said', 0.9907816052436829)]");
+        Assert.NotNull(b);
+        Assert.Equal("My mommy always said", b!.Value.Text);
+        Assert.Equal(0.99, b.Value.Score, 2);
+    }
+
+    [Fact]
+    public async Task Seven_zip_archives_open_with_the_python_engine()
+    {
+        var py = Environment.GetEnvironmentVariable("KNA_PYTHON");
+        if (py is null || !File.Exists(py)) return;   // CI / developer machines set it; the portable Python is downloaded by the app
+        var data = Path.Combine(fx.Dir, "data-archive");
+        var cm = new ComponentManager(data);
+        await ArchiveEngine.InstallAsync(cm, data, Path.Combine(fx.Dir, "tmp-archive"), null, null, default);
+        Assert.True(ArchiveEngine.IsInstalled(data));
+        // make a .7z with py7zr itself, then extract it through KnA
+        var src = Path.Combine(fx.Dir, "arch-src");
+        Directory.CreateDirectory(src);
+        File.WriteAllText(Path.Combine(src, "a.txt"), "seven zip ok");
+        var archive = Path.Combine(fx.Dir, "test.7z");
+        var lib = Path.Combine(ArchiveEngine.Folder(data), "lib");
+        var r = await ProcessRunner.RunAsync(py, ["-c", $"import sys; sys.path.insert(0, r'{lib}'); import py7zr; z = py7zr.SevenZipFile(r'{archive}', 'w'); z.writeall(r'{src}', 'pkg'); z.close()"]);
+        Assert.True(r.ExitCode == 0, r.StdErr);
+        var dst = Path.Combine(fx.Dir, "arch-out");
+        await ArchiveEngine.ExtractAsync(data, archive, dst, default);
+        Assert.Equal("seven zip ok", File.ReadAllText(Path.Combine(dst, "pkg", "a.txt")));
     }
 }

@@ -35,7 +35,7 @@ public static partial class SubtitleOcr
         string.Equals(t.Output, OutputValue, StringComparison.OrdinalIgnoreCase) || (s.OcrPictureSubtitles && t.Output is null);
 
     /// <summary>Codecs that are pictures, not text (the ones this OCR reads).</summary>
-    public static bool CanRead(string? codec) => codec is "hdmv_pgs_subtitle" or "pgssub";
+    public static bool CanRead(string? codec) => codec is "hdmv_pgs_subtitle" or "pgssub" or "dvd_subtitle" or "dvdsub";
 
     /// <summary>tesseract(.exe): KnA's copy (any depth: the zip layout may change), next to the program, PATH, Homebrew.</summary>
     public static string? LocateTesseract(string dataDirectory)
@@ -96,98 +96,78 @@ public static partial class SubtitleOcr
     };
 
     /// <summary>
-    /// OCR of one PGS track of <paramref name="source"/> into <paramref name="srtPath"/>. The model is downloaded when
-    /// missing; <paramref name="log"/> receives what happens.
+    /// The pictures of one subtitle track: PGS through a .sup stream copy, DVD (VobSub) through FFprobe's packets.
     /// </summary>
-    public static async Task<OcrResult> RecognizeAsync(string ffmpeg, string tesseract, string dataDirectory, string source, int streamIndex,
-        string? language, string srtPath, string workDir, IProgress<double>? progress = null, Action<string>? log = null, CancellationToken ct = default)
+    public static async Task<List<SubtitleImage>> LoadImagesAsync(string ffmpeg, string ffprobe, string source, int streamIndex, string? codec,
+        string workDir, CancellationToken ct)
     {
-        var lang = TesseractLanguage(language);
-        var models = FindModel(dataDirectory, tesseract, lang);
-        if (models is null)
+        if (codec is "dvd_subtitle" or "dvdsub")
         {
-            log?.Invoke(L.T("OCR: downloading the {0} language model…", lang));
-            models = await DownloadModelAsync(dataDirectory, lang, best: true, null, ct);
+            var (packets, header) = await VobSubParser.ReadAsync(ffprobe, source, streamIndex, ct);
+            return VobSubParser.Parse(packets, header);
         }
-        var dir = Path.Combine(workDir, $"ocr-{streamIndex}");
-        Directory.CreateDirectory(dir);
+        Directory.CreateDirectory(workDir);
+        var sup = Path.Combine(workDir, $"track-{streamIndex}-{Guid.NewGuid().ToString("N")[..6]}.sup");
         try
         {
-            // 1. the PGS stream as a .sup file (stream copy: fast, exact timing)
-            var sup = Path.Combine(dir, "track.sup");
             var args = new List<string> { "-hide_banner", "-nostdin", "-v", "error", "-y" };
             args.AddRange(MediaProber.RobustInputArgs(source));
             args.AddRange(Media.Discs.DiscSource.InputArgs(source));
             args.AddRange(["-map", $"0:{streamIndex.ToString(CultureInfo.InvariantCulture)}", "-c:s", "copy", "-f", "sup", sup]);
             var r = await ProcessRunner.RunAsync(ffmpeg, args, timeout: TimeSpan.FromMinutes(30), ct: ct);
             if (r.ExitCode != 0 || !File.Exists(sup)) throw new InvalidOperationException(L.T("OCR: the subtitle track could not be extracted: {0}", r.StdErr.Trim()));
-
-            // 2. pictures
-            var images = PgsParser.Parse(sup);
-            log?.Invoke(L.T("OCR: {0} subtitle pictures, language {1}, Tesseract.", images.Count, lang));
-            var files = new string[images.Count];
-            Parallel.For(0, images.Count, new ParallelOptions { CancellationToken = ct }, i =>
-            {
-                files[i] = Path.Combine(dir, $"{i:D5}.png");
-                var (w, h, gray) = Prepare(images[i]);
-                PngWriter.WriteGray(files[i], w, h, gray);
-            });
-
-            // 3. Tesseract, several processes side by side, each reading a list of pictures
-            var texts = new string[images.Count];
-            int workers = Math.Clamp(Environment.ProcessorCount / 2, 1, 8);
-            int per = Math.Max(1, (images.Count + workers - 1) / workers);
-            int done = 0;
-            var chunks = Enumerable.Range(0, (images.Count + per - 1) / per).Select(c => (Start: c * per, Count: Math.Min(per, images.Count - c * per)));
-            await Parallel.ForEachAsync(chunks, new ParallelOptions { MaxDegreeOfParallelism = workers, CancellationToken = ct }, async (chunk, token) =>
-            {
-                var list = Path.Combine(dir, $"list-{chunk.Start}.txt");
-                await File.WriteAllLinesAsync(list, files.Skip(chunk.Start).Take(chunk.Count), token);
-                var pages = await RunTesseractAsync(tesseract, list, lang, models, token);
-                if (pages.Count != chunk.Count)
-                {
-                    // the page separators didn't match: one picture at a time (slower, always right)
-                    pages = [];
-                    for (int k = 0; k < chunk.Count; k++)
-                        pages.Add((await RunTesseractAsync(tesseract, files[chunk.Start + k], lang, models, token)).FirstOrDefault() ?? "");
-                }
-                for (int k = 0; k < chunk.Count; k++) texts[chunk.Start + k] = pages[k];
-                progress?.Report(Interlocked.Add(ref done, chunk.Count) * 100.0 / Math.Max(1, images.Count));
-            });
-
-            // 4. SRT
-            var sb = new StringBuilder();
-            int n = 0;
-            for (int i = 0; i < images.Count; i++)
-            {
-                var text = Clean(texts[i]);
-                if (text.Length == 0) continue;
-                n++;
-                sb.Append(n.ToString(CultureInfo.InvariantCulture)).Append('\n')
-                  .Append(Stamp(images[i].Start)).Append(" --> ").Append(Stamp(images[i].End)).Append('\n')
-                  .Append(text).Append("\n\n");
-            }
-            Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(srtPath))!);
-            await File.WriteAllTextAsync(srtPath, sb.ToString(), new UTF8Encoding(false), ct);
-            log?.Invoke(L.T("OCR: {0} subtitles written to {1}.", n, Path.GetFileName(srtPath)));
-            return new OcrResult(srtPath, images.Count, n, lang);
+            return PgsParser.Parse(sup);
         }
-        finally
-        {
-            try { Directory.Delete(dir, true); } catch (IOException) { } catch (UnauthorizedAccessException) { }
-        }
+        finally { try { File.Delete(sup); } catch (IOException) { } }
     }
 
-    private static async Task<List<string>> RunTesseractAsync(string tesseract, string input, string lang, string models, CancellationToken ct)
+    /// <summary>FFprobe next to FFmpeg (every KnA layout ships them together), else from the PATH.</summary>
+    public static string FfprobeFor(string ffmpeg)
     {
-        // --psm 6: one block of text (a subtitle); --oem 1: the LSTM engine of the models; pages split by \f.
-        var r = await ProcessRunner.RunAsync(tesseract, [input, "stdout", "-l", lang, "--psm", "6", "--oem", "1", "--tessdata-dir", models],
-            timeout: TimeSpan.FromHours(2), ct: ct);
-        if (r.ExitCode != 0 && string.IsNullOrWhiteSpace(r.StdOut))
-            throw new InvalidOperationException("Tesseract: " + (r.StdErr.Trim() is { Length: > 0 } e ? e : $"exit {r.ExitCode}"));
-        var pages = r.StdOut.Split('\f').ToList();
-        if (pages.Count > 0 && string.IsNullOrWhiteSpace(pages[^1])) pages.RemoveAt(pages.Count - 1);
-        return pages;
+        var probe = Path.Combine(Path.GetDirectoryName(ffmpeg) ?? "", FfmpegLocator.ExeName("ffprobe"));
+        return File.Exists(probe) ? probe : "ffprobe";
+    }
+
+    /// <summary>
+    /// OCR of one picture subtitle track (PGS or DVD) of <paramref name="source"/> into <paramref name="srtPath"/>.
+    /// Models are downloaded when missing; <paramref name="log"/> receives what happens.
+    /// </summary>
+    public static async Task<OcrResult> RecognizeAsync(string ffmpeg, string tesseract, string dataDirectory, string source, int streamIndex,
+        string? language, string srtPath, string workDir, IProgress<double>? progress = null, Action<string>? log = null, CancellationToken ct = default,
+        string? codec = null, OcrOptions? options = null)
+    {
+        options ??= new OcrOptions();
+        var images = await LoadImagesAsync(ffmpeg, FfprobeFor(ffmpeg), source, streamIndex, codec, workDir, ct);
+        var lines = images.Select((img, i) => new OcrLine(i, img)).ToList();
+        var engine = new OcrEngine(dataDirectory, tesseract);
+        var lang = engine.LanguageFor(options, language);
+        log?.Invoke(L.T("OCR: {0} subtitle pictures, language {1}, {2}.", images.Count, lang, engine.DisplayName(options)));
+        await engine.RecognizeAsync(lines, options with { Language = lang }, Path.Combine(workDir, $"ocr-{streamIndex}"),
+            progress is null ? null : new Progress<int>(n => progress.Report(n * 100.0 / Math.Max(1, lines.Count))), log, ct);
+        int n = await WriteSrtAsync(lines, srtPath, ct);
+        log?.Invoke(L.T("OCR: {0} subtitles written to {1}.", n, Path.GetFileName(srtPath)));
+        return new OcrResult(srtPath, images.Count, n, lang);
+    }
+
+    /// <summary>The lines with text as an SRT file (italics as &lt;i&gt;); returns how many were written.</summary>
+    public static async Task<int> WriteSrtAsync(IEnumerable<OcrLine> lines, string srtPath, CancellationToken ct = default)
+    {
+        var sb = new StringBuilder();
+        int n = 0;
+        foreach (var l in lines.OrderBy(l => l.Start))
+        {
+            var text = l.Text.Trim();
+            if (text.Length == 0) continue;
+            if (l.Italic && !text.Contains("<i>", StringComparison.Ordinal))
+                text = string.Join('\n', text.Split('\n').Select(x => "<i>" + x + "</i>"));
+            n++;
+            sb.Append(n.ToString(CultureInfo.InvariantCulture)).Append('\n')
+              .Append(Stamp(l.Start)).Append(" --> ").Append(Stamp(l.End)).Append('\n')
+              .Append(text).Append("\n\n");
+        }
+        Directory.CreateDirectory(Path.GetDirectoryName(Path.GetFullPath(srtPath))!);
+        await File.WriteAllTextAsync(srtPath, sb.ToString(), new UTF8Encoding(false), ct);
+        return n;
     }
 
     /// <summary>
@@ -229,6 +209,6 @@ public static partial class SubtitleOcr
     [GeneratedRegex(@"\s+")] private static partial Regex Spaces();
     [GeneratedRegex(@"^[-–—]\s*")] private static partial Regex DashStart();
 
-    private static string Stamp(TimeSpan t) =>
+    public static string Stamp(TimeSpan t) =>
         $"{(int)t.TotalHours:00}:{t.Minutes:00}:{t.Seconds:00},{t.Milliseconds:000}";
 }
