@@ -1024,5 +1024,9 @@ public static partial class L
         ["{0} lines to check."] = "{0} righe da controllare.",
         ["OCR"] = "OCR",
         ["Save SRT next to the video"] = "Salva l'SRT accanto al video",
+        ["Working files"] = "File di lavoro",
+        ["Next to the video (hidden .kna-work folder)"] = "Accanto al video (cartella nascosta .kna-work)",
+        ["In KnA's data folder"] = "Nella cartella dati di KnA",
+        ["Next to the video: segments, resumable pieces and temporary files stay on the same disk as the video, not on the system drive. Read-only folders use the data folder by themselves."] = "Accanto al video: segmenti, pezzi ripristinabili e file temporanei restano sullo stesso disco del video, non sul disco di sistema. Le cartelle di sola lettura usano da sole la cartella dati.",
     };
 }

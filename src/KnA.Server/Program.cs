@@ -459,6 +459,7 @@ app.MapPut("/api/settings", (SettingsUpdate u) =>
     if (u.RestoreQueue is { } rq) s.RestoreQueue = rq;
     if (u.OutputNameTemplate is { } nt) s.OutputNameTemplate = string.IsNullOrWhiteSpace(nt) ? OutputNaming.DefaultTemplate : nt;
     if (u.Priority is { } pr) s.Priority = pr;
+    if (u.WorkLocation is { } wl) s.WorkLocation = wl;
     if (u.HardwareDecoding is { } hd) s.HardwareDecoding = hd;
     if (u.ResumableEncoding is { } re) s.ResumableEncoding = re;
     if (u.StallTimeoutMinutes is { } st) s.StallTimeoutMinutes = Math.Clamp(st, 1, 600);

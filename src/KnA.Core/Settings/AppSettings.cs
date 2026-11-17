@@ -57,6 +57,8 @@ public sealed class AppSettings
     public string? OutputDirectory { get; set; }
     public JobSettings Defaults { get; set; } = new();
     public PostQueueAction PostAction { get; set; } = PostQueueAction.Nothing;
+    /// <summary>Working files of the jobs: next to the source video (hidden ".kna-work") or in the data folder.</summary>
+    public Queue.WorkLocation WorkLocation { get; set; } = Queue.WorkLocation.NextToSource;
     /// <summary>Subtitle OCR: engine (Tesseract / PaddleOCR), italics, common fixes.</summary>
     public Ocr.OcrOptions Ocr { get; set; } = new();
     /// <summary>Command run after every job (macros: see <see cref="Queue.QueueEvents"/>); empty = none.</summary>

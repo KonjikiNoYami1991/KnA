@@ -59,6 +59,7 @@ public sealed class QueueService : IDisposable
     {
         Store = store;
         Settings = store.Load();
+        WorkFolders.Location = Settings.WorkLocation;
         store.CleanTemp();
         ChunkedEncoder.CleanOld(store);
         RefreshTools();
@@ -174,6 +175,7 @@ public sealed class QueueService : IDisposable
     {
         if (settings is not null) Settings = settings;
         Components.FfmpegChannel = Settings.FfmpegChannel is "master" ? "master" : "release";
+        WorkFolders.Location = Settings.WorkLocation;
         Store.Save(Settings);
     }
 
@@ -262,6 +264,10 @@ public sealed class QueueService : IDisposable
     /// <summary>Files written by KnA itself ("Name [Profile …].ext") are skipped when importing folders.</summary>
     public static bool IsOwnOutput(string file)
     {
+        // working files of KnA next to the sources (segments, pieces, extracted tracks) are never sources
+        var sep = Path.DirectorySeparatorChar;
+        if (file.Contains(sep + WorkFolders.FolderName + sep, StringComparison.OrdinalIgnoreCase)
+            || file.Contains('/' + WorkFolders.FolderName + '/', StringComparison.OrdinalIgnoreCase)) return true;
         var n = Path.GetFileNameWithoutExtension(file);
         return n.EndsWith(']') && n.Contains(" [", StringComparison.Ordinal)
                && Profiles.All.Any(p => n.Contains("[" + p.EnglishName, StringComparison.Ordinal) || n.Contains("[" + p.Name, StringComparison.Ordinal));
@@ -299,6 +305,7 @@ public sealed class QueueService : IDisposable
         foreach (var j in removed)
         {
             Preview.Forget(j.Id);
+            WorkFolders.Forget(j, Store);   // its resumable pieces and segments are no longer needed
             JobRemoved?.Invoke(j.Id);
         }
         if (removed.Count > 0) QueueChanged?.Invoke();

@@ -420,7 +420,9 @@ public class ChunkTests(FeatureFixture fx) : IClassFixture<FeatureFixture>
             await q.SetEditAsync(job.Id, edit);
             q.Start();
             var sw = System.Diagnostics.Stopwatch.StartNew();
-            var manifest = () => Directory.Exists(ChunkedEncoder.ChunksRoot(q.Store)) ? Directory.GetFiles(ChunkedEncoder.ChunksRoot(q.Store), "segment_*.mkv", SearchOption.AllDirectories).Where(f => !f.Contains(".part")).ToArray() : [];
+            var root = WorkFolders.Chunks(job, q.Store);
+            Assert.EndsWith(WorkFolders.FolderName, root);   // next to the source, not in the data folder
+            var manifest = () => Directory.Exists(root) ? Directory.GetFiles(root, "segment_*.mkv", SearchOption.AllDirectories).Where(f => !f.Contains(".part")).ToArray() : [];
             while (manifest().Length == 0 && sw.Elapsed < TimeSpan.FromSeconds(60)) await Task.Delay(50);
             await q.StopAsync();
             Assert.Equal(JobStatus.Stopped, job.Status);
@@ -451,7 +453,7 @@ public class ChunkTests(FeatureFixture fx) : IClassFixture<FeatureFixture>
             // Subtitle (10–12 s + 3 s delay = 13–15 s; trim from 12 s) visible at output 2 s (= 14 s), gone at 4.5 s (= 16.5 s).
             Assert.True(await Luma(job.OutputPath!, 2.0) > 40);
             Assert.True(await Luma(job.OutputPath!, 4.5) < 25);
-            Assert.False(Directory.EnumerateFiles(ChunkedEncoder.ChunksRoot(q.Store), "*.mkv", SearchOption.AllDirectories).Any(), "segments cleaned up");
+            Assert.False(Directory.Exists(Path.Combine(Path.GetDirectoryName(fx.Black)!, WorkFolders.FolderName)), "working folder removed");
         }
     }
 

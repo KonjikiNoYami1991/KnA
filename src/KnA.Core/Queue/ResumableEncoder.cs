@@ -39,7 +39,7 @@ public static class ResumableEncoder
 
     /// <summary>The folder of a job's pieces (data folder, kept until the job succeeds or the job changes).</summary>
     public static string Folder(QueueJob job, Settings.SettingsStore store) =>
-        Path.Combine(ChunkedEncoder.ChunksRoot(store), "r-" + ChunkedEncoder.Key(job)[..16]);
+        Path.Combine(WorkFolders.Chunks(job, store), "r-" + ChunkedEncoder.Key(job)[..16]);
 
     /// <summary>Seconds already encoded by an earlier, interrupted run (0 = none).</summary>
     public static double ResumablePart(QueueJob job, Settings.SettingsStore store)

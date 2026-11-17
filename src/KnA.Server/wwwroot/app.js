@@ -421,6 +421,7 @@ $("#btn-settings").onclick = guard(async () => {
   $("#s-restore").checked = s.restoreQueue;
   $("#s-output").value = s.outputDirectory ?? "";
   $("#s-template").value = s.outputNameTemplate ?? "{name} [{label}]";
+  $("#s-work").value = s.workLocation ?? "NextToSource";
   fillSelect($("#s-priority"), [{ value: "Normal", label: t("Normal") }, { value: "BelowNormal", label: t("Below normal") }, { value: "Idle", label: t("Lowest (idle)") }], s.priority);
   fillSelect($("#s-post"), state.options.postActions, s.postAction);
   $("#s-post").disabled = !state.powerActionsAllowed;
@@ -556,7 +557,7 @@ $("#btn-save-settings").onclick = guard(async () => {
   const body = {
     language: $("#s-lang").value, theme: $("#s-theme").value,
     checkUpdatesOnStart: $("#s-autoupd").checked, restoreQueue: $("#s-restore").checked,
-    outputDirectory: $("#s-output").value.trim(), outputNameTemplate: $("#s-template").value.trim(),
+    outputDirectory: $("#s-output").value.trim(), outputNameTemplate: $("#s-template").value.trim(), workLocation: $("#s-work").value,
     priority: $("#s-priority").value, postAction: $("#s-post").value,
     stallTimeoutMinutes: Number($("#s-stall").value) || 10, keepLogs: Number($("#s-keeplogs").value) || 300,
     vaapiDevice: $("#s-vaapi").value.trim(),

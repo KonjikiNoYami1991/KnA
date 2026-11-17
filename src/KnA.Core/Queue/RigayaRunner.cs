@@ -28,7 +28,7 @@ public static class RigayaRunner
         var videoMedia = job.ExternalMedia.GetValueOrDefault(videoTrack.File) ?? media;
         double frameRate = job.Settings.VideoFilters.Fps ?? videoMedia.PrimaryVideo?.FrameRate ?? 25;
 
-        var dir = Path.Combine(ChunkedEncoder.ChunksRoot(ctx.Store), "x-" + ChunkedEncoder.Key(job)[..16]);
+        var dir = Path.Combine(WorkFolders.Chunks(job, ctx.Store), "x-" + ChunkedEncoder.Key(job)[..16]);
         Directory.CreateDirectory(dir);
         var video = Path.Combine(dir, "video.mkv");
         TryDelete(video);

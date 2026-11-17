@@ -20,7 +20,8 @@ public static class JobRunner
 {
     public static async Task RunAsync(QueueJob job, RunnerContext ctx, CancellationToken ct)
     {
-        string workDir = Path.Combine(ctx.Store.TempDirectory, job.Id.ToString("N"));
+        // next to the source (hidden ".kna-work") or in the data folder: WorkFolders decides
+        string workDir = WorkFolders.Temp(job, ctx.Store);
         job.ResetForRun();
         job.Status = JobStatus.Running;
         job.StartedAt = DateTimeOffset.Now;
@@ -178,6 +179,7 @@ public static class JobRunner
         finally
         {
             TryDeleteDirectory(workDir);
+            WorkFolders.TidyUp(job);
             WriteLogFile(job, ctx.Store);
         }
     }

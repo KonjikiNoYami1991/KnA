@@ -43,7 +43,7 @@ public static class ChunkedEncoder
 
         // ------------------------------------------------------------ manifest
         var key = Key(job);
-        var dir = Path.Combine(ChunksRoot(ctx.Store), key[..16]);
+        var dir = Path.Combine(WorkFolders.Chunks(job, ctx.Store), key[..16]);
         Directory.CreateDirectory(dir);
         var manifestPath = Path.Combine(dir, "manifest.json");
         Manifest manifest;

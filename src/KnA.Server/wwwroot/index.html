@@ -269,6 +269,10 @@
           <input id="s-template" class="mono" placeholder="{name} [{label}]">
           <small class="muted" data-i18n>Placeholders: {name} source name · {label} profile summary · {profile} · {codec} · {res} · {quality} · {date}</small>
         </label>
+        <label class="field"><span data-i18n>Working files</span>
+          <select id="s-work"><option value="NextToSource" data-i18n>Next to the video (hidden .kna-work folder)</option><option value="DataFolder" data-i18n>In KnA's data folder</option></select>
+          <small class="muted" data-i18n>Next to the video: segments, resumable pieces and temporary files stay on the same disk as the video, not on the system drive. Read-only folders use the data folder by themselves.</small>
+        </label>
         <div class="field"><span data-i18n>Extensions imported from folders</span><div class="chips" id="s-ext"></div></div>
       </section>
       <section data-pane="processing" hidden>
