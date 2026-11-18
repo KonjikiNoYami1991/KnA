@@ -36,3 +36,12 @@ Handy, but it must build the preset in a more specific, detailed way.
 ## 3. AI assistant
 
 Handy, but it needs guided set-up procedures (wizards), or users give up.
+
+## 4. Chunked encoding: resumable and continuous
+
+- **Resumable even when not parallel**: reuse the parallel-encoding logic to encode one segment at a time, so every
+  encode can be resumed after a stop or crash, even with a single worker.
+- **Continuous segment scheduling** (like av1an): today N similar segments finish at about the same time, N
+  processes (FFmpeg, rigaya encoders, VideoToolbox) close together and the next N start all at once, which is a
+  heavy, bursty load. Instead keep a steady pool: start the next segment as soon as any worker frees up, stagger the
+  starts, and use segments of varied length / more segments than workers so the queue drains gradually.
