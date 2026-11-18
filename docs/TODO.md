@@ -45,3 +45,9 @@ Handy, but it needs guided set-up procedures (wizards), or users give up.
   processes (FFmpeg, rigaya encoders, VideoToolbox) close together and the next N start all at once, which is a
   heavy, bursty load. Instead keep a steady pool: start the next segment as soon as any worker frees up, stagger the
   starts, and use segments of varied length / more segments than workers so the queue drains gradually.
+
+## 5. Progress bar for every step of a job
+
+The progress bar in the queue item's card is nice, but today it only follows the video encode. After START it must
+show progress (with the step's name) for every step of the job: archive extraction, probing, OCR, audio/subtitle
+encoding, VapourSynth/AI filtering, muxing, size checks, cleanup, and so on. Desktop and web.
