@@ -54,13 +54,16 @@ encoding, VapourSynth/AI filtering, muxing, size checks, cleanup, and so on. Des
 
 ## 6. Web server: separate user accounts
 
+All points below are confirmed by the user (required, not optional).
+
 - **Accounts instead of the single shared password**: at first start KnA asks to create an **admin** account; the
   admin creates, edits, disables and removes the other accounts.
-- Each user has their own queue, presets and settings; the admin sees and manages everything (roles at least
-  admin / user; per-user folder roots and advanced-mode permission are worth considering).
-- Passwords stored hashed (salted, slow hash); secure session cookies; brute-force throttling.
+- Each user has their own queue, presets and settings; the admin sees and manages everything.
+- **Roles**: at least admin / user, plus per-user permissions: allowed folder roots and whether advanced mode is
+  allowed.
+- **Security**: passwords stored hashed (salted, slow hash); secure session cookies; brute-force throttling.
 - **Reverse-proxy compatible**: forwarded headers (X-Forwarded-For/Proto/Host) from trusted proxies only, a
   configurable base path (e.g. `/kna`), correct cookie paths and redirects, WebSocket/SSE progress through the proxy;
-  document examples for nginx, Caddy, Traefik and Nginx Proxy Manager. Optionally accept an auth header from a
-  trusted proxy (Authelia/Authentik style SSO).
-- Existing `KNA_PASSWORD` installs migrate smoothly (Docker, Linux, Windows service).
+  documented examples for nginx, Caddy, Traefik and Nginx Proxy Manager.
+- **Proxy SSO**: accept an auth header from a trusted proxy (Authelia/Authentik style) as the logged-in user.
+- **Migration**: existing `KNA_PASSWORD` installs migrate smoothly (Docker, Linux, Windows service).
