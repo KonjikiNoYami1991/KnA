@@ -51,3 +51,16 @@ Handy, but it needs guided set-up procedures (wizards), or users give up.
 The progress bar in the queue item's card is nice, but today it only follows the video encode. After START it must
 show progress (with the step's name) for every step of the job: archive extraction, probing, OCR, audio/subtitle
 encoding, VapourSynth/AI filtering, muxing, size checks, cleanup, and so on. Desktop and web.
+
+## 6. Web server: separate user accounts
+
+- **Accounts instead of the single shared password**: at first start KnA asks to create an **admin** account; the
+  admin creates, edits, disables and removes the other accounts.
+- Each user has their own queue, presets and settings; the admin sees and manages everything (roles at least
+  admin / user; per-user folder roots and advanced-mode permission are worth considering).
+- Passwords stored hashed (salted, slow hash); secure session cookies; brute-force throttling.
+- **Reverse-proxy compatible**: forwarded headers (X-Forwarded-For/Proto/Host) from trusted proxies only, a
+  configurable base path (e.g. `/kna`), correct cookie paths and redirects, WebSocket/SSE progress through the proxy;
+  document examples for nginx, Caddy, Traefik and Nginx Proxy Manager. Optionally accept an auth header from a
+  trusted proxy (Authelia/Authentik style SSO).
+- Existing `KNA_PASSWORD` installs migrate smoothly (Docker, Linux, Windows service).
