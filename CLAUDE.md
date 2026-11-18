@@ -24,3 +24,7 @@ lack. Releases are made only when the user asks (tag `v*` → draft release, pub
 - Work on `master`; commit and push when asked, never publish releases unless asked.
 - UI text goes through `L.T(...)` with the Italian translation in `src/KnA.Core/Localization/L.it.cs`.
 - Desktop (Avalonia, `src/KnA.App`) and web (`src/KnA.Server/wwwroot`) must offer the same features.
+
+## Pending work
+
+The user's open requests are in `docs/TODO.md`; `/master` resumes them.
