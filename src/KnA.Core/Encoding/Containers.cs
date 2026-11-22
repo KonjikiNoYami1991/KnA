@@ -159,6 +159,57 @@ public static class Containers
         return p.Containers.Where(c => AcceptsVideo(c, codec)).ToList();
     }
 
+    /// <summary>
+    /// Containers that can hold every final stream of this file: the video (encoded or copied), each kept audio
+    /// track as it will be written, the subtitle formats chosen and the attachments. Falls back to
+    /// <see cref="Allowed(JobSettings)"/> when no container fits them all (validation then says what is wrong).
+    /// </summary>
+    public static IReadOnlyList<string> AllowedFor(JobSettings s, IReadOnlyList<TrackPlan> tracks, IReadOnlyDictionary<string, MediaInfo> media,
+        AudioEncoderSet encoders)
+    {
+        var p = s.ProfileDefinition;
+        var basic = Allowed(s);
+        if (!p.UsesTrackPlan || p.IsImages || basic.Count <= 1) return basic;
+        var fit = basic.Where(c => Holds(c, s, tracks, media, encoders)).ToList();
+        return fit.Count > 0 ? fit : basic;
+    }
+
+    private static bool Holds(string c, JobSettings s, IReadOnlyList<TrackPlan> tracks, IReadOnlyDictionary<string, MediaInfo> media, AudioEncoderSet encoders)
+    {
+        var p = s.ProfileDefinition;
+        foreach (var t in tracks.Where(t => t.Include))
+        {
+            var st = Encoding.TrackPlanner.Lookup(t, media);
+            switch (t.Kind)
+            {
+                case "video" when (t.CopyVideo || p.IsRemux) && st is VideoStream v && p.Kind != ProfileKind.RemuxMp4:
+                    if (!AcceptsVideo(c, v.CodecName)) return false;
+                    break;
+                case "audio" when st is AudioStream a && t.Output is { Length: > 0 } o && !o.Equals(nameof(AudioCodec.Auto), StringComparison.OrdinalIgnoreCase):
+                    if (o.Equals(nameof(AudioCodec.Copy), StringComparison.OrdinalIgnoreCase)) { if (!AcceptsAudio(c, a.CodecName)) return false; }
+                    else if (Enum.TryParse<AudioCodec>(o, true, out var codec))
+                    {
+                        var enc = t.Encoder is { Length: > 0 } te && encoders.Has(te) ? te : encoders.Best(codec);
+                        if (enc is not null && !AcceptsAudio(c, AudioEncoderSet.OutputCodec(enc))) return false;
+                    }
+                    break;
+                case "subtitle" when !t.Burn:
+                    var sst = st as SubtitleStream;
+                    if (t.Output is { Length: > 0 } so && !so.Equals(Ocr.SubtitleOcr.OutputValue, StringComparison.OrdinalIgnoreCase))
+                    {
+                        if (ChosenSubtitleCodec(c, sst, t.Codec, so) is null) return false;
+                    }
+                    else if (t.Output is { Length: > 0 }) { if (c is not ("mkv" or "mp4" or "mov" or "webm")) return false; }
+                    else if (SubtitleCodec(c, sst, t.Codec) is null) return false;
+                    break;
+                case "attachment":
+                    if (!AcceptsAttachments(c)) return false;
+                    break;
+            }
+        }
+        return true;
+    }
+
     public static ValidationIssue Error(string english, params object?[] args) => new(true, L.T(english, args));
     public static ValidationIssue Warning(string english, params object?[] args) => new(false, L.T(english, args));
 }

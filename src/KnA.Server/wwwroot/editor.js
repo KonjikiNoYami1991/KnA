@@ -1,22 +1,25 @@
-// Per-file editor: tracks, visual trim, filters, output, preview.
-// Every change is saved to the job and re-validated by the server (debounced).
+// Per-file editor (the pencil): preset, visual trim, video (encoder, rate control, every parameter on sub-tabs),
+// audio and subtitles (one sub-tab per kept track), filters (picture, GPU, VapourSynth/AviSynth), output, preview.
+// It works on explicit settings only: when it opens, the server writes the profile's automatic choices into the
+// fields (/materialize); a profile or preset can only be imported. Every change is saved and re-validated (debounced).
+// Mirrors KnA.App/Views/JobEditorWindow.cs.
 import { $, $$, esc, state, t, api, post, toast, guard, fmtStamp, parseStamp, fmtTime, label, profileOf, fillSelect, debounce, showText } from "./core.js";
-import { renderSettingsForm, cloneSettings } from "./form.js";
+import { renderSettingsForm, cloneSettings, parsePairs, formatPairs } from "./form.js";
 import { openAssistant, analyzeJob } from "./ai.js";
 import { pickFiles } from "./files.js";
 import { openOcr } from "./ocr.js";
 
 let ed = null;
-const kinds = ["video", "audio", "subtitle", "attachment"];
-const kindLabel = k => ({ video: t("Video"), audio: t("Audio"), subtitle: t("Subtitles"), attachment: t("Attachments") }[k] ?? k);
 
-export async function openEditor(id, tab = "tracks") {
+export async function openEditor(id, tab = "video") {
   const job = state.jobs.get(id);
   if (!job) return;
   // "trim-only": the cut as a standalone tool (keep a part, drop openings/endings) without the other tabs.
   $("#dlg-editor").classList.toggle("trim-only", tab === "trim-only");
   if (tab === "trim-only") tab = "trim";
-  ed = { id, job, settings: cloneSettings(job.settings), edit: cloneSettings(job.edit), analysis: null, tab, playhead: job.edit.segments?.[0]?.start ?? job.edit.trimStart ?? 0, final: true, parts: null, seg: 0 };
+  if (tab === "tracks") tab = "video";   // the tracks are now in the tab of their kind
+  ed = { id, job, settings: cloneSettings(job.settings), edit: cloneSettings(job.edit), analysis: null, tab, playhead: job.edit.segments?.[0]?.start ?? job.edit.trimStart ?? 0, final: true, parts: null, seg: 0,
+    videoSub: "general", trackSub: {} };
   $("#ed-title").textContent = job.fileName;
   $("#ed-sub").textContent = job.folder;
   $$("#ed-tabs button").forEach(b => b.classList.toggle("on", b.dataset.tab === tab));
@@ -24,7 +27,7 @@ export async function openEditor(id, tab = "tracks") {
   $("#ed-issues").innerHTML = "";
   $("#dlg-editor").showModal();
   try {
-    ed.analysis = await api("GET", `/api/jobs/${id}/analysis`);
+    await materializeNow({}, false);
     if (ed.playhead === 0) ed.playhead = Math.min(ed.analysis.files[0].duration / 3, 60);
     renderIssues();
     renderTab();
@@ -60,6 +63,17 @@ const saveNow = async (rerender = false) => {
 const save = debounce(() => saveNow(false), 450);
 const saveAndRender = () => saveNow(true);
 
+/** Saves and lets the server write the profile's choices into the fields left to it (open, profile / preset import). */
+async function materializeNow(extra = {}, render = true) {
+  const id = ed.id;
+  $("#ed-saving").textContent = t("Saving…");
+  const r = await api("POST", `/api/jobs/${id}/materialize`, { settings: ed.settings, edit: ed.edit, ...extra });
+  if (!ed || ed.id !== id) return;
+  ed.settings = r.settings; ed.edit = r.edit; ed.analysis = r.analysis;
+  $("#ed-saving").textContent = t("Saved");
+  if (render) { renderIssues(); renderTab(); }
+}
+
 function renderIssues() {
   const a = ed.analysis, list = [...a.issues];
   const html = list.map(i => `<div class="issue ${i.isError ? "err" : "warn"}">${i.isError ? "✖" : "⚠"} ${esc(i.message)}</div>`).join("");
@@ -71,8 +85,10 @@ function renderIssues() {
 function renderTab() {
   const body = $("#ed-body");
   body.onchange = body.oninput = body.onclick = null;
-  ({ tracks: renderTracks, trim: renderTrim, video: renderVideo, audio: b => renderStreams(b, "audio"), subtitles: b => renderStreams(b, "subtitle"),
-     filters: renderFilters, output: renderOutput, preview: renderPreview })[ed.tab](body);
+  ed.prev = cloneSettings(ed.settings);
+  const render = ({ preset: renderPresetTab, trim: renderTrim, video: renderVideo, audio: b => renderStreams(b, "audio"), subtitles: b => renderStreams(b, "subtitle"),
+     filters: renderFilters, output: renderOutput, preview: renderPreview })[ed.tab] ?? renderVideo;
+  render(body);
 }
 
 // ---------------------------------------------------------------- tracks
@@ -80,167 +96,125 @@ function streamInfo(tp) {
   const f = ed.analysis.files.find(x => x.path === tp.file);
   return f?.streams.find(s => s.index === tp.stream);
 }
-
-const subtitleOutputs = [["", "Automatic"], ["copy", "Copy (no re-encoding)"], ["srt", "SRT"], ["ass", "ASS"], ["webvtt", "WebVTT"], ["mov_text", "mov_text (MP4)"], ["ocr", "Text (OCR, picture subtitles)"]];
 const isPgs = tp => ["hdmv_pgs_subtitle", "pgssub", "dvd_subtitle", "dvdsub"].includes(tp.codec ?? streamInfo(tp)?.codec);
-function outputOptions(kind, current) {
-  let opts = [];
-  if (kind === "video") opts = [["", t("Profile (encode)")], ["copy", t("Copy (no re-encoding)")]];
-  else if (kind === "audio") opts = [["", t("Job setting")], ...(state.options.audioCodecs ?? []).filter(o => o.value !== "Auto").map(o => [o.value, o.label])];
-  else if (kind === "subtitle") opts = subtitleOutputs.map(([v, l]) => [v, v === "" || v === "copy" || v === "ocr" ? t(l) : l]);
-  return opts.map(([v, l]) => `<option value="${esc(v)}" ${(current ?? "").toLowerCase() === v.toLowerCase() ? "selected" : ""}>${esc(l)}</option>`).join("");
-}
+const srcPath = () => ed.analysis.files[0].path;
+const trackName = tp => `${tp.stream >= 0 ? "#" + tp.stream + " " : ""}${tp.codec ?? streamInfo(tp)?.codec ?? ""}${tp.language ? " " + tp.language : ""}${tp.file !== srcPath() ? " · " + tp.file.split(/[\\/]/).pop() : ""}`;
 
-const chapterList = () => ed.edit.chapters ?? ed.analysis.files[0].chapters ?? [];
-function materializeChapters() { if (!ed.edit.chapters) ed.edit.chapters = cloneSettings(ed.analysis.files[0].chapters ?? []); return ed.edit.chapters; }
-const chapterTitle = n => t("Chapter {0}", String(n).padStart(2, "0"));
-function addChapter(at) {
-  const l = materializeChapters();
-  l.push({ start: Math.max(0, at), title: chapterTitle(l.length + 1) });
-  l.sort((a, b) => a.start - b.start);
-}
-
-function renderChapters() {
-  const list = chapterList(), keep = ed.edit.keepChapters !== false;
-  return `<div class="section"><h3>${esc(t("Chapters"))}</h3>
-    <label class="toggle"><input type="checkbox" data-k="keepChapters" ${keep ? "checked" : ""}><span class="switch"></span><span>${esc(t("Keep chapters"))}</span></label>
-    ${!keep ? "" : `<p class="muted small">${esc(ed.edit.chapters ? t("Edited chapters (times on the original timeline: cuts move them automatically).") : t("The chapters of the file ({0}). Any change makes them custom.", list.length))}</p>
-    ${list.length ? `<table class="tracks"><tbody>${list.map((c, i) => `<tr data-ci="${i}">
-      <td class="muted">${i + 1}.</td>
-      <td><input class="mono" data-c="start" value="${fmtStamp(c.start)}" style="width:130px"></td>
-      <td><input data-c="title" value="${esc(c.title ?? "")}"></td>
-      <td><button class="btn icon ghost sm" data-a="rm-ch" title="${esc(t("Remove"))}"><svg><use href="#i-x"/></svg></button></td></tr>`).join("")}</tbody></table>`
-      : `<p class="muted small">${esc(t("No chapters."))}</p>`}
-    <div class="row" style="flex-wrap:wrap;margin-top:8px">
-      <button class="btn sm" data-a="add-ch">${esc(t("Add chapter"))}</button>
-      <button class="btn sm" data-a="ch-5min">${esc(t("Every 5 minutes"))}</button>
-      <button class="btn sm ghost" data-a="ch-none">${esc(t("Remove all"))}</button>
-      <button class="btn sm ghost" data-a="ch-reset">${esc(t("Back to the file's chapters"))}</button>
-    </div>`}
+/**
+ * The tracks of one kind in the file and in the added files: tick to keep (untick to leave out any stream), order,
+ * remove an added file. Video rows also carry their labels (video has no per-track pages).
+ */
+function trackList(kind) {
+  const list = tracks(), p = profileOf(ed.settings.profile);
+  const rows = list.map((tp, i) => ({ tp, i })).filter(x => x.tp.kind === kind);
+  const title = { video: t("Video tracks"), audio: t("Audio tracks"), subtitle: t("Subtitle tracks"), attachment: t("Attachments") }[kind];
+  const add = kind === "attachment" ? `<button class="btn sm" data-a="add-att"><svg><use href="#i-plus"/></svg><span>${esc(t("Add attachments…"))}</span></button>`
+    : `<button class="btn sm" data-a="add-ext"><svg><use href="#i-plus"/></svg><span>${esc(t("Add external files…"))}</span></button>
+       <button class="btn sm" data-a="upload-ext"><svg><use href="#i-upload"/></svg><span>${esc(t("Upload from this device…"))}</span></button>`;
+  const video = kind === "video", burnCol = kind === "subtitle" && p.usesVideoFilters;
+  const externals = ed.edit.externalFiles ?? [];
+  return `<div class="section"><h3 class="row" style="justify-content:space-between;flex-wrap:wrap"><span class="kind ${kind}">${esc(title)}</span><span class="row">${add}</span></h3>
+    ${kind === "audio" && !p.usesAudio && !p.isDemux ? `<p class="issue warn">${esc(t("This profile has no audio output."))}</p>` : ""}
+    ${!rows.length ? `<p class="muted small">${esc(kind === "attachment" ? t("No attachments. Fonts, covers or any other file can be added.") : t("No tracks of this kind."))}</p>` : `
+    <table class="tracks"><thead><tr><th>${esc(t("Use"))}</th><th>${esc(t("Stream"))}</th>
+      ${video ? `<th>${esc(t("Language"))}</th><th class="hide-sm">${esc(t("Title"))}</th><th>${esc(t("Delay (ms)"))}</th>${p.encodesVideo || p.isRemux ? `<th>${esc(t("Output"))}</th>` : ""}` : ""}
+      ${burnCol ? `<th>${esc(t("Burn"))}</th>` : ""}<th></th></tr></thead><tbody>
+    ${rows.map(({ tp, i }) => {
+      const si = streamInfo(tp), standalone = kind === "attachment" && tp.stream < 0;
+      const removable = standalone || (tp.file !== srcPath() && externals.includes(tp.file));
+      return `<tr class="${tp.include || tp.burn ? "" : "off"}" data-i="${i}">
+        <td><input type="checkbox" data-f="include" ${tp.include ? "checked" : ""}></td>
+        <td title="${esc(tp.file)}"><span class="codec">${esc(standalone ? tp.title ?? tp.file.split(/[\\/]/).pop() : trackName(tp))}</span>${tp.title && !video && !standalone ? ` · ${esc(tp.title)}` : ""}<div class="details">${esc(si?.details ?? (standalone ? tp.codec ?? "" : ""))}</div></td>
+        ${video ? `<td><input class="lang" data-f="language" value="${esc(tp.language ?? "")}" maxlength="3" placeholder="und"></td>
+          <td class="hide-sm"><input data-f="title" value="${esc(tp.title ?? "")}"></td>
+          <td><input class="delay" type="number" step="10" data-f="delayMs" value="${tp.delayMs || 0}"></td>
+          ${p.encodesVideo || p.isRemux ? `<td><select data-f="output"><option value="" ${tp.output ? "" : "selected"}>${esc(t("Encode (Video tab settings)"))}</option><option value="copy" ${(tp.output ?? "").toLowerCase() === "copy" ? "selected" : ""}>${esc(t("Copy (no re-encoding)"))}</option></select></td>` : ""}` : ""}
+        ${burnCol ? `<td><input type="radio" name="burn" data-f="burn" ${tp.burn ? "checked" : ""}></td>` : ""}
+        <td class="row"><button class="btn icon ghost sm" data-a="up" title="${esc(t("Move up"))}"><svg><use href="#i-up"/></svg></button>
+          <button class="btn icon ghost sm" data-a="down" title="${esc(t("Move down"))}"><svg><use href="#i-down"/></svg></button>
+          ${removable ? `<button class="btn icon ghost sm" data-a="rm-track" title="${esc(standalone ? t("Remove") : t("Remove the added file ({0})", tp.file.split(/[\\/]/).pop()))}"><svg><use href="#i-x"/></svg></button>` : ""}</td>
+      </tr>`;
+    }).join("")}</tbody></table>`}
+    ${burnCol && rows.some(r => r.tp.burn) ? `<button class="btn sm ghost" data-a="no-burn">${esc(t("Don't burn any subtitle"))}</button>` : ""}
+    ${kind === "attachment" && !p.isDemux && rows.length ? `<p class="muted small">${esc(t("Untick an attachment of the file to leave it out; added files can be removed with ✕. Attachments need MKV."))}</p>` : ""}
+    ${p.isDemux ? `<p class="muted small">${esc(t("Demux: the ticked tracks, attachments and chapters are extracted to separate files."))}</p>` : ""}
   </div>`;
 }
 
-function renderTracks(body) {
-  const list = tracks();
-  const src = ed.analysis.files[0].path;
-  const externals = ed.edit.externalFiles;
-  const p = profileOf(ed.settings.profile);
-  const outputs = p.encodesVideo || p.isRemux;
-  const dur = ed.analysis.files[0].duration || 1;
-  body.innerHTML = `
-    <div class="row" style="margin-bottom:10px;flex-wrap:wrap">
-      <button class="btn sm" data-a="add-ext"><svg><use href="#i-plus"/></svg><span>${esc(t("Add external files…"))}</span></button>
-      <button class="btn sm" data-a="upload-ext"><svg><use href="#i-upload"/></svg><span>${esc(t("Upload from this device…"))}</span></button>
-      <button class="btn sm ghost" data-a="reset"><svg><use href="#i-redo"/></svg><span>${esc(t("Reset to automatic"))}</span></button>
-      <span class="muted small">${esc(ed.edit.tracks ? t("Custom track plan.") : t("Automatic plan (from the subtitle mode). Any change makes it custom."))}</span>
-    </div>
-    ${externals.length ? `<div class="chips" style="margin-bottom:10px">${externals.map(f => `<label title="${esc(f)}">${esc(f.split(/[\\/]/).pop())} <button class="btn icon ghost sm" data-a="rm-ext" data-f="${esc(f)}" title="${esc(t("Remove"))}"><svg><use href="#i-x"/></svg></button></label>`).join("")}</div>` : ""}
-    <p class="muted small">${esc(p.isDemux ? t("Demux: the ticked tracks, attachments and chapters are extracted to separate files.") : t("Delays shift a single track (positive = later). The trim is applied afterwards, on the final timeline."))}</p>
-    ${kinds.map(k => {
-      const rows = list.map((tp, i) => ({ tp, i })).filter(x => x.tp.kind === k);
-      if (!rows.length && k !== "attachment") return "";
-      const head = k === "attachment"
-        ? `<h3 class="row" style="justify-content:space-between"><span class="kind ${k}">${esc(kindLabel(k))}</span><button class="btn sm" data-a="add-att"><svg><use href="#i-plus"/></svg><span>${esc(t("Add attachments…"))}</span></button></h3>`
-        : `<h3><span class="kind ${k}">${esc(kindLabel(k))}</span></h3>`;
-      const note = k === "attachment" ? (!rows.length ? `<p class="muted small">${esc(t("No attachments. Fonts, covers or any other file can be added."))}</p>`
-          : p.isDemux ? "" : `<p class="muted small">${esc(t("Untick an attachment of the file to leave it out; added files can be removed with ✕. Attachments need MKV."))}</p>`)
-        : k === "audio" && !p.usesAudio && !p.isDemux ? `<p class="issue warn">${esc(t("This profile has no audio output."))}</p>` : "";
-      if (!rows.length) return `<div class="section">${head}${note}</div>`;
-      return `<div class="section">${head}${note}
-      <table class="tracks"><thead><tr>
-        <th>${esc(t("Use"))}</th><th>${esc(t("Source"))}</th><th>${esc(t("Stream"))}</th>
-        ${k !== "attachment" ? `<th>${esc(t("Language"))}</th>` : ""}<th class="hide-sm">${esc(k === "attachment" ? t("File name") : t("Title"))}</th>
-        ${k !== "attachment" ? `<th>${esc(t("Delay (ms)"))}</th>` : ""}
-        ${outputs && k === "video" ? `<th>${esc(t("Output"))}</th>` : ""}
-        ${k === "audio" || k === "subtitle" ? `<th>${esc(t("Default"))}</th><th>${esc(t("Forced"))}</th>` : ""}
-        <th></th></tr></thead><tbody>
-        ${rows.map(({ tp, i }) => {
-          const si = streamInfo(tp);
-          const isSrc = tp.file === src;
-          const standalone = k === "attachment" && tp.stream < 0;
-          const copies = (tp.output ?? "").toLowerCase() === "copy";
-          return `<tr class="${tp.include || tp.burn ? "" : "off"}" data-i="${i}">
-            <td><input type="checkbox" data-f="include" ${tp.include ? "checked" : ""}></td>
-            <td><span class="src-badge ellipsis ${isSrc ? "source" : ""}" title="${esc(tp.file)}">${esc(isSrc ? t("Source") : tp.file.split(/[\\/]/).pop())}</span></td>
-            <td><span class="codec">${tp.stream >= 0 ? "#" + tp.stream + " " : ""}${esc(tp.codec ?? si?.codec ?? "")}</span><div class="details">${esc(si?.details ?? "")}</div></td>
-            ${k !== "attachment" ? `<td><input class="lang" data-f="language" value="${esc(tp.language ?? "")}" maxlength="3" placeholder="und"></td>` : ""}
-            <td class="hide-sm"><input data-f="title" value="${esc(tp.title ?? "")}" ${k === "attachment" && !standalone ? "readonly" : ""}></td>
-            ${k !== "attachment" ? `<td><input class="delay" type="number" step="10" data-f="delayMs" value="${tp.delayMs || 0}"></td>` : ""}
-            ${outputs && k === "video" ? `<td><select data-f="output">${outputOptions(k, tp.output)}</select></td>` : ""}
-            ${k === "audio" || k === "subtitle" ? `<td><input type="checkbox" data-f="default" ${tp.default ? "checked" : ""}></td><td><input type="checkbox" data-f="forced" ${tp.forced ? "checked" : ""}></td>` : ""}
-            <td class="row"><button class="btn icon ghost sm" data-a="up" title="${esc(t("Move up"))}"><svg><use href="#i-up"/></svg></button>
-              <button class="btn icon ghost sm" data-a="down" title="${esc(t("Move down"))}"><svg><use href="#i-down"/></svg></button>
-              ${standalone ? `<button class="btn icon ghost sm" data-a="rm-att" title="${esc(t("Remove"))}"><svg><use href="#i-x"/></svg></button>` : ""}</td>
-          </tr>`;
-        }).join("")}
-      </tbody></table>
-      ${outputs && (k === "audio" || k === "subtitle") ? `<p class="muted small">${esc(k === "audio" ? t("Codec and bitrate of each track: Audio tab.") : t("Format of each track and burning into the picture: Subtitles tab."))}</p>` : ""}
-      </div>`;
-    }).join("")}
-    ${p.isKeyframes || p.isImages ? "" : renderChapters()}`;
+/** Events of the track lists (any tab): returns true when handled. */
+function trackListInput(e) {
+  const tr = e.target.closest("tr[data-i]"), f = e.target.dataset.f;
+  if (!tr || !f || e.target.type === "checkbox" || e.target.type === "radio" || e.target.tagName === "SELECT") return false;
+  const tp = materialize()[+tr.dataset.i];
+  tp[f] = f === "delayMs" ? Number(e.target.value) || 0 : e.target.value || null;
+  save();
+  return true;
+}
+function trackListChange(e) {
+  const tr = e.target.closest("tr[data-i]"), f = e.target.dataset.f;
+  if (!tr || !f || !(e.target.type === "checkbox" || e.target.type === "radio" || e.target.tagName === "SELECT")) return false;
+  const l = materialize(), tp = l[+tr.dataset.i];
+  if (e.target.tagName === "SELECT") tp[f] = e.target.value || null;
+  else if (f === "burn") { l.forEach(x => { if (x.kind === "subtitle") { x.burn = x === tp; if (x === tp) x.include = false; } }); ed.trackSub.subtitle = +tr.dataset.i; }
+  else { tp[f] = e.target.checked; if (f === "include" && tp.include) tp.burn = false; }
+  saveAndRender();
+  return true;
+}
+async function trackListClick(b) {
+  const a = b.dataset.a;
+  if (a === "add-ext") { pickExternal(); return true; }
+  if (a === "add-att") { pickAttachments(); return true; }
+  if (a === "upload-ext") { await saveNow(); pickFiles(null, ed.id); return true; }
+  if (a === "no-burn") { materialize().forEach(x => { x.burn = false; }); saveAndRender(); return true; }
+  const tr = b.closest("tr[data-i]"); if (!tr) return false;
+  const l = materialize(), i = +tr.dataset.i, k = l[i].kind;
+  if (a === "rm-track") {
+    const file = l[i].file, standalone = k === "attachment" && l[i].stream < 0;
+    if (standalone) l.splice(i, 1); else for (let j = l.length - 1; j >= 0; j--) if (l[j].file === file) l.splice(j, 1);
+    if (!l.some(x => x.file === file)) ed.edit.externalFiles = (ed.edit.externalFiles ?? []).filter(x => x !== file);
+    saveAndRender(); return true;
+  }
+  if (a === "up" || a === "down") {
+    const same = l.map((x, j) => ({ x, j })).filter(o => o.x.kind === k).map(o => o.j);
+    const target = same[same.indexOf(i) + (a === "up" ? -1 : 1)];
+    if (target == null) return true;
+    [l[i], l[target]] = [l[target], l[i]];
+    renderTab(); save(); return true;
+  }
+  return false;
+}
 
-  body.oninput = e => {
-    const ch = e.target.closest("tr[data-ci]");
-    if (ch && e.target.dataset.c === "title") { const l = materializeChapters(); l[+ch.dataset.ci].title = e.target.value || null; return save(); }
-    const tr = e.target.closest("tr[data-i]"); const f = e.target.dataset.f;
-    if (!tr || !f || e.target.type === "checkbox" || e.target.type === "radio" || e.target.tagName === "SELECT") return;
-    const tp = materialize()[+tr.dataset.i];
-    tp[f] = f === "delayMs" ? Number(e.target.value) || 0 : f === "bitrate" ? (Number(e.target.value) > 0 ? Number(e.target.value) : null) : e.target.value;
-    save();
-  };
-  body.onchange = e => {
-    if (e.target.dataset.k === "keepChapters") { ed.edit.keepChapters = e.target.checked; return saveAndRender(); }
-    const ch = e.target.closest("tr[data-ci]");
-    if (ch && e.target.dataset.c === "start") {
-      const v = parseStamp(e.target.value), l = materializeChapters(), c = l[+ch.dataset.ci];
-      if (v == null) { e.target.value = fmtStamp(c.start); return; }
-      c.start = Math.max(0, v); l.sort((a, b) => a.start - b.start);
-      return saveAndRender();
-    }
-    const tr = e.target.closest("tr[data-i]"); const f = e.target.dataset.f;
-    if (!tr || !f) return;
-    const list2 = materialize(); const tp = list2[+tr.dataset.i];
-    if (e.target.tagName === "SELECT") { tp[f] = e.target.value || null; renderTracks(body); return save(); }
-    if (!(e.target.type === "checkbox" || e.target.type === "radio")) return;
-    if (f === "burn") list2.forEach(x => { if (x.kind === "subtitle") x.burn = x === tp; });
-    else tp[f] = e.target.checked;
-    if (f === "default" && e.target.checked) list2.forEach(x => { if (x !== tp && x.kind === tp.kind) x.default = false; });
-    renderTracks(body);
-    save();
-  };
-  body.onclick = guard(async e => {
-    const b = e.target.closest("button[data-a]"); if (!b) return;
-    const a = b.dataset.a;
-    if (a === "add-ext") return pickExternal();
-    if (a === "add-att") return pickAttachments();
-    if (a === "upload-ext") { await saveNow(); return pickFiles(null, ed.id); }
-    if (a === "reset") { ed.edit.tracks = null; return saveAndRender(); }
-    if (a === "rm-ext") {
-      const f = b.dataset.f;
-      ed.edit.externalFiles = ed.edit.externalFiles.filter(x => x !== f);
-      if (ed.edit.tracks) ed.edit.tracks = ed.edit.tracks.filter(x => x.file !== f);
-      return saveAndRender();
-    }
-    if (a === "add-ch") { const l = chapterList(); addChapter(l.length ? Math.min(l[l.length - 1].start + 300, Math.max(0, dur - 1)) : 0); return saveAndRender(); }
-    if (a === "ch-5min") { const l = []; for (let x = 0; x < Math.max(dur, 1); x += 300) l.push({ start: x, title: chapterTitle(l.length + 1) }); ed.edit.chapters = l; return saveAndRender(); }
-    if (a === "ch-none") { ed.edit.chapters = []; return saveAndRender(); }
-    if (a === "ch-reset") { ed.edit.chapters = null; return saveAndRender(); }
-    if (a === "rm-ch") { materializeChapters().splice(+b.closest("tr[data-ci]").dataset.ci, 1); return saveAndRender(); }
-    if (a === "no-burn") { materialize().forEach(x => x.burn = false); renderTracks(body); return save(); }
-    const tr = b.closest("tr[data-i]"); if (!tr) return;
-    const list2 = materialize(); const i = +tr.dataset.i; const k = list2[i].kind;
-    if (a === "rm-att") {
-      const f = list2[i].file;
-      list2.splice(i, 1);
-      if (!list2.some(x => x.file === f)) ed.edit.externalFiles = ed.edit.externalFiles.filter(x => x !== f);
-      return saveAndRender();
-    }
-    const same = list2.map((x, j) => ({ x, j })).filter(o => o.x.kind === k).map(o => o.j);
-    const pos = same.indexOf(i), target = same[pos + (a === "up" ? -1 : 1)];
-    if (target == null) return;
-    [list2[i], list2[target]] = [list2[target], list2[i]];
-    renderTracks(body); save();
-  });
+/** Language, title, delay, default and forced of a track: the first row of its page. */
+function labelsHtml(tp) {
+  return `<div class="grid4">
+    <label class="field"><span>${esc(t("Language"))}</span><input data-tf="language" value="${esc(tp.language ?? "")}" maxlength="3" placeholder="und"></label>
+    <label class="field"><span>${esc(t("Title"))}</span><input data-tf="title" value="${esc(tp.title ?? "")}"></label>
+    <label class="field"><span>${esc(t("Delay (ms)"))}</span><input type="number" step="10" data-tf="delayMs" value="${tp.delayMs || 0}"><small class="muted">${esc(t("Positive = later."))}</small></label>
+    <div class="field"><span>&nbsp;</span><div class="row"><label class="check"><input type="checkbox" data-tf="default" ${tp.default ? "checked" : ""}>${esc(t("Default"))}</label>
+      <label class="check"><input type="checkbox" data-tf="forced" ${tp.forced ? "checked" : ""}>${esc(t("Forced"))}</label></div></div>
+  </div>`;
+}
+/** A change in a track page's fields (data-tf); returns true when handled. */
+function trackFieldChange(e, i, rerenderOn = []) {
+  const f = e.target.dataset.tf; if (!f) return false;
+  const l = materialize(), tp = l[i];
+  if (e.target.type === "checkbox") {
+    tp[f] = e.target.checked;
+    if (f === "default" && tp.default) l.forEach(x => { if (x !== tp && x.kind === tp.kind) x.default = false; });
+  } else if (["delayMs", "bitrate", "channels"].includes(f)) tp[f] = e.target.value === "" || Number(e.target.value) === 0 && f !== "delayMs" ? (f === "delayMs" ? 0 : null) : Number(e.target.value);
+  else tp[f] = e.target.value || null;
+  if (rerenderOn.includes(f)) saveAndRender(); else save();
+  return true;
+}
+
+/** Sub-tabs, one per kept track of a kind; the last one shown is remembered. */
+function trackTabs(kind) {
+  const rows = tracks().map((tp, i) => ({ tp, i })).filter(x => x.tp.kind === kind && (x.tp.include || x.tp.burn));
+  if (!rows.length) return { rows, html: `<p class="muted small">${esc(kind === "audio" ? t("No audio track kept: tick one above.") : t("No subtitle track kept or burned: tick one above."))}</p>`, current: null };
+  let current = rows.find(r => r.i === ed.trackSub[kind]) ?? rows[0];
+  ed.trackSub[kind] = current.i;
+  const nav = `<nav class="tabs subtabs" data-subtabs="${kind}">${rows.map(r => `<button type="button" data-st="${r.i}" class="${r.i === current.i ? "on" : ""}">${r.tp.burn ? "🔥 " : ""}${esc(trackName(r.tp))}</button>`).join("")}</nav>`;
+  return { rows, html: nav, current };
 }
 
 function pickAttachments() {
@@ -271,6 +245,136 @@ function pickExternal() {
   };
   document.dispatchEvent(new CustomEvent("kna:browse", { detail: { external: true } }));
 }
+
+// ---------------------------------------------------------------- parameter pages
+// Every parameter of a program, read from its own help: all the options of a page with their value field and
+// description; ticking one sets it. Models keep the values: command-line text, or one FFmpeg filter's options.
+const optionCache = new Map();
+async function loadOptions(tool, s) {
+  const key = tool + "|" + JSON.stringify([s.codec, s.backend, s.encoder?.program, s.profile, s.tenBit]);
+  if (!optionCache.has(key)) optionCache.set(key, await api("POST", "/api/tools/options", { tool, settings: s }));
+  return optionCache.get(key);
+}
+function cmdModel(get, set) {
+  let pairs = parsePairs(get() ?? "");
+  const emit = () => set(formatPairs(pairs) || null);
+  return {
+    get: n => { const p = pairs.find(x => x[0] === n); return p ? (p[1] ?? "") : null; },
+    set: (n, v) => { const p = pairs.find(x => x[0] === n); if (p) p[1] = v; else pairs.push([n, v]); emit(); },
+    unset: n => { pairs = pairs.filter(x => x[0] !== n); emit(); },
+    others: known => formatPairs(pairs.filter(x => !known.has(x[0]))),
+    setOthers: (known, text) => { pairs = [...pairs.filter(x => known.has(x[0])), ...parsePairs(text).filter(x => !known.has(x[0]))]; emit(); },
+  };
+}
+function filterModel(call, onChange) {
+  return {
+    get: n => { const o = call.options.find(x => x[0] === n); return o ? o[1] : null; },
+    set: (n, v) => { const o = call.options.find(x => x[0] === n); if (o) o[1] = v ?? ""; else call.options.push([n, v ?? ""]); onChange(); },
+    unset: n => { call.options = call.options.filter(x => x[0] !== n); onChange(); },
+    others: known => call.options.filter(x => !known.has(x[0])).map(([k, v]) => k ? `${k}=${v}` : v).join(":"),
+    setOthers: (known, text) => { call.options = [...call.options.filter(x => known.has(x[0])), ...splitOpts(text).filter(x => !known.has(x[0]) && x[1] !== "")]; onChange(); },
+  };
+}
+
+function optionRow(o, m) {
+  const v = m.get(o.name), on = v !== null, flag = !o.argument;
+  const init = flag ? "" : o.default ?? o.values?.[0] ?? "";
+  const input = flag ? `<small class="muted">${esc(t("switch (no value)"))}</small>`
+    : o.values?.length ? `<select data-pv ${on ? "" : "disabled"}>${[...new Set([...(v && !o.values.includes(v) ? [v] : []), ...o.values])].map(x => `<option ${x === (on ? v : init) ? "selected" : ""}>${esc(x)}</option>`).join("")}</select>`
+    : `<input class="mono" data-pv value="${esc(v ?? "")}" placeholder="${esc(o.default ?? o.argument ?? "")}" ${on ? "" : "disabled"}>`;
+  return `<div class="param-opt ${on ? "on" : ""}" data-name="${esc(o.name)}" data-init="${esc(init)}" data-flag="${flag ? 1 : ""}">
+    <label class="check"><input type="checkbox" data-pset ${on ? "checked" : ""}><code>${esc(o.name)}${o.argument && !flag ? ` &lt;${esc(o.argument)}&gt;` : ""}</code></label>${input}
+    ${o.description ? `<small class="muted">${esc(o.description)}</small>` : ""}</div>`;
+}
+
+/** One page of options in `el`, bound to the model `m`; `others` adds the free-text field. */
+function mountPage(el, options, m, others = true, example = "") {
+  const known = new Set(options.map(o => o.name));
+  el.innerHTML = `<input class="pp-filter" placeholder="${esc(t("Filter the parameters (name or description)…"))}">
+    <div class="pp-rows">${options.slice(0, 400).map(o => optionRow(o, m)).join("") || `<small class="muted">${esc(t("No parameter matches."))}</small>`}</div>
+    ${options.length > 400 ? `<small class="muted">${esc(t("{0} more: narrow the filter.", options.length - 400))}</small>` : ""}
+    ${others ? `<label class="field"><span>${esc(t("Other parameters (written as text)"))}</span><input class="mono" data-pothers value="${esc(m.others(known))}" placeholder="${esc(example)}"></label>` : ""}`;
+  const rows = $(".pp-rows", el);
+  el.oninput = e => {
+    e.stopPropagation();
+    if (!e.target.classList.contains("pp-filter")) return;
+    const q = e.target.value.trim().toLowerCase();
+    const list = q ? options.filter(o => o.name.toLowerCase().includes(q) || (o.description ?? "").toLowerCase().includes(q)) : options;
+    rows.innerHTML = list.slice(0, 400).map(o => optionRow(o, m)).join("") || `<small class="muted">${esc(t("No parameter matches."))}</small>`;
+  };
+  el.onchange = e => {
+    e.stopPropagation();
+    if (e.target.dataset.pothers != null) { m.setOthers(known, e.target.value); return; }
+    const row = e.target.closest(".param-opt"); if (!row) return;
+    const name = row.dataset.name, valEl = row.querySelector("[data-pv]");
+    if (e.target.dataset.pset != null) {
+      row.classList.toggle("on", e.target.checked);
+      if (valEl) valEl.disabled = !e.target.checked;
+      if (!e.target.checked) { m.unset(name); return; }
+      if (valEl && !valEl.value) valEl.value = row.dataset.init;
+      m.set(name, row.dataset.flag ? null : valEl?.value ?? "");
+    } else if (e.target.dataset.pv != null && row.querySelector("[data-pset]").checked) m.set(name, e.target.value);
+  };
+  el.onclick = e => e.stopPropagation();
+}
+
+/** A flat list of every parameter of `tool` (audio / subtitle encoders, rigaya's --vpp-*, one FFmpeg filter). */
+async function mountFlat(el, tool, m, example) {
+  el.innerHTML = `<small class="muted">${esc(t("Reading the program's options…"))}</small>`;
+  try {
+    const r = await loadOptions(tool, ed.settings);
+    el.innerHTML = `<small class="muted">${esc(r.options.length ? t("{0} parameters of {1}, read from its help. Applied last: they win over KnA's values.", r.options.length, r.program) : t("{0}: its help could not be read; parameters can still be written as text.", r.program))}</small><div></div>`;
+    mountPage(el.lastElementChild, r.options, m, true, example);
+  } catch (err) { el.innerHTML = `<small class="issue err">${esc(err.message)}</small>`; }
+}
+
+// "a=1:b=2" ↔ [["a","1"],["b","2"]] and "f1=a=1,f2" ↔ filters (same rules as KnA.Core FilterChain).
+function splitTop(text, sep) {
+  const out = []; let cur = "", depth = 0, q = false;
+  for (let i = 0; i < text.length; i++) {
+    const c = text[i];
+    if (c === "\\" && i + 1 < text.length) { cur += c + text[++i]; continue; }
+    if (c === "'") q = !q; else if (!q && c === "[") depth++; else if (!q && c === "]") depth = Math.max(0, depth - 1);
+    else if (!q && depth === 0 && c === sep) { out.push(cur); cur = ""; continue; }
+    cur += c;
+  }
+  if (cur) out.push(cur);
+  return out;
+}
+const splitOpts = text => splitTop(text ?? "", ":").filter(Boolean).map(o => { const e = o.indexOf("="); return e < 0 ? ["", o] : [o.slice(0, e), o.slice(e + 1)]; });
+const parseChain = text => splitTop(text ?? "", ",").map(x => x.trim()).filter(Boolean).map(p => { const e = p.indexOf("="); return { name: e < 0 ? p : p.slice(0, e), options: e < 0 ? [] : splitOpts(p.slice(e + 1)) }; });
+const formatChain = list => list.filter(f => f.name).map(f => { const o = f.options.filter(x => x[1] !== "").map(([k, v]) => k ? `${k}=${v}` : v); return o.length ? `${f.name}=${o.join(":")}` : f.name; }).join(",") || null;
+
+// ---------------------------------------------------------------- chapters
+const chapterList = () => ed.edit.chapters ?? ed.analysis.files[0].chapters ?? [];
+function materializeChapters() { if (!ed.edit.chapters) ed.edit.chapters = cloneSettings(ed.analysis.files[0].chapters ?? []); return ed.edit.chapters; }
+const chapterTitle = n => t("Chapter {0}", String(n).padStart(2, "0"));
+function addChapter(at) {
+  const l = materializeChapters();
+  l.push({ start: Math.max(0, at), title: chapterTitle(l.length + 1) });
+  l.sort((a, b) => a.start - b.start);
+}
+
+function renderChapters() {
+  const list = chapterList(), keep = ed.edit.keepChapters !== false;
+  return `<div class="section"><h3>${esc(t("Chapters"))}</h3>
+    <label class="toggle"><input type="checkbox" data-k="keepChapters" ${keep ? "checked" : ""}><span class="switch"></span><span>${esc(t("Keep chapters"))}</span></label>
+    ${!keep ? "" : `<p class="muted small">${esc(ed.edit.chapters ? t("Edited chapters (times on the original timeline: cuts move them automatically).") : t("The chapters of the file ({0}). Any change makes them custom.", list.length))}</p>
+    ${list.length ? `<table class="tracks"><tbody>${list.map((c, i) => `<tr data-ci="${i}">
+      <td class="muted">${i + 1}.</td>
+      <td><input class="mono" data-c="start" value="${fmtStamp(c.start)}" style="width:130px"></td>
+      <td><input data-c="title" value="${esc(c.title ?? "")}"></td>
+      <td><button class="btn icon ghost sm" data-a="rm-ch" title="${esc(t("Remove"))}"><svg><use href="#i-x"/></svg></button></td></tr>`).join("")}</tbody></table>`
+      : `<p class="muted small">${esc(t("No chapters."))}</p>`}
+    <div class="row" style="flex-wrap:wrap;margin-top:8px">
+      <button class="btn sm" data-a="add-ch">${esc(t("Add chapter"))}</button>
+      <button class="btn sm" data-a="ch-5min">${esc(t("Every 5 minutes"))}</button>
+      <button class="btn sm ghost" data-a="ch-none">${esc(t("Remove all"))}</button>
+      <button class="btn sm ghost" data-a="ch-reset">${esc(t("Back to the file's chapters"))}</button>
+    </div>`}
+  </div>`;
+}
+
 
 // ---------------------------------------------------------------- trim (visual, several segments)
 // ed.parts = kept segments [{start, end|null}] sorted; ed.seg = the one the handles move.
@@ -449,12 +553,248 @@ function renderTrim(body) {
   layout(); renderSegs(); loadFrame();
 }
 
+
+// ---------------------------------------------------------------- settings form
+const formOpts = section => ({
+  full: true, section, allowedContainers: ed.analysis.allowedContainers, onChange: s => formChanged(s), onQuietChange: () => save(),
+  sizeInfo: async s => (await api("POST", `/api/jobs/${ed.id}/size`, { settings: s, edit: ed.edit })).text,
+  onLevel: async s => { ed.settings.encoder = await api("POST", `/api/jobs/${ed.id}/rate`, { settings: s }); saveAndRender(); },
+});
+
+/** A change in a form: a new profile asks first; another encoder gets KnA's values for the same quality level. */
+async function formChanged(s) {
+  const prev = ed.prev;
+  if (prev && s.profile !== prev.profile) {
+    const name = profileOf(s.profile)?.label ?? s.profile;
+    if (!confirm(t("Use the profile \"{0}\"? The video parameters (codec, encoder, depth, container, quality and encoder parameters) and the audio and subtitle formats of the tracks are reset to what this profile allows and chooses.", name))) {
+      ed.settings = cloneSettings(prev); renderTab(); return;
+    }
+    const kind = s.profile;
+    ed.settings = cloneSettings(prev);
+    return guard(() => materializeNow({ profile: kind }))();
+  }
+  if (prev && (s.codec !== prev.codec || s.backend !== prev.backend || (s.encoder?.program ?? "FFmpeg") !== (prev.encoder?.program ?? "FFmpeg"))) {
+    const e = { ...s.encoder, speed: null, tune: null, extra: null };
+    if ((s.encoder?.program ?? "FFmpeg") !== (prev.encoder?.program ?? "FFmpeg") || s.backend !== prev.backend) e.gpuFilters = null;
+    if (["Quality", "Auto"].includes(e.rateControl ?? "Auto")) { e.rateControl = "Auto"; e.qualityValue = null; }
+    s.encoder = e;
+    try { s.encoder = await api("POST", `/api/jobs/${ed.id}/rate`, { settings: s }); } catch { /* keep the cleared values */ }
+  }
+  ed.settings = s;
+  saveAndRender();
+}
+
+// ---------------------------------------------------------------- preset
+function renderPresetTab(body) {
+  body.innerHTML = `<div class="two-col"><div>
+      <div class="section"><h3>${esc(t("Import a preset"))}</h3>
+        <select id="apply-preset">${(state.presets ?? []).map(x => `<option value="${esc(x.name)}" ${x.name === ed.settings.presetName ? "selected" : ""}>${x.builtIn ? "" : "★ "}${esc(x.name)}</option>`).join("")}</select>
+        <div class="row" style="flex-wrap:wrap;margin:6px 0">${[["Video", t("Video")], ["Audio", t("Audio")], ["Subtitles", t("Subtitles")], ["Filters", t("Picture filters")], ["Tracks", t("Track selection")]]
+          .map(([v, l]) => `<label class="check"><input type="checkbox" data-part="${v}" checked>${esc(l)}</label>`).join("")}</div>
+        <button class="btn sm primary" data-a="apply-preset">${esc(t("Import into the fields"))}</button>
+        <p class="muted small">${esc(t("The preset only fills the fields: afterwards every value can be changed in its tab and nothing follows the preset any more. Subtitles or track selection rebuild the track list from the preset's rules."))}</p>
+      </div>
+      <div class="section"><h3>${esc(t("Save as preset"))}</h3>
+        <div class="row"><input id="preset-name" placeholder="${esc(t("Preset name"))}" value="${esc(ed.settings.presetName ?? "")}">
+        <button class="btn sm" data-a="save-preset">${esc(t("Save as preset"))}</button></div>
+        <p class="muted small">${esc(t("Saves the settings of this file (not the tracks or the trim) for reuse."))}</p>
+      </div></div>
+    <div><div class="section"><h3>${esc(t("What the preset decides for other files"))}</h3>
+      <p class="muted small">${esc(t("Saved with the preset and used when it is applied to other files (their automatic track plan). They don't change this file: its tracks, codecs and formats are set in the Video, Audio and Subtitles tabs."))}</p>
+      <div id="rules-form"></div></div></div></div>`;
+  renderSettingsForm($("#rules-form", body), ed.settings, { ...formOpts("presetRules"), onChange: () => save() });
+  body.onclick = guard(async e => {
+    const a = e.target.closest("[data-a]")?.dataset.a;
+    if (a === "apply-preset") {
+      const name = $("#apply-preset").value;
+      const parts = [...body.querySelectorAll("[data-part]")].filter(c => c.checked).map(c => c.dataset.part);
+      if (!parts.length) throw new Error(t("Choose at least one part."));
+      if (!confirm(t("Import \"{0}\"? The chosen parts of this file's settings are replaced by the preset's values (written into the fields, as if set by hand).", name))) return;
+      await materializeNow({ preset: name, parts });
+    }
+    if (a === "save-preset") {
+      const name = $("#preset-name").value.trim();
+      if (!name) throw new Error(t("The preset needs a name."));
+      await post(`/api/jobs/${ed.id}/preset`, { name, settings: ed.settings, edit: ed.edit });
+      ed.settings.presetName = name; save();
+      toast(t("Preset \"{0}\" saved", name), "ok");
+    }
+  });
+}
+
+// ---------------------------------------------------------------- video
+async function renderVideo(body) {
+  const p = profileOf(ed.settings.profile);
+  const encodes = p.encodesVideo && !p.isImages;
+  body.innerHTML = `${trackList("video")}
+    <nav class="tabs subtabs" id="video-sub"><button type="button" data-vs="general">${esc(t("General"))}</button>
+      ${encodes ? `<button type="button" data-vs="rate">${esc(t("Quality and speed"))}</button>` : ""}</nav>
+    <small class="muted" id="vp-status">${encodes ? esc(t("Reading the program's options…")) : ""}</small>
+    <div id="video-page" style="margin-top:12px"></div>`;
+  let options = [], program = "";
+  const show = () => {
+    const sub = ed.videoSub;
+    $$("#video-sub button", body).forEach(b => b.classList.toggle("on", b.dataset.vs === sub));
+    const page = $("#video-page", body);
+    if (sub === "general" || !encodes) { renderSettingsForm(page, ed.settings, formOpts("video")); return; }
+    if (sub === "rate") {
+      page.innerHTML = `<div class="two-col"><div id="rate-form"></div>
+        <div><div class="section"><p class="muted small">${esc(t("Source"))}: ${esc(streamInfo(tracks().find(x => x.kind === "video"))?.details ?? "")}</p>
+          <button class="btn sm" data-a="cmd"><svg><use href="#i-term"/></svg><span>${esc(t("Encoder command"))}</span></button>
+          <button class="btn sm" data-a="estimate">${esc(t("Estimate the final size"))}</button>
+          <p class="muted small" id="estimate">${esc(t("Encodes a few seconds in several places with these settings and predicts the final size."))}</p></div></div></div>`;
+      renderSettingsForm($("#rate-form", page), ed.settings, formOpts("videoRate"));
+      return;
+    }
+    const cat = sub.slice(2);
+    const list = options.filter(o => o.category === cat);
+    page.innerHTML = `<small class="muted">${esc(t("{0} parameters of {1}, read from its help. Applied last: they win over KnA's values.", options.length, program))}</small><div></div>`;
+    mountPage(page.lastElementChild, list, cmdModel(() => ed.settings.encoder?.extra, v => { ed.settings.encoder = { ...ed.settings.encoder, extra: v }; save(); }), cat === "Other",
+      ed.settings.encoder?.program === "Rigaya" ? "--aq-temporal --bref-mode each" : "-x265-params psy-rd=2:aq-strength=0.8");
+  };
+  if (!encodes) ed.videoSub = "general";
+  show();
+  body.oninput = e => { trackListInput(e); };
+  body.onchange = e => { trackListChange(e); };
+  body.onclick = guard(async e => {
+    const vs = e.target.closest("[data-vs]");
+    if (vs) { ed.videoSub = vs.dataset.vs; ed.prev = cloneSettings(ed.settings); show(); return; }
+    const b = e.target.closest("[data-a]"); if (!b) return;
+    if (await trackListClick(b)) return;
+    if (b.dataset.a === "cmd") { await saveNow(); showText(t("Encoder command"), await api("GET", `/api/jobs/${ed.id}/command`)); }
+    if (b.dataset.a === "estimate") {
+      await saveNow();
+      $("#estimate").textContent = t("Encoding samples…");
+      const r = await api("POST", `/api/jobs/${ed.id}/estimate`, { settings: ed.settings, edit: ed.edit });
+      if ($("#estimate")) $("#estimate").textContent = r.text;
+    }
+  });
+  if (!encodes) return;
+  // Every parameter of the encoder that will run, one sub-tab per group, read from its own help.
+  try {
+    const r = await loadOptions("video", ed.settings);
+    if (!$("#video-sub", body)) return;
+    options = r.options; program = r.program;
+    const set = cat => options.filter(o => o.category === cat && cmdModel(() => ed.settings.encoder?.extra, () => {}).get(o.name) !== null).length;
+    const cats = (r.categories ?? []).filter(c => options.some(o => o.category === c.value));
+    if (!cats.some(c => c.value === "Other")) cats.push({ value: "Other", label: t("Other") });
+    $("#video-sub", body).insertAdjacentHTML("beforeend", cats.map(c => `<button type="button" data-vs="p:${esc(c.value)}">${esc(c.label)}${set(c.value) ? ` ●${set(c.value)}` : ""}</button>`).join(""));
+    $("#vp-status", body).textContent = options.length ? t("{0}: every parameter is on the pages next to this one, one per group.", program) : t("{0}: its help could not be read; parameters can still be written as text.", program);
+    if (ed.videoSub.startsWith("p:")) show(); else $$("#video-sub button", body).forEach(b => b.classList.toggle("on", b.dataset.vs === ed.videoSub));
+  } catch (err) { $("#vp-status", body).textContent = err.message; }
+}
+
+// ---------------------------------------------------------------- audio / subtitles
+const lossless = c => ["Flac", "Alac", "WavPack", "TrueHd", "Pcm16", "Pcm24", "Pcm32Float"].includes(c);
+let audioEncoders = null;
+
+async function renderStreams(body, kind) {
+  const p = profileOf(ed.settings.profile);
+  if (kind === "audio" && !audioEncoders) { try { audioEncoders = await api("GET", "/api/audio/encoders"); } catch { audioEncoders = {}; } }
+  const tabs = (kind === "audio" ? p.usesAudio : p.encodesVideo || p.isRemux || p.isImages) ? trackTabs(kind) : { html: "", current: null };
+  const cur = tabs.current;
+  body.innerHTML = `${trackList(kind)}${tabs.html}<div id="track-page" style="margin-top:12px">${cur ? (kind === "audio" ? audioPage(cur.tp) : subtitlePage(cur.tp)) : ""}</div>
+    ${kind === "audio" ? `<p class="muted small">${esc(t("Volume, normalisation, downmix and sample rate of every track: Filters tab."))}</p>` : ""}`;
+  const paramsEl = $("[data-track-params]", body);
+  if (cur && paramsEl) mountFlat(paramsEl, paramsEl.dataset.trackParams, cmdModel(() => tracks()[cur.i].arguments, v => { materialize()[cur.i].arguments = v; save(); }), paramsEl.dataset.example);
+  body.oninput = e => {
+    if (trackListInput(e)) return;
+    if (cur && e.target.dataset.tf && e.target.type !== "checkbox" && e.target.tagName !== "SELECT" && !["bitrate"].includes(e.target.dataset.tf)) trackFieldChange(e, cur.i);
+  };
+  body.onchange = e => {
+    if (trackListChange(e)) return;
+    if (!cur) return;
+    const f = e.target.dataset.tf;
+    if (f === "codec") {
+      const tp = materialize()[cur.i], v = e.target.value;
+      tp.output = v; tp.encoder = v === "Copy" ? null : audioEncoders?.[v]?.[0]?.value ?? null; tp.arguments = null;
+      if (v === "Copy" || lossless(v)) tp.bitrate = null;
+      return saveAndRender();
+    }
+    if (f === "encoder") { const tp = materialize()[cur.i]; tp.encoder = e.target.value; tp.arguments = null; return saveAndRender(); }
+    if (f === "format") { const tp = materialize()[cur.i]; tp.output = e.target.value; tp.arguments = null; return saveAndRender(); }
+    if (f && (e.target.type === "checkbox" || e.target.tagName === "SELECT" || f === "bitrate")) trackFieldChange(e, cur.i, ["channels"]);
+  };
+  body.onclick = guard(async e => {
+    const st = e.target.closest("[data-st]");
+    if (st) { ed.trackSub[kind] = +st.dataset.st; return renderStreams(body, kind); }
+    const b = e.target.closest("[data-a]"); if (!b) return;
+    if (await trackListClick(b)) return;
+    const a = b.dataset.a;
+    if (a === "burn-this" && cur) { materialize().forEach((x, j) => { if (x.kind === "subtitle") { x.burn = j === cur.i; if (j === cur.i) x.include = false; } }); return saveAndRender(); }
+    if (a === "keep-track" && cur) { const tp = materialize()[cur.i]; tp.burn = false; tp.include = true; tp.output = null; return materializeNow(); }
+    if (a === "ocr" && cur) {
+      await saveNow();
+      const tp = tracks()[cur.i];
+      await openOcr(ed.id, { ...tp, codec: tp.codec ?? streamInfo(tp)?.codec }, async () => {
+        ed.edit = cloneSettings((await api("GET", "/api/state")).jobs.find(j => j.id === ed.id)?.edit ?? ed.edit);
+        await materializeNow();
+      });
+    }
+  });
+}
+
+function audioPage(tp) {
+  const copy = (tp.output ?? "").toLowerCase() === "copy";
+  const codec = copy ? "Copy" : tp.output;
+  const codecs = (state.options.audioCodecs ?? []).filter(o => o.value !== "Auto");
+  const available = audioEncoders?.[codec] ?? [];
+  const enc = available.some(x => x.value === tp.encoder) ? tp.encoder : available[0]?.value;
+  const opt = (v, l, cur, dis) => `<option value="${esc(v)}" ${String(cur ?? "") === String(v) ? "selected" : ""} ${dis ? "disabled" : ""}>${esc(l)}</option>`;
+  return `${labelsHtml(tp)}
+    <div class="grid4">
+      <label class="field"><span>${esc(t("Codec"))}</span><select data-tf="codec">${codecs.map(c => opt(c.value, c.label + (c.value === "Copy" || audioEncoders?.[c.value]?.length ? "" : " — " + t("no encoder here")), codec, c.value !== "Copy" && !audioEncoders?.[c.value]?.length)).join("")}</select></label>
+      ${copy ? "" : `<label class="field"><span>${esc(t("Encoder"))}</span><select data-tf="encoder">${available.map(x => opt(x.value, x.label, enc)).join("")}</select></label>
+      ${lossless(codec) ? "" : `<label class="field"><span>${esc(t("Bitrate (kb/s)"))}</span><input type="number" min="0" max="1536" step="16" data-tf="bitrate" value="${tp.bitrate ?? ""}" placeholder="${esc(t("auto"))}">
+        <small class="muted">${esc(t("Per stereo pair (scaled for more channels); 0 = KnA's value for the codec."))}</small></label>`}
+      <label class="field"><span>${esc(t("Channels"))}</span><select data-tf="channels">${[["", t("As the source")], ["8", "7.1"], ["6", "5.1"], ["2", t("Stereo")], ["1", t("Mono")]].map(([v, l]) => opt(v, l, tp.channels ?? "")).join("")}</select></label>`}
+    </div>
+    ${copy ? `<p class="muted small">${esc(t("The track is copied as it is: no encoder, no audio filter."))}</p>`
+      : enc ? `<h3>${esc(t("All {0} parameters", enc))}</h3><div data-track-params="audio:${esc(enc)}" data-example="${esc(enc === "fdkaac" ? "--afterburner 1" : enc === "qaac" ? "--quality 2" : "-aac_coder twoloop")}"></div>` : ""}`;
+}
+
+function subtitlePage(tp) {
+  const p = profileOf(ed.settings.profile);
+  const container = ed.analysis.container || ed.settings.container || p.container;
+  const si = streamInfo(tp);
+  const bitmap = isPgs(tp);
+  const text = !bitmap && !["dvb_subtitle"].includes(tp.codec ?? si?.codec);
+  // Same rules as Containers.ChosenSubtitleCodec.
+  const possible = v => {
+    const c = (tp.codec ?? si?.codec ?? "");
+    if (v === "copy") return container === "mkv" ? c !== "mov_text" : ["mp4", "mov"].includes(container) ? c === "mov_text" : container === "webm" ? c === "webvtt" : container === "ts" ? c === "dvb_subtitle" : false;
+    if (!text) return false;
+    return (container === "mkv" && ["srt", "ass", "webvtt"].includes(v)) || (["mp4", "mov"].includes(container) && v === "mov_text") || (container === "webm" && v === "webvtt");
+  };
+  const formats = [["copy", t("Copy (no re-encoding)")], ["srt", "SRT"], ["ass", "ASS"], ["webvtt", "WebVTT"], ["mov_text", "mov_text (MP4)"]];
+  const cur = tp.output ?? "copy";
+  const opt = (v, l, dis) => `<option value="${esc(v)}" ${cur === v ? "selected" : ""} ${dis ? "disabled" : ""}>${esc(l)}</option>`;
+  return `${tp.burn ? `<p class="issue info">${esc(t("Burned into the picture: it is drawn on the video (fonts of the file included) and is not a separate track."))}</p>
+      <label class="field" style="max-width:220px"><span>${esc(t("Delay (ms)"))}</span><input type="number" step="10" data-tf="delayMs" value="${tp.delayMs || 0}"></label>`
+    : `${labelsHtml(tp)}
+      <label class="field" style="max-width:360px"><span>${esc(t("Format"))}</span><select data-tf="format">${formats.map(([v, l]) => opt(v, l + (possible(v) ? "" : " — " + t("not possible in {0}", container.toUpperCase())), !possible(v))).join("")}
+        ${bitmap ? opt("ocr", t("Text (OCR, picture subtitles)"), false) : ""}</select></label>
+      ${cur !== "copy" && cur !== "ocr" ? `<h3>${esc(t("All {0} parameters", cur))}</h3><div data-track-params="subtitle:${esc(cur)}" data-example="-alignment 1"></div>` : ""}`}
+    <div class="row" style="flex-wrap:wrap;margin-top:8px">
+      ${bitmap ? `<button class="btn sm" data-a="ocr" title="${esc(t("Opens the OCR editor: every picture next to its text, to check and correct, then save as SRT or use in this job."))}">${esc(t("OCR editor…"))}</button>` : ""}
+      ${p.usesVideoFilters && !tp.burn ? `<button class="btn sm" data-a="burn-this">${esc(t("Burn this track into the picture"))}</button>` : ""}
+      ${tp.burn ? `<button class="btn sm" data-a="keep-track">${esc(t("Keep it as a track instead"))}</button>` : ""}
+    </div>`;
+}
+
 // ---------------------------------------------------------------- filters
+let catalog = null;
+
 function renderFilters(body) {
   const v = ed.settings.videoFilters, a = ed.settings.audioFilters, o = state.options;
   const crop = v.crop ?? { left: 0, top: 0, right: 0, bottom: 0 };
   const rot = ed.analysis.rotation || 0;
   const p = profileOf(ed.settings.profile);
+  const rig = state.options.rigayaEncoders?.[`${ed.settings.codec}|${ed.settings.backend ?? "Software"}`];
+  const useRig = !!rig && ed.settings.encoder?.program === "Rigaya";
+  const backend = ed.settings.backend ?? "Software";
+  const gpuSuffix = { Nvenc: true, Qsv: true, Vaapi: true, Vulkan: true, VideoToolbox: true }[backend];
+  const backendLabel = label(o.backends, backend);
   body.innerHTML = `
     <div class="two-col">
       <div>
@@ -469,6 +809,7 @@ function renderFilters(body) {
               <label class="check"><input type="checkbox" data-v="flipHorizontal" ${v.flipHorizontal ? "checked" : ""}>${esc(t("Horizontal"))}</label>
               <label class="check"><input type="checkbox" data-v="flipVertical" ${v.flipVertical ? "checked" : ""}>${esc(t("Vertical"))}</label></div></div>
           </div>
+          ${p.usesVideoFilters ? `
           <label class="field"><span>${esc(t("Deinterlace"))}</span><select data-v="deinterlace"></select></label>
           <div class="field"><span>${esc(t("Crop (pixels, after rotation)"))}</span>
             <div class="grid4">
@@ -482,25 +823,8 @@ function renderFilters(body) {
             <label class="field"><span>${esc(t("Sharpen"))}</span><select data-v="sharpen"></select></label>
           </div>
           <label class="field"><span>${esc(t("Frame rate"))}</span><input type="number" step="0.001" min="1" data-v="fps" value="${v.fps ?? ""}" placeholder="${esc(t("Keep original"))}"></label>
-          <label class="field"><span>${esc(t("Custom video filters (advanced)"))}</span><input class="mono" data-v="custom" value="${esc(v.custom ?? "")}" placeholder="eq=saturation=1.1"></label>
+          <label class="field"><span>${esc(t("Custom video filters (advanced)"))}</span><input class="mono" data-v="custom" value="${esc(v.custom ?? "")}" placeholder="eq=saturation=1.1"></label>` : ""}
         </div>
-      </div>
-      <div>
-        ${p.usesVideoFilters ? `<div class="section"><h3>VapourSynth / AviSynth</h3>
-          ${ed.analysis.files[0].path.match(/\.(vpy|avs)$/i) ? `<p class="muted small">${esc(t("The source is already a script: its video (and audio, if it sets one) is used directly."))}</p>` : `
-          <div class="grid2">
-            <label class="field"><span>${esc(t("Frameserver"))}</span><select data-fs="kind">
-              ${[["None", t("None (FFmpeg decodes the file)")], ["VapourSynth", "VapourSynth"], ["AviSynth", "AviSynth+"]].map(([v2, l]) => `<option value="${v2}" ${(ed.settings.frameserver?.kind ?? "None") === v2 ? "selected" : ""}>${esc(l)}</option>`).join("")}
-            </select></label>
-            <label class="field"><span>${esc(t("Template"))}</span><select data-fs="template"><option value="">—</option></select></label>
-          </div>
-          ${(ed.settings.frameserver?.kind ?? "None") !== "None" ? `
-            <label class="field"><span>${esc(t("Script"))} <small class="muted">({source} = ${esc(t("this file"))})</small></span>
-              <textarea class="mono" rows="10" data-fs="script" spellcheck="false">${esc(ed.settings.frameserver?.script ?? "")}</textarea></label>
-            <label class="toggle"><input type="checkbox" data-fs="audioFromScript" ${ed.settings.frameserver?.audioFromScript ? "checked" : ""}><span class="switch"></span>
-              <span>${esc(t("Use the audio produced by the script"))}</span></label>
-            <small class="muted">${esc(t("VapourSynth: video = output 0, audio = output 1 (vspipe). AviSynth: AudioDub in the script. Decoding happens in the script, without hardware acceleration."))}</small>` : ""}`}
-        </div>` : ""}
         <div class="section"><h3>${esc(t("Audio"))}</h3>
           ${!p.usesAudio ? `<p class="issue warn">${esc(t("This profile has no audio output."))}</p>` : ""}
           <label class="field"><span>${esc(t("Volume"))}: <b id="gain-val">${(a.gainDb ?? 0).toFixed(1)} dB</b></span><input type="range" min="-20" max="20" step="0.5" data-a2="gainDb" value="${a.gainDb ?? 0}"></label>
@@ -513,24 +837,32 @@ function renderFilters(body) {
           <p class="muted small">${esc(t("Audio filters force re-encoding of the affected tracks."))}</p>
         </div>
       </div>
+      <div>
+        ${p.usesVideoFilters && p.encodesVideo && !p.isImages ? `<div class="section"><h3>${esc(t("GPU filters"))}</h3>
+          ${useRig ? `<p class="muted small">${esc(t("{0}'s own filters (--vpp-*): they run on the GPU inside the encoder, after the FFmpeg filters.", rig.name))}</p><div id="vpp"></div>`
+            : backend === "Software" ? `<p class="muted small">${esc(t("The video is encoded on the CPU: choose a GPU encoder in the Video tab to use its filters."))}</p>`
+            : !gpuSuffix ? `<p class="muted small">${esc(t("FFmpeg has no filters for {0}: choose VCEEncC as the encoder program (Video tab) to use its GPU filters.", backendLabel))}</p>`
+            : `<p class="muted small">${esc(t("FFmpeg filters of {0}: the frames are uploaded to the GPU after the filters on the left and filtered there, right before the encoder.", backendLabel))}</p><div id="gpu-filters"></div>`}
+        </div>` : ""}
+        ${p.usesVideoFilters ? `<div class="section"><h3>VapourSynth / AviSynth</h3><div id="fs-editor"></div></div>` : ""}
+        <div class="section"><h3>${esc(t("AI assistant"))}</h3>
+          <div class="row"><button class="btn sm" data-a="ai-analyze"><svg><use href="#i-spark"/></svg><span>${esc(t("Analyse frames with AI"))}</span></button>
+          <button class="btn sm" data-a="ai-ask"><svg><use href="#i-spark"/></svg><span>${esc(t("Ask"))}</span></button></div>
+          <p class="muted small">${esc(t("A vision model looks at a few frames and proposes filters and the upscaler. Nothing changes until you apply it."))}</p>
+        </div>
+      </div>
     </div>`;
-  fillSelect($("[data-v=deinterlace]", body), o.deinterlace, v.deinterlace);
-  const tplSel = $("[data-fs=template]", body);
-  if (tplSel) api("GET", "/api/frameserver/templates").then(list => {
-    const kind = ed.settings.frameserver?.kind ?? "None";
-    tplSel.innerHTML = `<option value="">—</option>` + list.filter(x => x.kind === kind).map((x, i) => `<option value="${i}">${esc(x.name)}</option>`).join("");
-    tplSel.onchange = () => {
-      const tpl = list.filter(x => x.kind === kind)[Number(tplSel.value)];
-      if (!tpl) return;
-      ed.settings.frameserver = { ...(ed.settings.frameserver ?? {}), script: tpl.body };
-      renderFilters(body); saveAndRender();
-    };
-  }).catch(() => {});
-  fillSelect($("[data-v=denoise]", body), o.strengths, v.denoise);
-  fillSelect($("[data-v=deband]", body), o.strengths, v.deband);
-  fillSelect($("[data-v=sharpen]", body), o.strengths, v.sharpen);
+  if (p.usesVideoFilters) {
+    fillSelect($("[data-v=deinterlace]", body), o.deinterlace, v.deinterlace);
+    fillSelect($("[data-v=denoise]", body), o.strengths, v.denoise);
+    fillSelect($("[data-v=deband]", body), o.strengths, v.deband);
+    fillSelect($("[data-v=sharpen]", body), o.strengths, v.sharpen);
+  }
+  if ($("#vpp", body)) mountFlat($("#vpp", body), "vpp", cmdModel(() => ed.settings.encoder?.gpuFilters, x => { ed.settings.encoder = { ...ed.settings.encoder, gpuFilters: x }; save(); }), "--vpp-resize spline36 --vpp-nlmeans");
+  if ($("#gpu-filters", body)) gpuFilters($("#gpu-filters", body));
+  if ($("#fs-editor", body)) frameserver($("#fs-editor", body));
 
-  const upd = (e, final) => {
+  const upd = e => {
     const el = e.target;
     if (el.dataset.v) {
       let val = el.type === "checkbox" ? el.checked : el.value;
@@ -540,31 +872,22 @@ function renderFilters(body) {
     } else if (el.dataset.c) {
       const c = { ...(ed.settings.videoFilters.crop ?? { left: 0, top: 0, right: 0, bottom: 0 }), [el.dataset.c]: Number(el.value) || 0 };
       ed.settings.videoFilters = { ...ed.settings.videoFilters, crop: c };
-    } else if (el.dataset.fs) {
-      if (el.dataset.fs === "template") return;
-      const val = el.type === "checkbox" ? el.checked : el.value;
-      ed.settings.frameserver = { ...(ed.settings.frameserver ?? { kind: "None" }), [el.dataset.fs]: val };
-      if (el.dataset.fs === "kind" && val !== "None" && !(ed.settings.frameserver.script ?? "").trim()) {
-        // Start from the first template of that frameserver.
-        return api("GET", "/api/frameserver/templates").then(list => {
-          const tpl = list.find(x => x.kind === val);
-          ed.settings.frameserver = { ...ed.settings.frameserver, script: tpl?.body ?? "" };
-          renderFilters(body); saveAndRender();
-        });
-      }
-      if (el.dataset.fs === "kind" || el.dataset.fs === "audioFromScript") { if (final) { renderFilters(body); saveAndRender(); } return; }
     } else if (el.dataset.a2) {
       let val = el.type === "checkbox" ? el.checked : el.value;
       if (el.dataset.a2 === "gainDb") { val = Number(val); $("#gain-val").textContent = val.toFixed(1) + " dB"; }
       if (el.dataset.a2 === "sampleRate") val = val === "" ? null : Number(val);
       ed.settings.audioFilters = { ...ed.settings.audioFilters, [el.dataset.a2]: val };
     } else return;
-    final ? save() : save();
+    save();
   };
   body.oninput = e => { if (e.target.type !== "checkbox" && e.target.tagName !== "SELECT") upd(e); };
-  body.onchange = e => upd(e, true);
+  body.onchange = e => upd(e);
   body.onclick = guard(async e => {
-    if (!e.target.closest("[data-a=autocrop]")) return;
+    const a = e.target.closest("[data-a]")?.dataset.a;
+    const applyAi = s => { ed.settings = { ...s, presetName: null }; materializeNow(); };
+    if (a === "ai-analyze") { await saveNow(); await analyzeJob(ed.id, ed.settings, applyAi); }
+    if (a === "ai-ask") { await saveNow(); openAssistant(applyAi, ed.id); }
+    if (a !== "autocrop") return;
     toast(t("Analysing black borders…"));
     await saveNow();
     const c = await api("GET", `/api/jobs/${ed.id}/cropdetect`);
@@ -575,134 +898,168 @@ function renderFilters(body) {
   });
 }
 
+/** The FFmpeg filters of the GPU that encodes: pick from what this FFmpeg offers for it, set their options, order. */
+async function gpuFilters(el) {
+  const chain = parseChain(ed.settings.videoFilters.gpu);
+  const emit = () => { ed.settings.videoFilters = { ...ed.settings.videoFilters, gpu: formatChain(chain) }; save(); };
+  let available = [];
+  const render = () => {
+    el.innerHTML = `<select data-gadd><option value="">${esc(available.length ? t("Add a GPU filter…") : t("This FFmpeg has no filters for this GPU."))}</option>${available.map(f => `<option value="${esc(f.name)}">${esc(f.name)} — ${esc(f.description)}</option>`).join("")}</select>
+      ${chain.length ? chain.map((f, i) => `<div class="section" data-gi="${i}" style="margin-top:8px"><div class="row" style="justify-content:space-between"><b class="mono">${i + 1}. ${esc(f.name)}</b>
+        <span class="row"><button class="btn icon ghost sm" data-g="up"><svg><use href="#i-up"/></svg></button><button class="btn icon ghost sm" data-g="down"><svg><use href="#i-down"/></svg></button>
+        <button class="btn icon ghost sm" data-g="rm" title="${esc(t("Remove"))}"><svg><use href="#i-x"/></svg></button></span></div>
+        <details ${f.options.length ? "" : "open"}><summary>${esc(t("Options"))}</summary><div data-gopts></div></details></div>`).join("")
+      : `<p class="muted small">${esc(t("No GPU filter: the frames go to the encoder as the filters above leave them."))}</p>`}`;
+    $$("[data-gi]", el).forEach(box => { const f = chain[+box.dataset.gi]; mountFlat($("[data-gopts]", box), "filter:" + f.name, filterModel(f, emit), "w=1280:h=720"); });
+  };
+  el.onchange = e => {
+    e.stopPropagation();
+    if (e.target.dataset.gadd == null || !e.target.value) return;
+    chain.push({ name: e.target.value, options: [] }); emit(); render();
+  };
+  el.oninput = e => e.stopPropagation();
+  el.onclick = e => {
+    e.stopPropagation();
+    const b = e.target.closest("[data-g]"); if (!b) return;
+    const i = +b.closest("[data-gi]").dataset.gi;
+    if (b.dataset.g === "rm") chain.splice(i, 1);
+    if (b.dataset.g === "up" && i > 0) [chain[i - 1], chain[i]] = [chain[i], chain[i - 1]];
+    if (b.dataset.g === "down" && i < chain.length - 1) [chain[i + 1], chain[i]] = [chain[i], chain[i + 1]];
+    emit(); render();
+  };
+  render();
+  try { available = (await loadOptions("gpufilters", ed.settings)).options; render(); } catch (err) { toast(err.message, "err"); }
+}
+
+/**
+ * VapourSynth / AviSynth+ like StaxRip, without its clunkiness: filters from a catalogue grouped by purpose, a form
+ * for each one's parameters, the script written from the list (or by hand).
+ */
+async function frameserver(el) {
+  if (ed.analysis.files[0].path.match(/\.(vpy|avs)$/i)) { el.innerHTML = `<p class="muted small">${esc(t("The source is already a script: its video (and audio, if it sets one) is used directly."))}</p>`; return; }
+  if (!catalog) { try { catalog = await api("GET", "/api/frameserver/catalog"); } catch (err) { el.textContent = err.message; return; } }
+  let templates = [];
+  try { templates = await api("GET", "/api/frameserver/templates"); } catch { /* optional */ }
+  const fs = () => ed.settings.frameserver ?? { kind: "None" };
+  const setFs = (x, structural) => { ed.settings.frameserver = x; if (structural) guard(() => materializeNow())(); else save(); };
+  const opt = (v, l, cur) => `<option value="${esc(v)}" ${String(cur ?? "") === String(v) ? "selected" : ""}>${esc(l)}</option>`;
+  const render = async () => {
+    const f = fs(), kind = f.kind ?? "None", byHand = f.chain == null;
+    const filters = catalog.filters.filter(x => x.kind === kind);
+    const cats = [...new Map(filters.map(x => [x.category, x.categoryLabel])).entries()];
+    ed.fsCat = cats.some(c => c[0] === ed.fsCat) ? ed.fsCat : cats[0]?.[0];
+    let script = "";
+    if (kind !== "None" && !byHand) { try { script = (await api("POST", "/api/frameserver/script", f)).script; } catch { /* preview only */ } }
+    el.innerHTML = `<label class="field"><span>${esc(t("Frameserver"))}</span><select data-fs="kind">
+        ${[["None", t("None (FFmpeg decodes the file)")], ["VapourSynth", "VapourSynth"], ["AviSynth", "AviSynth+"]].map(([v2, l]) => opt(v2, l, kind)).join("")}</select></label>
+      ${kind === "None" ? "" : `<div class="grid2">
+        <label class="field"><span>${esc(t("Mode"))}</span><select data-fs="mode">${opt("list", t("Filters from the list"), byHand ? "hand" : "list")}${opt("hand", t("Script written by hand"), byHand ? "hand" : "list")}</select></label>
+        <label class="field"><span>${esc(t("Source filter"))}</span><select data-fs="source">${catalog.sources.map(s => opt(s.value, s.label, f.source ?? "lsmas")).join("")}</select></label></div>
+      ${byHand ? `<label class="field"><span>${esc(t("Template"))}</span><select data-fs="template"><option value="">—</option>${templates.filter(x => x.kind === kind).map((x, i) => `<option value="${i}">${esc(x.name)}</option>`).join("")}</select></label>
+        <label class="field"><span>${esc(t("Script"))} <small class="muted">({source} = ${esc(t("this file"))})</small></span>
+          <textarea class="mono" rows="10" data-fs="script" spellcheck="false">${esc(f.script ?? "")}</textarea></label>`
+      : `<div class="grid2"><label class="field"><span>${esc(t("Category"))}</span><select data-fs="cat">${cats.map(([v2, l]) => opt(v2, l, ed.fsCat)).join("")}</select></label>
+        <label class="field"><span>${esc(t("Filter"))}</span><select data-fs="add"><option value="">${esc(t("Add a filter…"))}</option>${filters.filter(x => x.category === ed.fsCat).map(x => `<option value="${esc(x.id)}">${esc(x.name)} — ${esc(x.description)}</option>`).join("")}</select></label></div>
+        ${(f.chain ?? []).length ? f.chain.map((c, i) => {
+          const d = catalog.filters.find(x => x.id === c.id);
+          return `<div class="section" data-fi="${i}" style="margin-top:8px"><div class="row" style="justify-content:space-between"><div><b>${i + 1}. ${esc(d?.name ?? c.id)}</b>
+            <div class="muted small">${esc(d ? d.description + (d.requires && d.requires !== "core" ? " · " + t("Needs: {0}", d.requires) : "") : t("Unknown filter: left out of the script."))}</div></div>
+            <span class="row"><button class="btn icon ghost sm" data-fsa="up"><svg><use href="#i-up"/></svg></button><button class="btn icon ghost sm" data-fsa="down"><svg><use href="#i-down"/></svg></button>
+            <button class="btn icon ghost sm" data-fsa="rm" title="${esc(t("Remove"))}"><svg><use href="#i-x"/></svg></button></span></div>
+            <div class="grid3">${(d?.params ?? []).map(pp => {
+              const val = c.values?.[pp.name] ?? pp.default;
+              const input = pp.type === "Bool" ? `<input type="checkbox" data-fp="${esc(pp.name)}" ${String(val).toLowerCase() === "true" ? "checked" : ""}>`
+                : pp.type === "Choice" ? `<select data-fp="${esc(pp.name)}">${(pp.choices ?? []).map(ch => opt(ch, ch, val)).join("")}</select>`
+                : pp.type === "Text" ? `<input class="mono" data-fp="${esc(pp.name)}" value="${esc(val)}">`
+                : `<input type="number" data-fp="${esc(pp.name)}" value="${esc(val)}" min="${pp.min}" max="${pp.max}" step="${pp.type === "Int" ? 1 : pp.max - pp.min > 20 ? 1 : 0.05}">`;
+              return `<label class="field"><span>${esc(pp.label)}</span>${input}${pp.help ? `<small class="muted">${esc(pp.help)}</small>` : ""}</label>`;
+            }).join("")}</div></div>`;
+        }).join("") : `<p class="muted small">${esc(t("No filter yet: the script only opens the file. Add filters in the order they should run."))}</p>`}
+        <details><summary>${esc(t("Script written from the list"))}</summary><pre class="mono small">${esc(script)}</pre></details>`}
+      <label class="toggle"><input type="checkbox" data-fs="audioFromScript" ${f.audioFromScript ? "checked" : ""}><span class="switch"></span><span>${esc(t("Use the audio produced by the script"))}</span></label>
+      <small class="muted">${esc(t("VapourSynth: video = output 0, audio = output 1 (vspipe). AviSynth: AudioDub in the script. Decoding happens in the script, without hardware acceleration."))}</small>`}`;
+  };
+  el.oninput = e => {
+    e.stopPropagation();
+    if (e.target.dataset.fs === "script") { ed.settings.frameserver = { ...fs(), script: e.target.value }; save(); }
+  };
+  el.onchange = async e => {
+    e.stopPropagation();
+    const k = e.target.dataset.fs, f = fs();
+    if (k === "kind") { const kind = e.target.value; setFs({ ...f, kind, chain: kind === "None" ? null : kind === f.kind ? f.chain : [], script: kind === f.kind ? f.script : null }, true); return; }
+    if (k === "mode") {
+      if (e.target.value === "hand") { const s = (await api("POST", "/api/frameserver/script", f)).script; setFs({ ...f, chain: null, script: s }); }
+      else setFs({ ...f, chain: [] });
+      return render();
+    }
+    if (k === "source") { setFs({ ...f, source: e.target.value }); return render(); }
+    if (k === "template") { const tpl = templates.filter(x => x.kind === f.kind)[Number(e.target.value)]; if (tpl) { setFs({ ...f, script: tpl.body }); render(); } return; }
+    if (k === "cat") { ed.fsCat = e.target.value; return render(); }
+    if (k === "add" && e.target.value) { setFs({ ...f, chain: [...(f.chain ?? []), { id: e.target.value, values: null }] }); return render(); }
+    if (k === "audioFromScript") { setFs({ ...f, audioFromScript: e.target.checked }, true); return; }
+    const fp = e.target.dataset.fp;
+    if (fp) {
+      const i = +e.target.closest("[data-fi]").dataset.fi, chain = cloneSettings(f.chain);
+      chain[i].values = { ...(chain[i].values ?? {}), [fp]: e.target.type === "checkbox" ? String(e.target.checked) : e.target.value };
+      setFs({ ...f, chain });
+    }
+  };
+  el.onclick = e => {
+    e.stopPropagation();
+    const b = e.target.closest("[data-fsa]"); if (!b) return;
+    const f = fs(), chain = cloneSettings(f.chain ?? []), i = +b.closest("[data-fi]").dataset.fi;
+    if (b.dataset.fsa === "rm") chain.splice(i, 1);
+    if (b.dataset.fsa === "up" && i > 0) [chain[i - 1], chain[i]] = [chain[i], chain[i - 1]];
+    if (b.dataset.fsa === "down" && i < chain.length - 1) [chain[i + 1], chain[i]] = [chain[i], chain[i + 1]];
+    setFs({ ...f, chain }); render();
+  };
+  render();
+}
+
 // ---------------------------------------------------------------- output
 function renderOutput(body) {
   const p = profileOf(ed.settings.profile);
-  const src = ed.analysis.files[0];
+  const dur = ed.analysis.files[0].duration || 1;
   body.innerHTML = `
     <div class="two-col">
-      <div><div id="out-form"></div></div>
+      <div><div id="out-form"></div>
+        ${(ed.analysis.allowedContainers?.length ?? 0) > 0 && (p.encodesVideo || p.isRemux) ? `<p class="muted small">${esc(t("Only the containers that can hold every final stream (video, audio and subtitle formats, attachments) are offered."))}</p>` : ""}
+        ${p.encodesVideo || p.isRemux || p.isImages || p.isDemux ? trackList("attachment") : ""}
+        ${p.isKeyframes || p.isImages ? "" : renderChapters()}
+      </div>
       <div>
         <label class="field"><span>${esc(t("Destination folder"))}</span><input id="out-folder" class="mono" value="${esc(ed.edit.outputFolder ?? "")}" placeholder="${esc(t("Same as the general setting"))}"></label>
-        <div class="section"><h3>${esc(t("AI assistant"))}</h3>
-          <div class="row"><button class="btn sm" data-a="ai-analyze"><svg><use href="#i-spark"/></svg><span>${esc(t("Analyse frames with AI"))}</span></button>
-          <button class="btn sm" data-a="ai-ask"><svg><use href="#i-spark"/></svg><span>${esc(t("Ask"))}</span></button></div>
-          <p class="muted small">${esc(t("A vision model looks at a few frames and proposes filters and the upscaler. Nothing changes until you apply it."))}</p>
-        </div>
-        ${p.isDemux ? `<p class="issue info">${esc(t("Demux: choose the streams, attachments and chapters to extract in the Tracks tab."))}</p>` : ""}
-        <div class="section"><h3>${esc(t("Preset"))}</h3>
-          <select id="apply-preset">${(state.presets ?? []).map(x => `<option value="${esc(x.name)}" ${x.name === ed.settings.presetName ? "selected" : ""}>${x.builtIn ? "" : "★ "}${esc(x.name)}</option>`).join("")}</select>
-          <div class="row" style="flex-wrap:wrap;margin:6px 0">${[["Video", t("Video")], ["Audio", t("Audio")], ["Subtitles", t("Subtitles")], ["Filters", t("Picture filters")], ["Tracks", t("Track selection")]]
-            .map(([v, l]) => `<label class="check"><input type="checkbox" data-part="${v}" checked>${esc(l)}</label>`).join("")}</div>
-          <button class="btn sm" data-a="apply-preset">${esc(t("Apply"))}</button>
-          <p class="muted small">${esc(t("Choose what the preset replaces; everything else of each file (and its tracks, cuts, chapters) stays as it is."))}</p>
-          <div class="row"><input id="preset-name" placeholder="${esc(t("Preset name"))}" value="${esc(ed.settings.presetName ?? "")}">
-          <button class="btn sm" data-a="save-preset">${esc(t("Save as preset"))}</button></div>
-          <p class="muted small">${esc(t("Saves the settings of this file (not the tracks or the trim) for reuse."))}</p>
-        </div>
         <div class="row"><button class="btn sm" data-a="cmd"><svg><use href="#i-term"/></svg><span>${esc(t("FFmpeg command"))}</span></button></div>
       </div>
     </div>`;
   renderSettingsForm($("#out-form", body), ed.settings, formOpts("output"));
-  body.onchange = e => {
-    if (e.target.id === "out-folder") { ed.edit.outputFolder = e.target.value.trim() || null; save(); }
+  body.oninput = e => {
+    if (trackListInput(e)) return;
+    const ch = e.target.closest("tr[data-ci]");
+    if (ch && e.target.dataset.c === "title") { const l = materializeChapters(); l[+ch.dataset.ci].title = e.target.value || null; save(); }
   };
-  body.onclick = guard(async e => {
-    const a = e.target.closest("[data-a]")?.dataset.a;
-    if (a === "save-preset") {
-      const name = $("#preset-name").value.trim();
-      if (!name) throw new Error(t("The preset needs a name."));
-      await post("/api/presets", { name, description: null, settings: ed.settings });
-      toast(t("Preset \"{0}\" saved", name), "ok");
-    }
-    if (a === "cmd") { await saveNow(); showText(t("FFmpeg command"), await api("GET", `/api/jobs/${ed.id}/command`)); }
-    const applyAi = s => { ed.settings = { ...s, presetName: null }; saveAndRender(); };
-    if (a === "apply-preset") {
-      const pr = (state.presets ?? []).find(x => x.name === $("#apply-preset").value); if (!pr) return;
-      const parts = [...body.querySelectorAll("[data-part]")].filter(c => c.checked).map(c => c.dataset.part);
-      if (!parts.length) throw new Error(t("Choose at least one part."));
-      ed.settings = mergePreset(ed.settings, { ...cloneSettings(pr.settings), presetName: pr.name }, parts);
+  body.onchange = e => {
+    if (e.target.id === "out-folder") { ed.edit.outputFolder = e.target.value.trim() || null; return save(); }
+    if (e.target.dataset.k === "keepChapters") { ed.edit.keepChapters = e.target.checked; return saveAndRender(); }
+    const ch = e.target.closest("tr[data-ci]");
+    if (ch && e.target.dataset.c === "start") {
+      const v = parseStamp(e.target.value), l = materializeChapters(), c = l[+ch.dataset.ci];
+      if (v == null) { e.target.value = fmtStamp(c.start); return; }
+      c.start = Math.max(0, v); l.sort((a, b) => a.start - b.start);
       return saveAndRender();
     }
-    if (a === "ai-analyze") { await saveNow(); await analyzeJob(ed.id, ed.settings, applyAi); }
-    if (a === "ai-ask") { await saveNow(); openAssistant(applyAi, ed.id); }
-  });
-}
-
-// ---------------------------------------------------------------- video / audio / subtitles
-// One tab per kind of stream: every setting appears in exactly one place.
-const formOpts = section => ({
-  full: true, section, allowedContainers: ed.analysis.allowedContainers, onChange: () => saveAndRender(), onQuietChange: () => save(),
-  sizeInfo: async s => (await api("POST", `/api/jobs/${ed.id}/size`, { settings: s, edit: ed.edit })).text,
-});
-
-function renderVideo(body) {
-  const v = ed.analysis.files[0];
-  body.innerHTML = `<div class="two-col"><div id="sec-form"></div>
-    <div><div class="section"><p class="muted small">${esc(t("Source"))}: ${esc(streamInfo(tracks().find(x => x.kind === "video"))?.details ?? "")}</p>
-      <button class="btn sm" data-a="cmd"><svg><use href="#i-term"/></svg><span>${esc(t("Encoder command"))}</span></button>
-      <button class="btn sm" data-a="estimate">${esc(t("Estimate the final size"))}</button>
-      <p class="muted small" id="estimate">${esc(t("Encodes a few seconds in several places with these settings and predicts the final size."))}</p>
-      <p class="muted small">${esc(t("Picture filters (crop, resize, denoise, VapourSynth/AviSynth scripts) are in the Filters tab; the cut in the Trim tab."))}</p></div></div></div>`;
-  renderSettingsForm($("#sec-form", body), ed.settings, formOpts("video"));
-  body.onchange = null;
-  body.onclick = guard(async e => {
-    if (e.target.closest("[data-a=cmd]")) { await saveNow(); showText(t("Encoder command"), await api("GET", `/api/jobs/${ed.id}/command`)); }
-    if (e.target.closest("[data-a=estimate]")) {
-      await saveNow();
-      $("#estimate").textContent = t("Encoding samples…");
-      const r = await api("POST", `/api/jobs/${ed.id}/estimate`, { settings: ed.settings, edit: ed.edit });
-      if ($("#estimate")) $("#estimate").textContent = r.text;
-    }
-  });
-}
-
-/** Per-track choices of one kind (audio: codec + bitrate; subtitles: format + burning), then the section's settings. */
-function renderStreams(body, kind) {
-  const list = tracks();
-  const p = profileOf(ed.settings.profile);
-  const outputs = p.encodesVideo || p.isRemux;
-  const rows = list.map((tp, i) => ({ tp, i })).filter(x => x.tp.kind === kind);
-  body.innerHTML = `<div class="section"><h3>${esc(kind === "audio" ? t("Audio tracks") : t("Subtitle tracks"))}</h3>
-    ${rows.length ? `<table class="tracks"><tbody>${rows.map(({ tp, i }) => {
-      const si = streamInfo(tp);
-      const copies = (tp.output ?? "").toLowerCase() === "copy";
-      return `<tr class="${tp.include || tp.burn ? "" : "off"}" data-i="${i}">
-        <td><input type="checkbox" data-f="include" ${tp.include ? "checked" : ""}></td>
-        <td><span class="codec">#${tp.stream} ${esc(tp.codec ?? si?.codec ?? "")} ${esc(tp.language ?? "")}</span>${tp.title ? ` · ${esc(tp.title)}` : ""}<div class="details">${esc(si?.details ?? "")}</div></td>
-        ${outputs ? `<td><select data-f="output" ${tp.include ? "" : "disabled"}>${outputOptions(kind, tp.output)}</select></td>` : ""}
-        ${outputs && kind === "audio" ? `<td><input class="delay" type="number" min="0" step="16" data-f="bitrate" value="${tp.bitrate ?? ""}" placeholder="auto" ${copies || !tp.include ? "disabled" : ""} title="${esc(t("kb/s per stereo pair; 0 = the setting below"))}"></td>` : ""}
-        ${kind === "subtitle" ? `<td>${isPgs(tp) ? `<button class="btn sm ghost" data-a="ocr" data-i="${i}" title="${esc(t("Opens the OCR editor: every picture next to its text, to check and correct, then save as SRT or use in this job."))}">OCR…</button>` : ""}</td>` : ""}
-        ${kind === "subtitle" && p.usesVideoFilters ? `<td><label class="check"><input type="radio" name="burn" data-f="burn" ${tp.burn ? "checked" : ""}>${esc(t("Burn"))}</label></td>` : ""}
-      </tr>`;
-    }).join("")}</tbody></table>` : `<p class="muted small">${esc(t("No tracks of this kind."))}</p>`}
-    ${kind === "audio" && outputs && rows.length ? `<p class="muted small">${esc(t("\"Job setting\" follows the codec and bitrate chosen below for every track."))}</p>` : ""}
-    ${kind === "subtitle" && p.usesVideoFilters && rows.some(r => r.tp.burn) ? `<button class="btn sm ghost" data-a="no-burn">${esc(t("Don't burn any subtitle"))}</button>` : ""}
-    </div><div id="sec-form"></div>
-    ${kind === "audio" ? `<p class="muted small">${esc(t("Volume, normalisation, downmix and sample rate: Filters tab."))}</p>` : ""}`;
-  renderSettingsForm($("#sec-form", body), ed.settings, formOpts(kind === "audio" ? "audio" : "subtitles"));
-  body.onchange = e => {
-    const tr = e.target.closest("tr[data-i]"); const f = e.target.dataset.f;
-    if (!tr || !f) return;
-    const l = materialize(); const tp = l[+tr.dataset.i];
-    if (f === "output") tp.output = e.target.value || null;
-    else if (f === "bitrate") tp.bitrate = Number(e.target.value) > 0 ? Number(e.target.value) : null;
-    else if (f === "burn") l.forEach(x => { if (x.kind === "subtitle") x.burn = x === tp; });
-    else tp[f] = e.target.checked;
-    saveAndRender();
+    trackListChange(e);
   };
   body.onclick = guard(async e => {
-    if (e.target.closest("[data-a=no-burn]")) { materialize().forEach(x => { x.burn = false; }); saveAndRender(); }
-    const ob = e.target.closest("[data-a=ocr]");
-    if (ob) {
-      await saveNow();
-      const tp = tracks()[+ob.dataset.i];
-      await openOcr(ed.id, { ...tp, codec: tp.codec ?? streamInfo(tp)?.codec }, async () => {
-        ed.analysis = await api("GET", `/api/jobs/${ed.id}/analysis`);
-        ed.edit = cloneSettings((await api("GET", "/api/state")).jobs.find(j => j.id === ed.id)?.edit ?? ed.edit);
-        renderTab();
-      });
-    }
+    const b = e.target.closest("[data-a]"); if (!b) return;
+    if (await trackListClick(b)) return;
+    const a = b.dataset.a;
+    if (a === "cmd") { await saveNow(); showText(t("FFmpeg command"), await api("GET", `/api/jobs/${ed.id}/command`)); }
+    if (a === "add-ch") { const l = chapterList(); addChapter(l.length ? Math.min(l[l.length - 1].start + 300, Math.max(0, dur - 1)) : 0); return saveAndRender(); }
+    if (a === "ch-5min") { const l = []; for (let x = 0; x < Math.max(dur, 1); x += 300) l.push({ start: x, title: chapterTitle(l.length + 1) }); ed.edit.chapters = l; return saveAndRender(); }
+    if (a === "ch-none") { ed.edit.chapters = []; return saveAndRender(); }
+    if (a === "ch-reset") { ed.edit.chapters = null; return saveAndRender(); }
+    if (a === "rm-ch") { materializeChapters().splice(+b.closest("tr[data-ci]").dataset.ci, 1); return saveAndRender(); }
   });
 }
 
@@ -750,17 +1107,6 @@ function renderPreview(body) {
 }
 
 /** Mirrors JobSettings.Merge: the chosen parts come from the preset, the rest stays. */
-function mergePreset(cur, p, parts) {
-  const r = { ...cur };
-  const take = keys => keys.forEach(k => { r[k] = p[k]; });
-  if (parts.includes("Video")) take(["profile", "codec", "backend", "quality", "resolution", "tenBit", "container", "hdr", "toneMap", "toneMapDynamic", "pro", "upscale", "encoder", "chunks", "images", "demux"]);
-  if (parts.includes("Audio")) take(["audioCodec", "audioBitrate", "audioFilters"]);
-  if (parts.includes("Subtitles")) take(["subtitles", "useSidecarSubtitles"]);
-  if (parts.includes("Filters")) take(["videoFilters", "frameserver"]);
-  if (parts.includes("Tracks")) take(["trackRules"]);
-  r.presetName = p.presetName;
-  return r;
-}
 
 export function editorJobChanged(job) {
   if (ed && ed.id === job.id) ed.job = job;

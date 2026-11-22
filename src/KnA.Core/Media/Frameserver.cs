@@ -143,7 +143,7 @@ public static class Frameserver
         Directory.CreateDirectory(folder);
         var ext = fs.Kind == FrameserverKind.AviSynth ? ".avs" : ".vpy";
         var path = Path.Combine(folder, jobId.ToString("N") + ext);
-        var text = (fs.Script ?? "").Replace("{source}", fs.Kind == FrameserverKind.AviSynth ? source.Replace("\"", "") : source);
+        var text = (fs.EffectiveScript ?? "").Replace("{source}", fs.Kind == FrameserverKind.AviSynth ? source.Replace("\"", "") : source);
         if (!File.Exists(path) || File.ReadAllText(path) != text) File.WriteAllText(path, text);
         return path;
     }
@@ -156,4 +156,18 @@ public sealed record FrameserverSettings
     public string? Script { get; init; }
     /// <summary>Use the audio produced by the script (VapourSynth output 1 / AviSynth AudioDub) instead of the file's tracks.</summary>
     public bool AudioFromScript { get; init; }
+    /// <summary>
+    /// Filters picked from the catalogue (<see cref="FilterCatalog"/>), in order; the script is written from them.
+    /// Null = the script is written by hand (<see cref="Script"/>).
+    /// </summary>
+    public List<FrameserverFilter>? Chain { get; init; }
+    /// <summary>Source filter of a catalogue script: "lsmas" (L-SMASH Works), "bs" (BestSource) or "ffms2".</summary>
+    public string? Source { get; init; }
+
+    /// <summary>The script that runs: generated from <see cref="Chain"/>, or the one written by hand.</summary>
+    [System.Text.Json.Serialization.JsonIgnore]
+    public string? EffectiveScript => Chain is not null && Kind != FrameserverKind.None ? FilterCatalog.Build(this) : Script;
 }
+
+/// <summary>One filter of a catalogue chain: its id and the values given to its parameters (missing = default).</summary>
+public sealed record FrameserverFilter(string Id, Dictionary<string, string>? Values = null);

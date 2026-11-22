@@ -113,9 +113,9 @@ public class MainWindowTests
         Shot(w, "app-02-queue-dark.png");
 
         // editor: every tab renders (trim loads thumbnails and frames through the preview service)
-        var editor = new JobEditorWindow(queue, vm.Jobs[0].Job, "tracks") { Width = 1280, Height = 860 };
+        var editor = new JobEditorWindow(queue, vm.Jobs[0].Job, "video") { Width = 1280, Height = 860 };
         editor.Show();
-        foreach (var (tab, wait) in new[] { ("tracks", 3000), ("trim", 9000), ("video", 3000), ("audio", 3000), ("subtitles", 1500), ("filters", 1500), ("output", 2500), ("preview", 6000) })
+        foreach (var (tab, wait) in new[] { ("preset", 3000), ("trim", 9000), ("video", 3000), ("audio", 3000), ("subtitles", 1500), ("filters", 1500), ("output", 2500), ("preview", 6000) })
         {
             var tabs = editor.GetVisualDescendants().OfType<TabControl>().First();
             tabs.SelectedItem = tabs.Items.OfType<TabItem>().First(t => (string?)t.Tag == tab);
@@ -123,12 +123,15 @@ public class MainWindowTests
             Shot(editor, $"app-05-editor-{tab}.png");
             if (tab == "video")
             {
-                // the parameter editor of the encoder, with the options read from its help
-                foreach (var ex in editor.GetVisualDescendants().OfType<Expander>()) ex.IsExpanded = true;
-                await Pump(() => editor.GetVisualDescendants().OfType<ParameterEditor>().Any(), 5000);
-                var pe = editor.GetVisualDescendants().OfType<ParameterEditor>().FirstOrDefault();
-                Assert.NotNull(pe);
-                pe!.BringIntoView();
+                // every parameter of the encoder on sub-tabs of the Video tab, read from its help
+                TabControl Sub() => editor.GetVisualDescendants().OfType<TabControl>().First(t => t.Items.OfType<TabItem>().Any(i => (string?)i.Tag == "general"));
+                await Pump(() => Sub().Items.OfType<TabItem>().Any(i => i.Tag is string tg && tg.StartsWith("p:", StringComparison.Ordinal)), 8000);
+                var sub = Sub();
+                Assert.Contains(sub.Items.OfType<TabItem>(), i => (string?)i.Tag == "rate");
+                sub.SelectedItem = sub.Items.OfType<TabItem>().First(i => (string?)i.Tag == "rate");
+                await Pump(() => false, 1500);
+                Shot(editor, "app-05-editor-video-rate.png");
+                sub.SelectedItem = sub.Items.OfType<TabItem>().First(i => i.Tag is string tg && tg.StartsWith("p:", StringComparison.Ordinal));
                 await Pump(() => false, 2500);
                 Shot(editor, "app-05-editor-video-parameters.png");
             }

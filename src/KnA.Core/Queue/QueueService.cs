@@ -97,6 +97,12 @@ public sealed class QueueService : IDisposable
     public static class ParameterTools
     {
         public const string Video = "video", Audio = "audio", Fdkaac = "fdkaac", Qaac = "qaac", Subtitles = "subtitles", Muxer = "muxer";
+        /// <summary>rigaya's GPU filters (--vpp-*) of the encoder chosen for the job.</summary>
+        public const string Vpp = "vpp";
+        /// <summary>The FFmpeg filters that run on the GPU of the job's encoder (each one an "option").</summary>
+        public const string GpuFilters = "gpufilters";
+        /// <summary>Prefix: "audio:libopus", "audio:fdkaac", "subtitle:ass", "filter:scale_cuda".</summary>
+        public const string AudioEncoder = "audio:", SubtitleEncoder = "subtitle:", Filter = "filter:";
     }
 
     /// <summary>
@@ -107,15 +113,42 @@ public sealed class QueueService : IDisposable
     public async Task<(string Program, IReadOnlyList<ToolOption> Options)> ParameterOptionsAsync(string tool, JobSettings s, CancellationToken ct = default)
     {
         var t = Tools ?? throw new InvalidOperationException(L.T("FFmpeg was not found. Configure it in Settings."));
+        if (tool.StartsWith(ParameterTools.AudioEncoder, StringComparison.Ordinal))
+        {
+            var enc = tool[ParameterTools.AudioEncoder.Length..];
+            if (enc == AudioEncoderSet.Fdkaac) return t.Fdkaac is { } f ? ("fdkaac", await ToolHelp.ProgramAsync(f, ct)) : ("fdkaac", []);
+            if (enc == AudioEncoderSet.Qaac) return t.Qaac is { } q ? ("qaac", await ToolHelp.ProgramAsync(q, ct)) : ("qaac", []);
+            return (enc, (await ToolHelp.FfmpegEncoderAsync(t.Ffmpeg, enc, 'A', ct)).Where(o => o.Name is not ("-b" or "-ac" or "-ar" or "-q" or "-threads")).ToList());
+        }
+        if (tool.StartsWith(ParameterTools.SubtitleEncoder, StringComparison.Ordinal))
+        {
+            var enc = tool[ParameterTools.SubtitleEncoder.Length..];
+            return (enc, await ToolHelp.FfmpegEncoderAsync(t.Ffmpeg, enc, 'S', ct));
+        }
+        if (tool.StartsWith(ParameterTools.Filter, StringComparison.Ordinal))
+        {
+            var name = tool[ParameterTools.Filter.Length..];
+            return (name, await ToolHelp.FfmpegFilterAsync(t.Ffmpeg, name, ct));
+        }
         switch (tool)
         {
+            case ParameterTools.Vpp when RigayaEncoders.Wanted(s) && JobRunner.RigayaFor(t).GetValueOrDefault(s.Backend) is { } vexe:
+                return (RigayaEncoders.DisplayName(s.Backend), (await ToolHelp.ProgramAsync(vexe, ct)).Where(o => o.Name.StartsWith("--vpp-", StringComparison.Ordinal)).ToList());
+            case ParameterTools.Vpp: return (RigayaEncoders.DisplayName(s.Backend), []);
+            case ParameterTools.GpuFilters:
+            {
+                var b = s.EffectiveBackend;
+                var filters = (await ToolHelp.FfmpegFiltersAsync(t.Ffmpeg, ct)).Where(f => VideoEncoders.IsGpuFilter(f.Name, b))
+                    .Select(f => new ToolOption(f.Name, null, f.Description, [])).ToList();
+                return (b.Display(), filters);
+            }
             case ParameterTools.Video when RigayaEncoders.Wanted(s) && JobRunner.RigayaFor(t).GetValueOrDefault(s.Backend) is { } exe:
-                return (RigayaEncoders.DisplayName(s.Backend), await ToolHelp.ProgramAsync(exe, ct));
+                return (RigayaEncoders.DisplayName(s.Backend), (await ToolHelp.ProgramAsync(exe, ct)).Where(o => !RigayaEncoders.IsOwnedOption(o.Name)).ToList());
             case ParameterTools.Video:
             {
                 var enc = Settings.Capabilities?.Resolve(s.EffectiveCodec, s.EffectiveBackend, s.EffectiveTenBit)?.Encoder
                           ?? VideoEncoders.EncoderName(s.EffectiveCodec, s.EffectiveBackend) ?? "libx264";
-                return (enc, await ToolHelp.FfmpegEncoderAsync(t.Ffmpeg, enc, 'V', ct));
+                return (enc, (await ToolHelp.FfmpegEncoderAsync(t.Ffmpeg, enc, 'V', ct)).Where(o => !VideoEncoders.IsOwnedOption(o.Name)).ToList());
             }
             case ParameterTools.Audio:
             {
@@ -441,7 +474,8 @@ public sealed class QueueService : IDisposable
         j.Issues = compiled.Issues;
         j.HdrSummary = compiled.Hdr.Summary;
         return new JobAnalysis(j.Media, j.ExternalMedia, tracks, isDefault, compiled.Issues, compiled.Container,
-            Containers.Allowed(j.Settings), compiled.Hdr.Summary,
+            Containers.AllowedFor(j.Settings, tracks, new Dictionary<string, MediaInfo>(j.ExternalMedia) { [j.SourcePath] = j.Media },
+                JobRunner.AudioEncodersFor(Settings.Capabilities, tools)), compiled.Hdr.Summary,
             compiled.Plan.Arguments.Count > 0 ? compiled.Plan.CommandLine(tools.Ffmpeg) : null, compiled.OutputDuration);
     }
 

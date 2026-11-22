@@ -25,24 +25,76 @@ public sealed record AudioEncoderSet(IReadOnlyCollection<string> Compiled, bool 
     /// <summary>Pseudo encoder name: AAC made by the standalone fdkaac program (ffmpeg → WAV pipe → fdkaac).</summary>
     public const string Fdkaac = "fdkaac";
 
-    public string? Best(AudioCodec c) => c switch
+    public string? Best(AudioCodec c) => Candidates(c).FirstOrDefault(Has);
+
+    /// <summary>
+    /// Every encoder that can make a codec, best first (qaac → libfdk_aac → AudioToolbox → fdkaac → FFmpeg's own for AAC).
+    /// The editor offers all the ones <see cref="Has"/> finds.
+    /// </summary>
+    public static IReadOnlyList<string> Candidates(AudioCodec c) => c switch
     {
-        AudioCodec.Aac => (ExternalQaac ? Qaac : null) ?? First("libfdk_aac", "aac_at") ?? (ExternalFdkaac ? Fdkaac : null) ?? First("aac"),
-        AudioCodec.HeAac => (ExternalQaac ? Qaac : null) ?? First("libfdk_aac", "aac_at") ?? (ExternalFdkaac ? Fdkaac : null),
-        AudioCodec.Opus => First("libopus", "opus"),
-        AudioCodec.Mp3 => First("libmp3lame"),
-        AudioCodec.Vorbis => First("libvorbis", "vorbis"),
-        AudioCodec.Ac3 => First("ac3", "ac3_fixed"),
-        AudioCodec.Eac3 => First("eac3"),
-        AudioCodec.Flac => First("flac"),
-        AudioCodec.Alac => First("alac", "alac_at"),
-        AudioCodec.WavPack => First("wavpack"),
-        AudioCodec.TrueHd => First("truehd"),
-        AudioCodec.Dts => First("dca"),
-        AudioCodec.Pcm16 => First("pcm_s16le"),
-        AudioCodec.Pcm24 => First("pcm_s24le"),
-        AudioCodec.Pcm32Float => First("pcm_f32le"),
+        AudioCodec.Aac => [Qaac, "libfdk_aac", "aac_at", Fdkaac, "aac"],
+        AudioCodec.HeAac => [Qaac, "libfdk_aac", "aac_at", Fdkaac],
+        AudioCodec.Opus => ["libopus", "opus"],
+        AudioCodec.Mp3 => ["libmp3lame"],
+        AudioCodec.Vorbis => ["libvorbis", "vorbis"],
+        AudioCodec.Ac3 => ["ac3", "ac3_fixed"],
+        AudioCodec.Eac3 => ["eac3"],
+        AudioCodec.Flac => ["flac"],
+        AudioCodec.Alac => ["alac", "alac_at"],
+        AudioCodec.WavPack => ["wavpack"],
+        AudioCodec.TrueHd => ["truehd"],
+        AudioCodec.Dts => ["dca"],
+        AudioCodec.Pcm16 => ["pcm_s16le"],
+        AudioCodec.Pcm24 => ["pcm_s24le"],
+        AudioCodec.Pcm32Float => ["pcm_f32le"],
+        _ => [],
+    };
+
+    /// <summary>The encoder can run here (compiled into FFmpeg, or the external program is installed).</summary>
+    public bool Has(string encoder) => encoder switch
+    {
+        Qaac => ExternalQaac,
+        Fdkaac => ExternalFdkaac,
+        _ => Compiled.Contains(encoder),
+    };
+
+    /// <summary>The encoders of a codec available here, best first.</summary>
+    public IReadOnlyList<string> Available(AudioCodec c) => Candidates(c).Where(Has).ToList();
+
+    /// <summary>The codec an encoder makes (for the editor), or null.</summary>
+    public static AudioCodec? CodecOf(string? encoder) => encoder switch
+    {
+        null => null,
+        "libfdk_aac" or "aac_at" or Fdkaac or Qaac or "aac" => AudioCodec.Aac,
+        "libopus" or "opus" => AudioCodec.Opus,
+        "libmp3lame" => AudioCodec.Mp3,
+        "libvorbis" or "vorbis" => AudioCodec.Vorbis,
+        "ac3" or "ac3_fixed" => AudioCodec.Ac3,
+        "eac3" => AudioCodec.Eac3,
+        "flac" => AudioCodec.Flac,
+        "alac" or "alac_at" => AudioCodec.Alac,
+        "wavpack" => AudioCodec.WavPack,
+        "truehd" => AudioCodec.TrueHd,
+        "dca" => AudioCodec.Dts,
+        "pcm_s16le" or "pcm_s16be" => AudioCodec.Pcm16,
+        "pcm_s24le" or "pcm_s24be" => AudioCodec.Pcm24,
+        "pcm_f32le" => AudioCodec.Pcm32Float,
         _ => null,
+    };
+
+    /// <summary>Readable name of an encoder for the editor ("libfdk_aac (Fraunhofer)").</summary>
+    public static string Describe(string encoder) => encoder switch
+    {
+        Qaac => "qaac (Apple Core Audio)",
+        "libfdk_aac" => "libfdk_aac (Fraunhofer)",
+        "aac_at" => "aac_at (Apple AudioToolbox)",
+        Fdkaac => L.T("fdkaac program (Fraunhofer)"),
+        "aac" => L.T("aac (FFmpeg's own)"),
+        "opus" or "vorbis" or "truehd" or "dca" => encoder + " " + L.T("(experimental)"),
+        "ac3_fixed" => "ac3_fixed (fixed point)",
+        "alac_at" => "alac_at (Apple AudioToolbox)",
+        _ => encoder,
     };
 
     private string? First(params string[] names) => names.FirstOrDefault(Compiled.Contains);
@@ -107,13 +159,28 @@ public static class AudioPlanner
     /// <summary>The job settings with the track's own codec/bitrate choice (track list) applied.</summary>
     public static JobSettings ForTrack(TrackPlan t, JobSettings s)
     {
-        if (t.Output is { Length: > 0 } o && Enum.TryParse<AudioCodec>(o, true, out var codec) && Enum.IsDefined(codec))
-            s = s with { AudioCodec = codec };
-        if (t.Bitrate is > 0 and var k) s = s with { AudioBitrate = k };
+        // A codec chosen for the track brings its own bitrate (none = KnA's value for that codec, never the job-wide one).
+        if (t.Output is { Length: > 0 } o && Enum.TryParse<AudioCodec>(o, true, out var codec) && Enum.IsDefined(codec) && codec != AudioCodec.Auto)
+            s = s with { AudioCodec = codec, AudioBitrate = t.Bitrate is > 0 ? t.Bitrate : null };
+        else if (t.Bitrate is > 0 and var k) s = s with { AudioBitrate = k };
         return s;
     }
 
-    public static AudioTrackPlan Plan(AudioStream a, JobSettings s, string container, AudioEncoderSet encoders)
+    /// <summary>The plan of one track of the track list: its own codec, bitrate and encoder applied.</summary>
+    public static AudioTrackPlan PlanTrack(TrackPlan t, AudioStream a, JobSettings s, string container, AudioEncoderSet encoders)
+    {
+        var plan = Plan(a, ForTrack(t, s), container, encoders, t.Encoder);
+        // Fewer channels asked for this track (downmix): the bitrate follows the channel count.
+        if (!plan.IsCopy && t.Channels is > 0 and var max && max < plan.Channels)
+            plan = plan with
+            {
+                Channels = max,
+                Kbps = plan.Kbps is { } k ? Math.Max(8, k * Math.Max(2, max) / Math.Max(2, plan.Channels)) : null,
+            };
+        return plan;
+    }
+
+    public static AudioTrackPlan Plan(AudioStream a, JobSettings s, string container, AudioEncoderSet encoders, string? preferredEncoder = null)
     {
         int q = (int)s.Quality;
         int ch = Math.Max(1, a.Channels);
@@ -128,7 +195,7 @@ public static class AudioPlanner
         int AacKbps(int channels) => userKbps(channels) ?? Pick(q, 192, 160, 144, 128, 96, 64, 48, 32) * channels / 2;
 
         if (s.AudioCodec != AudioCodec.Auto)
-            return Explicit(a, s, container, encoders, ch, codec, mustEncode, q, Scaled);
+            return Explicit(a, s, container, encoders, ch, codec, mustEncode, q, Scaled, preferredEncoder);
 
         // 1. What the profile wants (copy when possible).
         AudioTrackPlan target = s.Profile switch
@@ -157,7 +224,7 @@ public static class AudioPlanner
     }
 
     private static AudioTrackPlan Explicit(AudioStream a, JobSettings s, string container, AudioEncoderSet encoders,
-        int ch, string sourceCodec, bool mustEncode, int q, Func<int, int, int> scaled)
+        int ch, string sourceCodec, bool mustEncode, int q, Func<int, int, int> scaled, string? preferredEncoder = null)
     {
         if (s.AudioCodec == AudioCodec.Copy)
         {
@@ -169,7 +236,9 @@ public static class AudioPlanner
             return WithDefaultBitrate(fb, q, s.AudioBitrate);
         }
 
-        var encoder = encoders.Best(s.AudioCodec);
+        // An encoder picked by hand wins when it is here and makes the codec (HE-AAC needs one of its own list).
+        var encoder = preferredEncoder is { Length: > 0 } pe && encoders.Has(pe) && AudioEncoderSet.Candidates(s.AudioCodec).Contains(pe)
+            ? pe : encoders.Best(s.AudioCodec);
         ValidationIssue? issue = null;
         bool he = s.AudioCodec == AudioCodec.HeAac;
         if (encoder is null)
@@ -191,7 +260,7 @@ public static class AudioPlanner
             return Copy(ch) with { Issue = Containers.Error("{0} audio cannot be stored in {1}. Choose another container or audio codec.", s.AudioCodec.Display(), container.ToUpperInvariant()) };
 
         // Same lossy codec, nothing to change: copying avoids a generation loss.
-        if (!mustEncode && s.AudioBitrate is null && outCodec == sourceCodec && s.AudioCodec != AudioCodec.HeAac)
+        if (!mustEncode && s.AudioBitrate is null && outCodec == sourceCodec && s.AudioCodec != AudioCodec.HeAac && preferredEncoder is null)
             return Copy(ch);
 
         int channels = s.AudioCodec switch

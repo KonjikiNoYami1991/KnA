@@ -389,6 +389,15 @@ details.upscale[open] > summary { color: color-mix(in srgb, var(--accent) 80%, v
 .hw-table { overflow-x: auto; }
 /* Parameter editors (options read from each program's help) */
 .params { display: grid; gap: 6px; }
+.tabs.subtabs { padding: 0; margin: 10px 0 0; }
+.tabs.subtabs button { font-size: 12.5px; padding: 8px 11px; }
+.pp-filter { width: 100%; margin: 6px 0; }
+.pp-rows { display: grid; gap: 4px; }
+.param-opt { display: grid; grid-template-columns: minmax(160px, 300px) 1fr; gap: 6px; align-items: center; padding: 3px 0; }
+.param-opt code { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.param-opt.on code { font-weight: 700; color: var(--text); }
+.param-opt small { grid-column: 1 / -1; margin: -2px 0 2px 26px; }
+@media (max-width: 640px) { .param-opt { grid-template-columns: 1fr; } }
 .param-row { display: grid; grid-template-columns: minmax(120px, 220px) 1fr auto; gap: 6px; align-items: center; margin: 2px 0; }
 .param-row code { font-weight: 600; overflow: hidden; text-overflow: ellipsis; }
 .param-row small { grid-column: 1 / -1; margin-top: -2px; }
@@ -411,3 +420,8 @@ details.upscale[open] > summary { color: color-mix(in srgb, var(--accent) 80%, v
 #ocr-text { font-size: 18px; width: 100%; resize: vertical; }
 .ocr-foot { display: flex; justify-content: space-between; gap: 10px; flex-wrap: wrap; padding: 10px 16px; border-top: 1px solid var(--border); }
 @media (max-width: 760px) { .ocr-body { grid-template-columns: 1fr; overflow: auto; } .ocr-list { max-height: 40dvh; } }
+
+.wiz-progress { height: 4px; border-radius: 2px; background: var(--border); margin-bottom: 14px; overflow: hidden; }
+.wiz-progress span { display: block; height: 100%; background: var(--accent-2); transition: width .2s; }
+.wiz-summary { margin: 0; padding-left: 18px; display: grid; gap: 3px; }
+.choice[disabled] { opacity: .45; cursor: not-allowed; }

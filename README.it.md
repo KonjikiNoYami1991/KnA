@@ -204,8 +204,11 @@ Ogni file in coda ha un editor (✎) con cinque schede:
    Tutte le anteprime (fotogrammi, miniature, forma d'onda, rilevamento bande nere, clip) funzionano anche con sorgenti VapourSynth e AviSynth.
 
 ### Preset
-Preset integrati, preset personali salvati da qualsiasi file e una **procedura guidata** che fa qualche domanda semplice
-(a cosa serve, compatibilità o dimensione, velocità o compressione, sottotitoli, audio) e sceglie una GPU funzionante se chiedi velocità.
+Preset integrati, preset personali salvati da qualsiasi file e una **procedura guidata** che fa solo le domande pertinenti
+(a cosa serve, tipo di immagine, codec, encoder — solo GPU che hanno superato il test hardware —, 8/10 bit, livello di
+qualità, valore CRF, bitrate o dimensione del file, risoluzione, HDR, pulizia, contenitore, codec/bitrate/canali audio,
+lingue, sottotitoli, OCR, segmenti) e mostra cosa farà il preset prima di salvarlo. Nell'editor (matita) un preset o un
+profilo si può solo importare: le sue scelte diventano valori visibili nei campi, modificabili uno per uno.
 
 ### Robustezza
 - **Transport stream** (`.ts`, `.m2ts`…): finestra di analisi più ampia, timestamp rigenerati, pacchetti corrotti e flussi

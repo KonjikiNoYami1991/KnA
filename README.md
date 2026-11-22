@@ -203,8 +203,11 @@ Every file in the queue has an editor (✎) with five tabs:
    All previews (frames, thumbnails, waveform, crop detection, clips) also work with VapourSynth and AviSynth sources.
 
 ### Presets
-Built-in presets, your own presets saved from any file, and a **wizard** that asks a few plain questions
-(what is it for, compatibility or size, speed or compression, subtitles, audio) and picks a working GPU when you ask for speed.
+Built-in presets, your own presets saved from any file, and a **wizard** that asks only the questions that apply
+(what is it for, kind of picture, codec, encoder — only GPUs that passed the hardware test —, 8/10-bit, quality level,
+CRF value, bitrate or file size, resolution, HDR, clean-up, container, audio codec/bitrate/channels, languages,
+subtitles, OCR, segments) and shows what the preset will do before saving it. In the editor (pencil) a preset or a
+profile is only imported: its choices become visible values in the fields, which can then be changed one by one.
 
 ### Robustness
 - **Transport streams** (`.ts`, `.m2ts`…): larger probe window, regenerated timestamps, corrupt packets and unknown

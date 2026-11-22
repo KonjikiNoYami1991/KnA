@@ -323,6 +323,32 @@ public static class VideoEncoders
         _ => null,
     };
 
+    /// <summary>
+    /// The constant-quality value and speed preset <see cref="BuildArgs"/> chooses for the request's quality level:
+    /// what "automatic" means, turned into visible values the editor can show and change.
+    /// </summary>
+    public static (double? Quality, string? Speed) AutoValues(VideoEncodeRequest r)
+    {
+        List<string> args;
+        try { args = BuildArgs(r); }
+        catch (NotSupportedException) { return (null, null); }
+        int ci = args.IndexOf("-c:v");
+        var enc = ci >= 0 && ci + 1 < args.Count ? args[ci + 1] : "";
+        string? Value(string? opt) => opt is not null && args.IndexOf(opt) is var i and >= 0 && i + 1 < args.Count ? args[i + 1] : null;
+        double? q = QualityOption(enc) is { } qo && Value(qo.Option) is { } qs
+            && double.TryParse(qs, NumberStyles.Float, CultureInfo.InvariantCulture, out var d) ? d : null;
+        string? speed = SpeedOption(enc) is { } so ? Value(so.Option) : null;
+        return (q, speed);
+    }
+
+    /// <summary>
+    /// FFmpeg options KnA sets from its own fields (rate control, speed, tune, GOP, B-frames, lookahead, pixel
+    /// format): the parameter pages leave them out, so each one is set in exactly one place.
+    /// </summary>
+    public static bool IsOwnedOption(string name) => name is "-crf" or "-cq" or "-qp" or "-global_quality" or "-q" or "-qscale"
+        or "-qvbr_quality_level" or "-b" or "-maxrate" or "-bufsize" or "-rc" or "-rc_mode" or "-preset" or "-cpu-used" or "-quality"
+        or "-speed" or "-tune" or "-g" or "-bf" or "-rc-lookahead" or "-look_ahead_depth" or "-pix_fmt" or "-threads";
+
     /// <summary>Speed presets an encoder accepts (fastest first); the option name.</summary>
     public static (string Option, IReadOnlyList<string> Values)? SpeedOption(string encoder) => encoder switch
     {
@@ -514,6 +540,38 @@ public static class VideoEncoders
         EncoderBackend.Vulkan when codec is VideoCodec.FFV1 => "hwupload",
         EncoderBackend.Vulkan when codec is VideoCodec.ProRes => "format=yuv422p10le,hwupload",
         EncoderBackend.Vulkan => (tenBit && Supports10Bit(codec, backend) ? "format=p010" : "format=nv12") + ",hwupload",
+        _ => null,
+    };
+
+    /// <summary>
+    /// Suffixes of the FFmpeg filters that run on a backend's GPU ("scale_cuda", "vpp_qsv", "denoise_vaapi"…);
+    /// empty = FFmpeg has no filters for it (AMF: use VCEEncC's --vpp-* instead).
+    /// </summary>
+    public static IReadOnlyList<string> GpuFilterSuffixes(EncoderBackend backend) => backend switch
+    {
+        EncoderBackend.Nvenc => ["_cuda", "_npp"],
+        EncoderBackend.Qsv => ["_qsv"],
+        EncoderBackend.Vaapi => ["_vaapi"],
+        EncoderBackend.Vulkan => ["_vulkan"],
+        EncoderBackend.VideoToolbox => ["_vt", "_videotoolbox"],
+        _ => [],
+    };
+
+    /// <summary>A filter of the GPU chain that does not upload or download frames itself (offered in the editor).</summary>
+    public static bool IsGpuFilter(string name, EncoderBackend backend) =>
+        GpuFilterSuffixes(backend).Any(x => name.EndsWith(x, StringComparison.Ordinal))
+        && !name.StartsWith("hwupload", StringComparison.Ordinal) && !name.StartsWith("hwdownload", StringComparison.Ordinal)
+        || (backend == EncoderBackend.Vulkan && name == "libplacebo");
+
+    /// <summary>
+    /// What makes the GPU filters of <paramref name="backend"/> possible: global options (device for the filters) and the
+    /// upload that puts the frames on the GPU, or null when the backend has none or the chain already uploads (VA-API, Vulkan).
+    /// </summary>
+    public static (IReadOnlyList<string> Global, string Upload)? GpuFilterUpload(EncoderBackend backend, bool tenBit) => backend switch
+    {
+        EncoderBackend.Nvenc => (["-init_hw_device", "cuda=cu", "-filter_hw_device", "cu"], (tenBit ? "format=p010le" : "format=nv12") + ",hwupload"),
+        EncoderBackend.Qsv => (["-init_hw_device", "qsv=qs", "-filter_hw_device", "qs"], (tenBit ? "format=p010le" : "format=nv12") + ",hwupload=extra_hw_frames=64"),
+        EncoderBackend.VideoToolbox => (["-init_hw_device", "videotoolbox=vt", "-filter_hw_device", "vt"], (tenBit ? "format=p010le" : "format=nv12") + ",hwupload"),
         _ => null,
     };
 

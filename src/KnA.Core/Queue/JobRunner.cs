@@ -403,7 +403,7 @@ public static class JobRunner
         foreach (var t in check.Tracks.Where(t => t.Include && t.Kind == "audio"))
         {
             if (TrackPlanner.Lookup(t, media) is not AudioStream ast) continue;
-            var plan = AudioPlanner.Plan(ast, AudioPlanner.ForTrack(t, cc.Settings), check.Container, cc.Options.AudioEncoders);
+            var plan = AudioPlanner.PlanTrack(t, ast, cc.Settings, check.Container, cc.Options.AudioEncoders);
             if (!plan.IsExternal) continue;
             bool useQaac = plan.Encoder == AudioEncoderSet.Qaac && ctx.Tools.Qaac is not null;
             var tool = useQaac ? ctx.Tools.Qaac! : ctx.Tools.Fdkaac ?? throw new InvalidOperationException("fdkaac not found.");
@@ -419,7 +419,7 @@ public static class JobRunner
             ff.AddRange([.. KnA.Core.Media.Discs.DiscSource.InputArgs(input), "-map", $"0:{index}", "-vn", "-ac", plan.Channels.ToString(System.Globalization.CultureInfo.InvariantCulture)]);
             if (FilterBuilder.Audio(cc.Settings.AudioFilters, "fdkaac", plan.Channels) is { } af) ff.AddRange(["-af", af]);
             ff.AddRange(["-c:a", "pcm_s16le", "-f", "wav", "-"]);
-            var args = useQaac ? AudioPlanner.QaacArgs(plan, output, cc.Settings.Arguments.Qaac) : AudioPlanner.FdkaacArgs(plan, output, cc.Settings.Arguments.Fdkaac);
+            var args = useQaac ? AudioPlanner.QaacArgs(plan, output, ToolArguments.Combine(cc.Settings.Arguments.Qaac, t.Arguments)) : AudioPlanner.FdkaacArgs(plan, output, ToolArguments.Combine(cc.Settings.Arguments.Fdkaac, t.Arguments));
             job.AppendLog($"{toolName}: {Path.GetFileName(input)} #{index} → AAC{(plan.HeAac ? " HE" : "")} {plan.Kbps}k {plan.Channels}ch");
             job.AppendLog("  " + new EncodePlan(ff, "-").CommandLine(ctx.Tools.Ffmpeg) + " | " + new EncodePlan(args, output).CommandLine(tool));
             try { await PipeAsync(ctx, ff, tool, args, ct); }
@@ -427,7 +427,7 @@ public static class JobRunner
             {
                 // qaac failed (CoreAudioToolbox missing or broken): fdkaac (libfdk_aac) takes over.
                 job.AppendLog("Warning: qaac failed (" + ex.Message + "), fdkaac is used instead.");
-                await PipeAsync(ctx, ff, fallback, AudioPlanner.FdkaacArgs(plan, output, cc.Settings.Arguments.Fdkaac), ct);
+                await PipeAsync(ctx, ff, fallback, AudioPlanner.FdkaacArgs(plan, output, ToolArguments.Combine(cc.Settings.Arguments.Fdkaac, t.Arguments)), ct);
             }
             catch (InvalidOperationException ex) when (plan.HeAac && ex.Message.Contains("unsupported profile", StringComparison.OrdinalIgnoreCase))
             {
@@ -435,7 +435,7 @@ public static class JobRunner
                 var lc = plan with { HeAac = false, Kbps = Math.Max(96, (plan.Kbps ?? 64) * 2) };
                 job.AppendLog("Warning: this fdkaac has no HE-AAC, AAC-LC is used.");
                 job.Issues = [.. job.Issues, Containers.Warning("This fdkaac has no HE-AAC: AAC-LC was used.")];
-                await PipeAsync(ctx, ff, tool, AudioPlanner.FdkaacArgs(lc, output, cc.Settings.Arguments.Fdkaac), ct);
+                await PipeAsync(ctx, ff, tool, AudioPlanner.FdkaacArgs(lc, output, ToolArguments.Combine(cc.Settings.Arguments.Fdkaac, t.Arguments)), ct);
             }
             if (!File.Exists(output) || new FileInfo(output).Length == 0) throw new InvalidOperationException(toolName + " produced no output.");
             result[$"{t.File}|{t.Stream}"] = output;
@@ -447,7 +447,7 @@ public static class JobRunner
     internal static void EnsureFrameserverScript(QueueJob job, SettingsStore store)
     {
         var fs = job.Settings.Frameserver;
-        if (fs.Kind == FrameserverKind.None || string.IsNullOrWhiteSpace(fs.Script) || Frameserver.KindOf(job.SourcePath) != FrameserverKind.None
+        if (fs.Kind == FrameserverKind.None || string.IsNullOrWhiteSpace(fs.EffectiveScript) || Frameserver.KindOf(job.SourcePath) != FrameserverKind.None
             || !job.Settings.ProfileDefinition.UsesVideoFilters)
         {
             job.FrameserverScript = null;

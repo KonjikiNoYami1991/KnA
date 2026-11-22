@@ -154,7 +154,7 @@ public class ReleaseNamesTests
         // every name the updater asks for is one the release workflow produces
         var yml = File.ReadAllText(Path.Combine(AppContext.BaseDirectory, "../../../../../.github/workflows/release.yml"));
         foreach (var name in new[] { "Windows-x64", "Windows-ARM64", "macOS-AppleSilicon", "macOS-Intel", "Linux-x64", "Linux-ARM64" })
-            Assert.Contains("name: " + name, yml);
+            Assert.Matches("\"?name\"?\\s*:\\s*\"?" + System.Text.RegularExpressions.Regex.Escape(name) + "\"?", yml);   // YAML or the JSON matrix
     }
 }
 

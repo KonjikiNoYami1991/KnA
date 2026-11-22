@@ -14,21 +14,22 @@ using KnA.Core.Settings;
 
 namespace KnA.App.Views;
 
-/// <summary>
-/// Per-file editor: tracks (with external files and delays), visual trim, filters (+ VapourSynth/AviSynth),
-/// output settings and preview of the final result. Every change is saved to the job and re-validated (debounced).
-/// Mirrors wwwroot/editor.js.
-/// </summary>
 /// <summary>Tab names of the editor; <see cref="TrimOnly"/> opens just the cut, as a standalone tool.</summary>
 public static class JobEditorTabs
 {
     public const string TrimOnly = "trim-only";
 }
 
+/// <summary>
+/// Per-file editor (the pencil): preset import/save, visual trim, video (encoder, rate control and every parameter of
+/// the encoder on sub-tabs), audio and subtitles (one sub-tab per kept track), filters (picture, GPU, VapourSynth /
+/// AviSynth), output (container, attachments, chapters) and preview. It works on explicit settings only: when it
+/// opens, what the profile would decide by itself is written into the fields (<see cref="EditorModel"/>), and a
+/// profile or preset can only be imported. Every change is saved to the job and re-validated (debounced).
+/// Mirrors wwwroot/editor.js.
+/// </summary>
 public sealed class JobEditorWindow : Window
 {
-    private static readonly string[] Kinds = ["video", "audio", "subtitle", "attachment"];
-
     private readonly QueueService _queue;
     private readonly QueueJob _job;
     private JobSettings _settings;
@@ -39,6 +40,9 @@ public sealed class JobEditorWindow : Window
     /// <summary>Kept segments being edited in the Trim tab (sorted) and the one the handles move.</summary>
     private List<TrimSegment>? _parts;
     private int _seg;
+    /// <summary>Sub-tab shown in the Video tab, and the track shown in the Audio / Subtitles tabs.</summary>
+    private string _videoSub = "general";
+    private readonly Dictionary<string, int> _trackSub = [];
 
     private readonly StackPanel _issues = new() { Spacing = 4 };
     private readonly TextBlock _saving = new() { Classes = { "muted" }, FontSize = 12, VerticalAlignment = VerticalAlignment.Center };
@@ -50,7 +54,7 @@ public sealed class JobEditorWindow : Window
     private readonly DispatcherTimer _debounce = new() { Interval = TimeSpan.FromMilliseconds(450) };
     private bool _rerenderAfterSave;
 
-    public JobEditorWindow(QueueService queue, QueueJob job, string tab = "tracks")
+    public JobEditorWindow(QueueService queue, QueueJob job, string tab = "video")
     {
         _queue = queue;
         _job = job;
@@ -61,13 +65,14 @@ public sealed class JobEditorWindow : Window
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
 
         bool trimOnly = tab == JobEditorTabs.TrimOnly;
-        // One tab per kind of stream: every setting appears in exactly one place.
-        string[] tabs = trimOnly ? ["trim"] : ["tracks", "trim", "video", "audio", "subtitles", "filters", "output", "preview"];
-        string[] names = trimOnly ? [L.T("Trim")] : [L.T("Tracks"), L.T("Trim"), L.T("Video"), L.T("Audio"), L.T("Subtitles"), L.T("Filters"), L.T("Output"), L.T("Preview")];
+        if (tab == "tracks") tab = "video";   // older callers: the tracks are now in the tab of their kind
+        // One tab per part of the job: every setting appears in exactly one place.
+        string[] tabs = trimOnly ? ["trim"] : ["preset", "trim", "video", "audio", "subtitles", "filters", "output", "preview"];
+        string[] names = trimOnly ? [L.T("Trim")] : [L.T("Preset"), L.T("Trim"), L.T("Video"), L.T("Audio"), L.T("Subtitles"), L.T("Filters"), L.T("Output"), L.T("Preview")];
         if (trimOnly) { tab = "trim"; Title = L.T("Trim") + " — " + job.FileName + " — KnA"; _tabs.IsVisible = false; }
         for (int i = 0; i < tabs.Length; i++) _tabs.Items.Add(new TabItem { Header = names[i], Tag = tabs[i], FontSize = 15 });
-        _tabs.SelectedIndex = Math.Max(0, Array.IndexOf(tabs, tab));
-        _tabs.SelectionChanged += (_, _) => { if (_a is not null) RenderTab(); };
+        _tabs.SelectedIndex = Math.Max(0, Array.IndexOf(tabs, tab) is var at && at >= 0 ? at : Array.IndexOf(tabs, "video"));
+        _tabs.SelectionChanged += (_, e) => { if (e.Source == _tabs && _a is not null) RenderTab(); };
 
         var header = new DockPanel { Margin = new Thickness(20, 14, 20, 0) };
         var title = new StackPanel { Children = { new TextBlock { Text = job.FileName, FontWeight = FontWeight.SemiBold, FontSize = 16 }, Ui.Muted(job.Folder) } };
@@ -88,13 +93,14 @@ public sealed class JobEditorWindow : Window
         Closed += (_, _) => { _previewCts.Cancel(); if (_debounce.IsEnabled) { _debounce.Stop(); _ = SaveNowAsync(false); } };
     }
 
-    private string CurrentTab => (_tabs.SelectedItem as TabItem)?.Tag as string ?? "tracks";
+    private string CurrentTab => (_tabs.SelectedItem as TabItem)?.Tag as string ?? "video";
 
     private async Task LoadAsync()
     {
         try
         {
-            _a = await Task.Run(() => _queue.AnalyzeAsync(_job));
+            // The profile's automatic choices become visible values: from here on the fields are what runs.
+            (_settings, _edit, _a) = await Task.Run(() => EditorModel.MaterializeAsync(_queue, _job.Id, _settings, _edit));
             var d = _a.Source.Duration.TotalSeconds;
             _playhead = _edit.IsMultiSegment ? _edit.KeptParts(d).FirstOrDefault().Start : _edit.TrimStart ?? Math.Min(d / 3, 60);
             RenderIssues();
@@ -104,6 +110,21 @@ public sealed class JobEditorWindow : Window
         {
             _body.Content = Ui.Note(ex.Message, true);
         }
+    }
+
+    /// <summary>Saves now and writes the profile's choices into the fields left to it (after an import).</summary>
+    private async Task MaterializeNowAsync()
+    {
+        _debounce.Stop();
+        _saving.Text = L.T("Saving…");
+        try
+        {
+            (_settings, _edit, _a) = await Task.Run(() => EditorModel.MaterializeAsync(_queue, _job.Id, _settings, _edit));
+            _saving.Text = L.T("Saved");
+        }
+        catch (Exception ex) { _saving.Text = ""; _issues.Children.Insert(0, Ui.Note("✖ " + ex.Message, true)); }
+        RenderIssues();
+        RenderTab();
     }
 
     // ------------------------------------------------------------------ saving
@@ -157,14 +178,14 @@ public sealed class JobEditorWindow : Window
         _previewCts = new CancellationTokenSource();
         _body.Content = CurrentTab switch
         {
+            "preset" => PresetTab(),
             "trim" => TrimTab(),
-            "video" => VideoTab(),
             "audio" => AudioTab(),
             "subtitles" => SubtitlesTab(),
             "filters" => FiltersTab(),
             "output" => OutputTab(),
             "preview" => PreviewTab(),
-            _ => TracksTab(),
+            _ => VideoTab(),
         };
     }
 
@@ -180,14 +201,13 @@ public sealed class JobEditorWindow : Window
 
     private void UpdateTrack(int i, Func<TrackPlan, TrackPlan> f, bool rerender = false)
     {
-        // Controls also raise "changed" when they are rebuilt with the same value: that is not an edit,
-        // and must not turn the automatic plan into a custom one.
+        // Controls also raise "changed" when they are rebuilt with the same value: that is not an edit.
         var current = Tracks;
         if (i < 0 || i >= current.Count || f(current[i]) == current[i]) return;
         var list = Materialize();
         list[i] = f(list[i]);
         if (rerender) RenderTab();
-        Save();
+        Save(rerender);
     }
 
     private IReadOnlyDictionary<string, MediaInfo> AllMedia()
@@ -195,6 +215,8 @@ public sealed class JobEditorWindow : Window
         var d = new Dictionary<string, MediaInfo>(_a!.External) { [_job.SourcePath] = _a.Source };
         return d;
     }
+
+    private AudioEncoderSet Encoders => JobRunner.AudioEncodersFor(_queue.Settings.Capabilities, _queue.Tools);
 
     private static string Details(StreamBase? s) => s switch
     {
@@ -205,169 +227,164 @@ public sealed class JobEditorWindow : Window
         _ => "",
     };
 
-    private static string KindLabel(string k) => k switch
+    private string TrackName(TrackPlan t)
     {
-        "video" => L.T("Video"), "audio" => L.T("Audio"), "subtitle" => L.T("Subtitles"), "attachment" => L.T("Attachments"), _ => k,
-    };
+        var st = TrackPlanner.Lookup(t, AllMedia());
+        return (t.Stream >= 0 ? "#" + t.Stream + " " : "") + (t.Codec ?? st?.CodecName ?? "") + (t.Language is { Length: > 0 } l ? " " + l : "")
+               + (t.File != _job.SourcePath ? " · " + Path.GetFileName(t.File) : "");
+    }
 
-    /// <summary>Choices of the "Output" column: copy or convert this track (null = follow the profile).</summary>
-    private static IEnumerable<(string? Value, string Text)> OutputChoices(string kind) => kind switch
-    {
-        "video" => [(null, L.T("Profile (encode)")), ("copy", L.T("Copy (no re-encoding)"))],
-        "audio" => new (string?, string)[] { (null, L.T("Job setting")) }
-            .Concat(Enum.GetValues<AudioCodec>().Where(c => c != AudioCodec.Auto).Select(c => ((string?)c.ToString(), c.Display()))),
-        "subtitle" => new (string?, string)[] { (null, L.T("Automatic")) }
-            .Concat(Containers.SubtitleOutputs.Select(o => ((string?)o.Value, o.Value == "copy" ? L.T("Copy (no re-encoding)") : o.Label)))
-            .Append((KnA.Core.Ocr.SubtitleOcr.OutputValue, L.T("Text (OCR, picture subtitles)"))),
-        _ => [],
-    };
-
-    private Control TracksTab()
+    /// <summary>
+    /// The tracks of one kind in the file and in the added files: tick to keep (untick to leave out any stream),
+    /// order, remove an added file. Video rows also carry their labels (video has no per-track pages).
+    /// </summary>
+    private Control TrackListCard(string kind)
     {
         var list = Tracks;
         var media = AllMedia();
         var p = _settings.ProfileDefinition;
-        bool outputs = p.EncodesVideo || p.IsRemux;
-        var root = new StackPanel { Spacing = 12 };
-
-        var bar = Ui.Row(8,
-            Ui.Button(L.T("Add external files…"), AddExternalAsync),
-            Ui.Button(L.T("Reset to automatic"), () => { _edit = _edit with { Tracks = null }; Save(true); }));
-        bar.Children.Add(Ui.Muted(_edit.Tracks is not null ? L.T("Custom track plan.") : L.T("Automatic plan (from the subtitle mode). Any change makes it custom.")));
-        ((TextBlock)bar.Children[^1]).VerticalAlignment = VerticalAlignment.Center;
-        root.Children.Add(bar);
-
-        if (_edit.ExternalFiles.Count > 0)
+        var rows = list.Select((t, i) => (t, i)).Where(x => x.t.Kind == kind).ToList();
+        string title = kind switch { "video" => L.T("Video tracks"), "audio" => L.T("Audio tracks"), "subtitle" => L.T("Subtitle tracks"), _ => L.T("Attachments") };
+        var add = kind == "attachment" ? Ui.Button(L.T("Add attachments…"), AddAttachmentsAsync) : Ui.Button(L.T("Add external files…"), AddExternalAsync);
+        var head = new DockPanel { Children = { WithDock(add, Dock.Right), Ui.H2(title) } };
+        var box = new StackPanel { Spacing = 6, Children = { head } };
+        if (kind == "audio" && !p.UsesAudio && !p.IsDemux) box.Children.Add(Ui.Note(L.T("This profile has no audio output.")));
+        if (rows.Count == 0)
         {
-            var wrap = new WrapPanel();
-            foreach (var f in _edit.ExternalFiles)
+            box.Children.Add(Ui.Muted(kind == "attachment" ? L.T("No attachments. Fonts, covers or any other file can be added.") : L.T("No tracks of this kind.")));
+            return Ui.Card(box);
+        }
+        bool video = kind == "video";
+        var grid = new Grid { ColumnDefinitions = new ColumnDefinitions(video ? "Auto,*,64,170,96,170,Auto" : kind == "subtitle" && p.UsesVideoFilters ? "Auto,*,Auto,Auto" : "Auto,*,Auto"), ColumnSpacing = 8, RowSpacing = 6 };
+        int r = 0;
+        if (video)
+        {
+            grid.RowDefinitions.Add(new RowDefinition(GridLength.Auto));
+            foreach (var (text, col) in new[] { (L.T("Use"), 0), (L.T("Stream"), 1), (L.T("Language"), 2), (L.T("Title"), 3), (L.T("Delay (ms)"), 4), (L.T("Output"), 5) })
+            { var tb = Ui.Muted(text, 11.5); Grid.SetColumn(tb, col); grid.Children.Add(tb); }
+            r = 1;
+        }
+        foreach (var (t, i) in rows)
+        {
+            int idx = i;
+            grid.RowDefinitions.Add(new RowDefinition(GridLength.Auto));
+            void Put(Control c, int col) { Grid.SetRow(c, r); Grid.SetColumn(c, col); c.VerticalAlignment = VerticalAlignment.Center; grid.Children.Add(c); }
+            var st = TrackPlanner.Lookup(t, media);
+            bool standalone = TrackPlanner.IsStandaloneFile(t);
+            Put(Ui.Check("", t.Include, v => UpdateTrack(idx, x => x with { Include = v, Burn = !v && x.Burn }, rerender: true)), 0);
+            var name = new StackPanel
             {
-                var rm = new Button { Content = "✕", Classes = { "ghost" }, Padding = new Thickness(6, 0) };
-                rm.Click += (_, _) =>
+                Children =
                 {
-                    _edit = _edit with
-                    {
-                        ExternalFiles = [.. _edit.ExternalFiles.Where(x => x != f)],
-                        Tracks = _edit.Tracks?.Where(x => x.File != f).ToList(),
-                    };
+                    new TextBlock { Text = standalone ? t.Title ?? Path.GetFileName(t.File) : TrackName(t) + (t.Title is { Length: > 0 } ti && !video ? " · " + ti : ""), FontWeight = FontWeight.SemiBold, TextTrimming = TextTrimming.CharacterEllipsis },
+                    Ui.Muted(standalone ? TrackPlanner.MimeType(t.File) : Details(st), 11.5),
+                },
+                Opacity = t.Include || t.Burn ? 1 : 0.55,
+            };
+            ToolTip.SetTip(name, t.File);
+            Put(name, 1);
+            int last = 2;
+            if (video)
+            {
+                Put(Ui.Text(t.Language, v => UpdateTrack(idx, x => x with { Language = string.IsNullOrWhiteSpace(v) ? null : v.Trim() }), "und"), 2);
+                Put(Ui.Text(t.Title, v => UpdateTrack(idx, x => x with { Title = string.IsNullOrEmpty(v) ? null : v })), 3);
+                var delay = Ui.Number(t.DelayMs, -600000, 600000, 10, v => UpdateTrack(idx, x => x with { DelayMs = v }), "0");
+                delay.ShowButtonSpinner = false;
+                Put(delay, 4);
+                if (p.EncodesVideo || p.IsRemux)
+                    Put(Ui.Combo([(null, L.T("Encode (Video tab settings)")), ("copy", L.T("Copy (no re-encoding)"))], t.Output, v => UpdateTrack(idx, x => x with { Output = v }, rerender: true)), 5);
+                last = 6;
+            }
+            else if (kind == "subtitle" && p.UsesVideoFilters)
+            {
+                var rb = new RadioButton { GroupName = "burn" + _job.Id, IsChecked = t.Burn, Content = L.T("Burn") };
+                rb.IsCheckedChanged += (_, _) =>
+                {
+                    if (rb.IsChecked != true || Tracks[idx].Burn) return;
+                    var l = Materialize();
+                    for (int j = 0; j < l.Count; j++) if (l[j].Kind == "subtitle") l[j] = l[j] with { Burn = j == idx, Include = j == idx ? false : l[j].Include };
+                    _trackSub["subtitle"] = idx;
                     Save(true);
                 };
-                wrap.Children.Add(new Border
-                {
-                    Classes = { "chip" }, Margin = new Thickness(0, 0, 6, 6),
-                    Child = Ui.Row(4, new TextBlock { Text = Path.GetFileName(f), VerticalAlignment = VerticalAlignment.Center }, rm),
-                });
-                ToolTip.SetTip(wrap.Children[^1], f);
+                Put(rb, 2);
+                last = 3;
             }
-            root.Children.Add(wrap);
-        }
-        root.Children.Add(Ui.Muted(p.IsDemux
-            ? L.T("Demux: the ticked tracks, attachments and chapters are extracted to separate files.")
-            : L.T("Delays shift a single track (positive = later). The trim is applied afterwards, on the final timeline.")));
-
-        foreach (var k in Kinds)
-        {
-            var rows = list.Select((t, i) => (t, i)).Where(x => x.t.Kind == k).ToList();
-            if (rows.Count == 0 && k != "attachment") continue;
-            var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,140,*,64,170,96,Auto,Auto,Auto,Auto,Auto,Auto"), ColumnSpacing = 8, RowSpacing = 6 };
-            void Head(int col, string text) { var tb = Ui.Muted(text, 11.5); Grid.SetColumn(tb, col); grid.Children.Add(tb); }
-            grid.RowDefinitions.Add(new RowDefinition(GridLength.Auto));
-            Head(0, L.T("Use")); Head(1, L.T("Source")); Head(2, L.T("Stream"));
-            if (k != "attachment") { Head(3, L.T("Language")); Head(5, L.T("Delay (ms)")); }
-            Head(4, k == "attachment" ? L.T("File name") : L.T("Title"));
-            // What becomes of each audio/subtitle track (codec, bitrate, burning) is set in the Audio and Subtitles
-            // tabs: here only what the file contains and how the tracks are labelled.
-            if (outputs && k == "video") Head(6, L.T("Output"));
-            if (k is "audio" or "subtitle") { Head(8, L.T("Default")); Head(9, L.T("Forced")); }
-
-            int r = 1;
-            foreach (var (t, i) in rows)
+            var up = new Button { Content = "↑", Classes = { "ghost" } };
+            var down = new Button { Content = "↓", Classes = { "ghost" } };
+            up.Click += (_, _) => MoveTrack(idx, -1);
+            down.Click += (_, _) => MoveTrack(idx, 1);
+            var tools = Ui.Row(0, up, down);
+            if (standalone || t.File != _job.SourcePath && _edit.ExternalFiles.Contains(t.File))
             {
-                grid.RowDefinitions.Add(new RowDefinition(GridLength.Auto));
-                var st = TrackPlanner.Lookup(t, media);
-                void Put(Control c, int col) { Grid.SetRow(c, r); Grid.SetColumn(c, col); c.VerticalAlignment = VerticalAlignment.Center; grid.Children.Add(c); }
-                int idx = i;
-                bool standalone = TrackPlanner.IsStandaloneFile(t);
-                Put(Ui.Check("", t.Include, v => UpdateTrack(idx, x => x with { Include = v })), 0);
-                var src = new TextBlock { Text = t.File == _job.SourcePath ? L.T("Source") : Path.GetFileName(t.File), TextTrimming = TextTrimming.CharacterEllipsis };
-                ToolTip.SetTip(src, t.File);
-                Put(src, 1);
-                Put(new StackPanel
+                var rm = new Button { Content = "✕", Classes = { "ghost" } };
+                ToolTip.SetTip(rm, standalone ? L.T("Remove") : L.T("Remove the added file ({0})", Path.GetFileName(t.File)));
+                var file = t.File;
+                rm.Click += (_, _) =>
                 {
-                    Children =
-                    {
-                        new TextBlock { Text = (t.Stream >= 0 ? "#" + t.Stream + " " : "") + (t.Codec ?? st?.CodecName ?? ""), FontWeight = FontWeight.SemiBold },
-                        Ui.Muted(standalone ? TrackPlanner.MimeType(t.File) : Details(st), 11.5),
-                    },
-                }, 2);
-                if (k != "attachment")
-                {
-                    Put(Ui.Text(t.Language, v => UpdateTrack(idx, x => x with { Language = string.IsNullOrWhiteSpace(v) ? null : v.Trim() }), "und"), 3);
-                    var delay = Ui.Number(t.DelayMs, -600000, 600000, 10, v => UpdateTrack(idx, x => x with { DelayMs = v }), "0");
-                    delay.ShowButtonSpinner = false;
-                    Put(delay, 5);
-                }
-                var title = Ui.Text(t.Title, v => UpdateTrack(idx, x => x with { Title = string.IsNullOrEmpty(v) ? null : v }));
-                if (k == "attachment" && !standalone) title.IsReadOnly = true;   // attachments of the file keep their name
-                Put(title, 4);
-                if (outputs && k == "video")
-                {
-                    var combo = Ui.Combo(OutputChoices(k), t.Output, v => UpdateTrack(idx, x => x with { Output = v }));
-                    combo.MinWidth = 150;
-                    Put(combo, 6);
-                }
-                if (k is "audio" or "subtitle")
-                {
-                    Put(Ui.Check("", t.Default, v =>
-                    {
-                        var l = Materialize();
-                        for (int j = 0; j < l.Count; j++)
-                            if (j == idx) l[j] = l[j] with { Default = v };
-                            else if (v && l[j].Kind == k) l[j] = l[j] with { Default = false };
-                        RenderTab(); Save();
-                    }), 8);
-                    Put(Ui.Check("", t.Forced, v => UpdateTrack(idx, x => x with { Forced = v })), 9);
-                }
-                var up = new Button { Content = "↑", Classes = { "ghost" } };
-                var down = new Button { Content = "↓", Classes = { "ghost" } };
-                up.Click += (_, _) => MoveTrack(idx, -1);
-                down.Click += (_, _) => MoveTrack(idx, 1);
-                var tools = Ui.Row(0, up, down);
-                if (standalone)
-                {
-                    var rm = new Button { Content = "✕", Classes = { "ghost" } };
-                    ToolTip.SetTip(rm, L.T("Remove"));
-                    rm.Click += (_, _) =>
-                    {
-                        var l = Materialize();
-                        l.RemoveAt(idx);
-                        _edit = _edit with { ExternalFiles = [.. _edit.ExternalFiles.Where(f => f != t.File || l.Any(x => x.File == f))] };
-                        RenderTab(); Save(true);
-                    };
-                    tools.Children.Add(rm);
-                }
-                Put(tools, 11);
-                r++;
+                    var l = Materialize();
+                    if (standalone) l.RemoveAt(idx); else l.RemoveAll(x => x.File == file);
+                    _edit = _edit with { ExternalFiles = [.. _edit.ExternalFiles.Where(f => f != file || l.Any(x => x.File == f))] };
+                    RenderTab(); Save(true);
+                };
+                tools.Children.Add(rm);
             }
-            var section = new StackPanel { Spacing = 6, Children = { Ui.H2(KindLabel(k)) } };
-            if (k == "attachment")
-            {
-                var addAtt = Ui.Button(L.T("Add attachments…"), AddAttachmentsAsync);
-                section.Children[0] = new DockPanel { Children = { WithDock(addAtt, Dock.Right), Ui.H2(KindLabel(k)) } };
-                if (rows.Count == 0) section.Children.Add(Ui.Muted(L.T("No attachments. Fonts, covers or any other file can be added.")));
-                else if (!p.IsDemux) section.Children.Add(Ui.Muted(L.T("Untick an attachment of the file to leave it out; added files can be removed with ✕. Attachments need MKV.")));
-            }
-            if (k == "audio" && !p.UsesAudio && !p.IsDemux) section.Children.Add(Ui.Note(L.T("This profile has no audio output.")));
-            if (rows.Count > 0) section.Children.Add(grid);
-            if (k is "audio" or "subtitle" && rows.Count > 0 && outputs)
-                section.Children.Add(Ui.Muted(k == "audio" ? L.T("Codec and bitrate of each track: Audio tab.") : L.T("Format of each track and burning into the picture: Subtitles tab.")));
-            root.Children.Add(Ui.Card(section));
+            Put(tools, last);
+            r++;
         }
-        if (!p.IsKeyframes && !p.IsImages) root.Children.Add(Ui.Card(ChaptersSection()));
-        return root;
+        box.Children.Add(grid);
+        if (kind == "subtitle" && p.UsesVideoFilters && rows.Any(x => x.t.Burn))
+            box.Children.Add(Ui.Button(L.T("Don't burn any subtitle"), () =>
+            {
+                var l = Materialize();
+                for (int j = 0; j < l.Count; j++) l[j] = l[j] with { Burn = false };
+                Save(true);
+            }));
+        if (kind == "attachment" && !p.IsDemux) box.Children.Add(Ui.Muted(L.T("Untick an attachment of the file to leave it out; added files can be removed with ✕. Attachments need MKV.")));
+        if (p.IsDemux) box.Children.Add(Ui.Muted(L.T("Demux: the ticked tracks, attachments and chapters are extracted to separate files.")));
+        return Ui.Card(box);
     }
 
     private static Control WithDock(Control c, Dock d) { DockPanel.SetDock(c, d); return c; }
+
+    /// <summary>Language, title, delay, default and forced of a track (the first row of its page).</summary>
+    private Control Labels(int idx, TrackPlan t)
+    {
+        var delay = Ui.Number(t.DelayMs, -600000, 600000, 10, v => UpdateTrack(idx, x => x with { DelayMs = v }), "0");
+        delay.ShowButtonSpinner = false;
+        var g = Ui.Columns(
+            Ui.Field("Language", Ui.Text(t.Language, v => UpdateTrack(idx, x => x with { Language = string.IsNullOrWhiteSpace(v) ? null : v.Trim() }), "und")),
+            Ui.Field("Title", Ui.Text(t.Title, v => UpdateTrack(idx, x => x with { Title = string.IsNullOrEmpty(v) ? null : v }))),
+            Ui.Field("Delay (ms)", delay, L.T("Positive = later.")),
+            Ui.Field(" ", Ui.Row(12,
+                Ui.Check(L.T("Default"), t.Default, v =>
+                {
+                    var l = Materialize();
+                    for (int j = 0; j < l.Count; j++)
+                        if (j == idx) l[j] = l[j] with { Default = v };
+                        else if (v && l[j].Kind == t.Kind) l[j] = l[j] with { Default = false };
+                    Save();
+                }),
+                Ui.Check(L.T("Forced"), t.Forced, v => UpdateTrack(idx, x => x with { Forced = v })))));
+        return g;
+    }
+
+    /// <summary>One sub-tab per kept track of a kind; the last one shown is remembered.</summary>
+    private Control TrackPages(string kind, Func<int, TrackPlan, Control> page)
+    {
+        var rows = Tracks.Select((t, i) => (t, i)).Where(x => x.t.Kind == kind && (x.t.Include || x.t.Burn)).ToList();
+        if (rows.Count == 0) return Ui.Muted(kind == "audio" ? L.T("No audio track kept: tick one above.") : L.T("No subtitle track kept or burned: tick one above."));
+        var tabs = new TabControl();
+        int selected = 0;
+        foreach (var (t, i) in rows)
+        {
+            var label = (t.Burn ? "🔥 " : "") + TrackName(t);
+            tabs.Items.Add(new TabItem { Header = label.Length > 34 ? label[..33] + "…" : label, Tag = i, FontSize = 13, Content = new Border { Padding = new Thickness(0, 12, 0, 0), Child = page(i, t) } });
+            if (_trackSub.GetValueOrDefault(kind, -1) == i) selected = tabs.Items.Count - 1;
+        }
+        tabs.SelectedIndex = selected;
+        tabs.SelectionChanged += (_, e) => { if (e.Source == tabs && tabs.SelectedItem is TabItem { Tag: int ti }) _trackSub[kind] = ti; };
+        return tabs;
+    }
 
     private async Task AddAttachmentsAsync()
     {
@@ -381,6 +398,362 @@ public sealed class JobEditorWindow : Window
             if (last < 0) l.Add(TrackPlanner.Attachment(path)); else l.Insert(last + 1, TrackPlanner.Attachment(path));
         }
         await SaveNowAsync(true);
+    }
+
+    private async Task AddExternalAsync()
+    {
+        var files = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions { Title = L.T("Add external files"), AllowMultiple = true });
+        var paths = files.Select(f => f.TryGetLocalPath()).OfType<string>().Where(p => !_edit.ExternalFiles.Contains(p) && p != _job.SourcePath).ToList();
+        if (paths.Count == 0) return;
+        _edit = _edit with { ExternalFiles = [.. _edit.ExternalFiles, .. paths] };
+        await SaveNowAsync(true);
+        _issues.Children.Add(Ui.Note(L.T("{0} file(s) added: tick the tracks to use.", paths.Count)));
+    }
+
+    private void MoveTrack(int i, int delta)
+    {
+        var l = Materialize();
+        var same = l.Select((t, j) => (t, j)).Where(x => x.t.Kind == l[i].Kind).Select(x => x.j).ToList();
+        int pos = same.IndexOf(i) + delta;
+        if (pos < 0 || pos >= same.Count) return;
+        int target = same[pos];
+        (l[i], l[target]) = (l[target], l[i]);
+        RenderTab(); Save();
+    }
+
+    // ------------------------------------------------------------------ settings form
+
+    /// <summary>The settings form for one part of a tab, wired to this job (size budget, program parameters, rate values).</summary>
+    private SettingsForm Form(FormSection section)
+    {
+        var form = new SettingsForm(_settings, () => _queue.Settings.Capabilities, full: true, () => _queue.Tools, section)
+        {
+            AllowedContainers = _a!.AllowedContainers,
+            SizeInfo = SizeText,
+            ParameterOptions = (tool, s, ct) => _queue.ParameterOptionsAsync(tool, s, ct),
+            AiRuntimeInstalled = () => File.Exists(KnA.Core.Tools.ComponentManager.VenvPython(_queue.Store.DataDirectory)),
+            InstallComponent = id => Task.Run(() => _queue.Components.InstallAsync(id)),
+            AutoRate = s => EditorModel.ExplicitRate(_queue, s, _a?.Source.PrimaryVideo, s.Container ?? _a?.Container ?? s.EffectiveContainer),
+        };
+        form.Rebuild();   // the properties above are set after the constructor's first build
+        form.Changed += OnFormChanged;
+        return form;
+    }
+
+    private void OnFormChanged(JobSettings s)
+    {
+        var old = _settings;
+        if (s.Profile != old.Profile) { _ = ChangeProfileAsync(old, s.Profile); return; }
+        // Another encoder: its quality scale, speed presets and parameters are not the same; KnA's values for the
+        // same quality level are written in their place (a bitrate or a maximum size stays as it is).
+        bool encoderChanged = s.EffectiveCodec != old.EffectiveCodec || s.EffectiveBackend != old.EffectiveBackend || s.Encoder.Program != old.Encoder.Program;
+        if (encoderChanged)
+        {
+            var e = s.Encoder with { Speed = null, Tune = null, Extra = null, GpuFilters = s.Encoder.Program == old.Encoder.Program && s.EffectiveBackend == old.EffectiveBackend ? s.Encoder.GpuFilters : null };
+            if (e.RateControl is RateControl.Quality or RateControl.Auto) e = e with { RateControl = RateControl.Auto, QualityValue = null };
+            s = s with { Encoder = EditorModel.ExplicitRate(_queue, s with { Encoder = e }, _a?.Source.PrimaryVideo, s.Container ?? _a?.Container ?? s.EffectiveContainer) };
+        }
+        _settings = s;
+        Save(true);
+    }
+
+    /// <summary>A profile picked in the Video tab: after a confirmation the video parameters follow the profile again.</summary>
+    private async Task ChangeProfileAsync(JobSettings old, ProfileKind kind)
+    {
+        var p = Profiles.Get(kind);
+        if (!await Ui.ConfirmAsync(this, L.T("Profile"), L.T("Use the profile \"{0}\"? The video parameters (codec, encoder, depth, container, quality and encoder parameters) and the audio and subtitle formats of the tracks are reset to what this profile allows and chooses.", p.Name)))
+        {
+            _settings = old;
+            RenderTab();
+            return;
+        }
+        (_settings, _edit) = EditorModel.ApplyProfile(old, _edit, kind);
+        await MaterializeNowAsync();
+    }
+
+    /// <summary>What a target size leaves for each stream of this file, with the current tracks and trim.</summary>
+    private string? SizeText(JobSettings s)
+    {
+        if (_queue.SizeBudget(_job, s, _edit) is not { } b) return null;
+        var text = SizePlanner.Describe(b);
+        return b.TooSmall ? "⚠ " + text + "\n" + L.T("Too small for this duration: the video gets the minimum and the file will be bigger.") : text;
+    }
+
+    // ------------------------------------------------------------------ preset
+
+    private Control PresetTab()
+    {
+        var presets = _queue.Presets.All;
+        Preset? pick = presets.FirstOrDefault(x => x.Name == _settings.PresetName) ?? presets.FirstOrDefault();
+        var parts = PresetParts.All;
+        var partsPanel = new WrapPanel();
+        foreach (var (part, label) in new[]
+        {
+            (PresetParts.Video, L.T("Video")), (PresetParts.Audio, L.T("Audio")), (PresetParts.Subtitles, L.T("Subtitles")),
+            (PresetParts.Filters, L.T("Picture filters")), (PresetParts.Tracks, L.T("Track selection")),
+        })
+        {
+            var pr = part;
+            var c = Ui.Check(label, true, v => parts = v ? parts | pr : parts & ~pr);
+            c.Margin = new Thickness(0, 0, 10, 0);
+            partsPanel.Children.Add(c);
+        }
+        var presetCombo = Ui.Combo(presets.Select(x => (x.Name, (x.BuiltIn ? "" : "★ ") + x.Name)), pick?.Name ?? "", n => pick = presets.FirstOrDefault(x => x.Name == n));
+        var apply = Ui.Button(L.T("Import into the fields"), async () =>
+        {
+            if (pick is null || parts == PresetParts.None) return;
+            if (!await Ui.ConfirmAsync(this, L.T("Preset"), L.T("Import \"{0}\"? The chosen parts of this file's settings are replaced by the preset's values (written into the fields, as if set by hand).", pick.Name))) return;
+            (_settings, _edit) = EditorModel.ApplyPreset(_settings, _edit, pick, parts);
+            await MaterializeNowAsync();
+        }, primary: true);
+        var import = Ui.Card(new StackPanel
+        {
+            Spacing = 8,
+            Children =
+            {
+                Ui.H2(L.T("Import a preset")), presetCombo, partsPanel, apply,
+                Ui.Muted(L.T("The preset only fills the fields: afterwards every value can be changed in its tab and nothing follows the preset any more. Subtitles or track selection rebuild the track list from the preset's rules.")),
+            },
+        });
+
+        var name = new TextBox { Text = _settings.PresetName ?? "", Watermark = L.T("Preset name") };
+        var presetMsg = Ui.Muted(L.T("Saves the settings of this file (not the tracks or the trim) for reuse."));
+        var savePreset = Ui.Button(L.T("Save as preset"), () =>
+        {
+            try
+            {
+                var n = (name.Text ?? "").Trim();
+                _queue.Presets.Save(new Preset(n, null, EditorModel.ForPreset(_settings, _edit) with { PresetName = n }));
+                _settings = _settings with { PresetName = n };
+                presetMsg.Text = L.T("Preset \"{0}\" saved", n);
+                Save();
+            }
+            catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or IOException) { presetMsg.Text = ex.Message; }
+        });
+        var row = new DockPanel();
+        DockPanel.SetDock(savePreset, Dock.Right);
+        savePreset.Margin = new Thickness(6, 0, 0, 0);
+        row.Children.Add(savePreset); row.Children.Add(name);
+        var save = Ui.Card(new StackPanel { Spacing = 8, Children = { Ui.H2(L.T("Save as preset")), row, presetMsg } });
+
+        var rules = Ui.Card(new StackPanel
+        {
+            Spacing = 10,
+            Children =
+            {
+                Ui.H2(L.T("What the preset decides for other files")),
+                Ui.Muted(L.T("Saved with the preset and used when it is applied to other files (their automatic track plan). They don't change this file: its tracks, codecs and formats are set in the Video, Audio and Subtitles tabs.")),
+                Form(FormSection.PresetRules),
+            },
+        });
+        var left = new StackPanel { Spacing = 14, Children = { import, save } };
+        var g = Ui.Columns(left, rules);
+        g.ColumnSpacing = 16;
+        left.VerticalAlignment = VerticalAlignment.Top;
+        rules.VerticalAlignment = VerticalAlignment.Top;
+        return g;
+    }
+
+    // ------------------------------------------------------------------ video
+
+    private Control VideoTab()
+    {
+        var p = _settings.ProfileDefinition;
+        var root = new StackPanel { Spacing = 14, Children = { TrackListCard("video") } };
+        var sub = new TabControl();
+        void Page(string tag, string header, Control content) =>
+            sub.Items.Add(new TabItem { Header = header, Tag = tag, FontSize = 13.5, Content = new Border { Padding = new Thickness(0, 12, 0, 0), Child = content } });
+        Page("general", L.T("General"), Form(FormSection.Video));
+        if (p.EncodesVideo && !p.IsImages)
+        {
+            var info = new StackPanel { Spacing = 8 };
+            var v = _a!.Source.PrimaryVideo;
+            if (v is not null) info.Children.Add(Ui.Muted($"{L.T("Source")}: {v.CodecName} · {Details(v)}"));
+            info.Children.Add(Ui.Button(L.T("Encoder command"), async () =>
+            {
+                await SaveNowAsync(false);
+                var cmd = _a?.CommandLine ?? await _queue.PreviewCommandAsync(_job);
+                await TextWindow.ShowAsync(this, L.T("Encoder command"), cmd);
+            }));
+            // Compressibility check: a few short samples encoded exactly as the job will be predict the final size.
+            var estimate = Ui.Muted(L.T("Encodes a few seconds in several places with these settings and predicts the final size."));
+            info.Children.Add(Ui.Button(L.T("Estimate the final size"), async () =>
+            {
+                await SaveNowAsync(false);
+                estimate.Text = L.T("Encoding samples…");
+                try
+                {
+                    var settings = _settings; var edit = _edit;
+                    var e = await Task.Run(() => SizeEstimator.EstimateAsync(_queue, _job, settings, edit, ct: _previewCts.Token));
+                    estimate.Text = e.Describe();
+                }
+                catch (OperationCanceledException) { }
+                catch (Exception ex) { estimate.Text = ex.Message; }
+            }));
+            info.Children.Add(estimate);
+            var g = Ui.Columns(Form(FormSection.VideoRate), Ui.Card(info));
+            g.ColumnSpacing = 20;
+            g.ColumnDefinitions[1].Width = new GridLength(300);
+            info.VerticalAlignment = VerticalAlignment.Top;
+            ((Control)g.Children[1]).VerticalAlignment = VerticalAlignment.Top;
+            Page("rate", L.T("Quality and speed"), g);
+            // Every parameter of the encoder that will run, one sub-tab per group, read from its own help.
+            var pages = new ParamPages(new CommandLineModel(_settings.Encoder.Extra, x => { _settings = _settings with { Encoder = _settings.Encoder with { Extra = x } }; Save(); }),
+                ct => _queue.ParameterOptionsAsync(QueueService.ParameterTools.Video, _settings, ct),
+                example: RigayaEncoders.Wanted(_settings) ? "--aq-temporal --bref-mode each" : "-x265-params psy-rd=2:aq-strength=0.8", host: sub);
+            pages.PagesAdded += () => { foreach (var it in sub.Items.OfType<TabItem>()) if ((string?)it.Tag == _videoSub) sub.SelectedItem = it; };
+            root.Children.Add(pages);
+        }
+        sub.SelectedItem = sub.Items.OfType<TabItem>().FirstOrDefault(i => (string?)i.Tag == _videoSub) ?? sub.Items[0];
+        sub.SelectionChanged += (_, e) => { if (e.Source == sub && sub.SelectedItem is TabItem { Tag: string tag }) _videoSub = tag; };
+        root.Children.Add(sub);
+        return root;
+    }
+
+    // ------------------------------------------------------------------ audio
+
+    private static bool IsLossless(AudioCodec c) => c is AudioCodec.Flac or AudioCodec.Alac or AudioCodec.WavPack or AudioCodec.TrueHd
+        or AudioCodec.Pcm16 or AudioCodec.Pcm24 or AudioCodec.Pcm32Float;
+
+    private Control AudioTab()
+    {
+        var p = _settings.ProfileDefinition;
+        var root = new StackPanel { Spacing = 14, Children = { TrackListCard("audio") } };
+        if (p.UsesAudio) root.Children.Add(TrackPages("audio", AudioPage));
+        root.Children.Add(Ui.Muted(L.T("Volume, normalisation, downmix and sample rate of every track: Filters tab.")));
+        return root;
+    }
+
+    private Control AudioPage(int idx, TrackPlan t)
+    {
+        var box = new StackPanel { Spacing = 12, Children = { Labels(idx, t) } };
+        var encoders = Encoders;
+        bool copy = string.Equals(t.Output, nameof(AudioCodec.Copy), StringComparison.OrdinalIgnoreCase);
+        var codec = Enum.TryParse<AudioCodec>(t.Output, true, out var c) && c != AudioCodec.Auto ? c : AudioCodec.Copy;
+        var codecs = new List<(AudioCodec, string, bool)> { (AudioCodec.Copy, AudioCodec.Copy.Display(), true) };
+        foreach (var x in Enum.GetValues<AudioCodec>().Where(x => x is not (AudioCodec.Auto or AudioCodec.Copy)))
+        {
+            bool ok = encoders.Available(x).Count > 0;
+            codecs.Add((x, x.Display() + (ok ? "" : " — " + L.T("no encoder here")), ok));
+        }
+        var fields = new List<Control>
+        {
+            Ui.Field("Codec", Ui.Combo(codecs, codec, v => UpdateTrack(idx, x => x with
+            {
+                Output = v.ToString(), Encoder = v == AudioCodec.Copy ? null : encoders.Best(v), Arguments = null,
+                Bitrate = v == AudioCodec.Copy || IsLossless(v) ? null : x.Bitrate,
+            }, rerender: true))),
+        };
+        if (!copy)
+        {
+            var available = encoders.Available(codec);
+            var enc = t.Encoder is { } te && available.Contains(te) ? te : available.FirstOrDefault();
+            fields.Add(Ui.Field("Encoder", Ui.Combo(available.Select(e => (e, AudioEncoderSet.Describe(e))), enc ?? "", v => UpdateTrack(idx, x => x with { Encoder = v, Arguments = null }, rerender: true))));
+            if (!IsLossless(codec))
+            {
+                var kbps = Ui.Number(t.Bitrate ?? 0, 0, 1536, 16, v => UpdateTrack(idx, x => x with { Bitrate = v > 0 ? (int)v : null }), "0");
+                fields.Add(Ui.Field("Bitrate (kb/s)", kbps, L.T("Per stereo pair (scaled for more channels); 0 = KnA's value for the codec.")));
+            }
+            var chans = new (int?, string)[] { (null, L.T("As the source")), (8, "7.1"), (6, "5.1"), (2, L.T("Stereo")), (1, L.T("Mono")) };
+            fields.Add(Ui.Field("Channels", Ui.Combo(chans, t.Channels, v => UpdateTrack(idx, x => x with { Channels = v }))));
+        }
+        box.Children.Add(Ui.Columns([.. fields]));
+        if (copy) box.Children.Add(Ui.Muted(L.T("The track is copied as it is: no encoder, no audio filter.")));
+        else if (encoders.Available(codec).FirstOrDefault() is { } first)
+        {
+            var enc = t.Encoder is { } te && encoders.Has(te) ? te : first;
+            box.Children.Add(Ui.H2(L.T("All {0} parameters", enc)));
+            box.Children.Add(new ParamPages(new CommandLineModel(t.Arguments, x => UpdateTrack(idx, y => y with { Arguments = x })),
+                ct => _queue.ParameterOptionsAsync(QueueService.ParameterTools.AudioEncoder + enc, _settings, ct), tabs: false,
+                example: enc is AudioEncoderSet.Fdkaac ? "--afterburner 1" : enc is AudioEncoderSet.Qaac ? "--quality 2" : "-aac_coder twoloop"));
+        }
+        return box;
+    }
+
+    // ------------------------------------------------------------------ subtitles
+
+    private Control SubtitlesTab()
+    {
+        var p = _settings.ProfileDefinition;
+        var root = new StackPanel { Spacing = 14, Children = { TrackListCard("subtitle") } };
+        if (p.UsesTrackPlan) root.Children.Add(TrackPages("subtitle", SubtitlePage));
+        return root;
+    }
+
+    private Control SubtitlePage(int idx, TrackPlan t)
+    {
+        var p = _settings.ProfileDefinition;
+        var box = new StackPanel { Spacing = 12 };
+        var st = TrackPlanner.Lookup(t, AllMedia()) as SubtitleStream;
+        var container = _a!.Container is { Length: > 0 } ac ? ac : _settings.EffectiveContainer;
+        if (t.Burn)
+        {
+            box.Children.Add(Ui.Note(L.T("Burned into the picture: it is drawn on the video (fonts of the file included) and is not a separate track.")));
+            box.Children.Add(Ui.Field("Delay (ms)", Ui.Number(t.DelayMs, -600000, 600000, 10, v => UpdateTrack(idx, x => x with { DelayMs = v }), "0")));
+        }
+        else
+        {
+            box.Children.Add(Labels(idx, t));
+            var formats = new List<(string, string, bool)>();
+            foreach (var (value, label) in Containers.SubtitleOutputs)
+            {
+                bool ok = Containers.ChosenSubtitleCodec(container, st, t.Codec, value) is not null;
+                formats.Add((value, (value == "copy" ? L.T("Copy (no re-encoding)") : label) + (ok ? "" : " — " + L.T("not possible in {0}", container.ToUpperInvariant())), ok));
+            }
+            if (KnA.Core.Ocr.SubtitleOcr.CanRead(st?.CodecName ?? t.Codec))
+                formats.Add((KnA.Core.Ocr.SubtitleOcr.OutputValue, L.T("Text (OCR, picture subtitles)"), true));
+            var cur = t.Output ?? "copy";
+            box.Children.Add(Ui.Columns(Ui.Field("Format", Ui.Combo(formats, cur, v => UpdateTrack(idx, x => x with { Output = v, Arguments = null }, rerender: true)))));
+            if (cur is not ("copy" or KnA.Core.Ocr.SubtitleOcr.OutputValue))
+            {
+                var enc = cur == "srt" ? "srt" : cur;
+                box.Children.Add(Ui.H2(L.T("All {0} parameters", enc)));
+                box.Children.Add(new ParamPages(new CommandLineModel(t.Arguments, x => UpdateTrack(idx, y => y with { Arguments = x })),
+                    ct => _queue.ParameterOptionsAsync(QueueService.ParameterTools.SubtitleEncoder + enc, _settings, ct), tabs: false, example: "-alignment 1"));
+            }
+        }
+        if (st is { CodecName: var cn } && KnA.Core.Ocr.SubtitleOcr.CanRead(cn))
+        {
+            // Subtitle Edit's OCR window (improved): read, check and correct, then save or use in this job
+            var ocrBtn = new Button { Content = L.T("OCR editor…") };
+            ToolTip.SetTip(ocrBtn, L.T("Opens the OCR editor: every picture next to its text, to check and correct, then save as SRT or use in this job."));
+            var track = t;
+            ocrBtn.Click += async (_, _) =>
+            {
+                ocrBtn.IsEnabled = false;
+                ocrBtn.Content = L.T("Reading…");
+                try
+                {
+                    await SaveNowAsync(false);
+                    var session = await Task.Run(() => KnA.Core.Ocr.OcrSession.OpenAsync(_queue, _job, track.File, track.Stream));
+                    var w = new OcrWindow(_queue, session) { Icon = Icon };
+                    await w.ShowDialog(this);
+                    if (w.UsedInJob)
+                    {
+                        _edit = _job.Edit;
+                        await MaterializeNowAsync();
+                    }
+                }
+                catch (Exception ex) { _issues.Children.Add(Ui.Note(ex.Message, true)); }
+                finally { ocrBtn.Content = L.T("OCR editor…"); ocrBtn.IsEnabled = true; }
+            };
+            box.Children.Add(ocrBtn);
+        }
+        if (p.UsesVideoFilters && !t.Burn)
+            box.Children.Add(Ui.Button(L.T("Burn this track into the picture"), () =>
+            {
+                var l = Materialize();
+                for (int j = 0; j < l.Count; j++) if (l[j].Kind == "subtitle") l[j] = l[j] with { Burn = j == idx, Include = j == idx ? false : l[j].Include };
+                Save(true);
+            }));
+        else if (t.Burn)
+            box.Children.Add(Ui.Button(L.T("Keep it as a track instead"), async () =>
+            {
+                var l = Materialize();
+                l[idx] = l[idx] with { Burn = false, Include = true, Output = null };
+                await MaterializeNowAsync();
+            }));
+        return box;
     }
 
     // ------------------------------------------------------------------ chapters
@@ -459,27 +832,6 @@ public sealed class JobEditorWindow : Window
             Ui.Button(L.T("Remove all"), () => { _edit = _edit with { Chapters = [] }; Save(true); }),
             Ui.Button(L.T("Back to the file's chapters"), () => { _edit = _edit with { Chapters = null }; Save(true); })));
         return box;
-    }
-
-    private void MoveTrack(int i, int delta)
-    {
-        var l = Materialize();
-        var same = l.Select((t, j) => (t, j)).Where(x => x.t.Kind == l[i].Kind).Select(x => x.j).ToList();
-        int pos = same.IndexOf(i) + delta;
-        if (pos < 0 || pos >= same.Count) return;
-        int target = same[pos];
-        (l[i], l[target]) = (l[target], l[i]);
-        RenderTab(); Save();
-    }
-
-    private async Task AddExternalAsync()
-    {
-        var files = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions { Title = L.T("Add external files"), AllowMultiple = true });
-        var paths = files.Select(f => f.TryGetLocalPath()).OfType<string>().Where(p => !_edit.ExternalFiles.Contains(p) && p != _job.SourcePath).ToList();
-        if (paths.Count == 0) return;
-        _edit = _edit with { ExternalFiles = [.. _edit.ExternalFiles, .. paths] };
-        await SaveNowAsync(true);
-        _issues.Children.Add(Ui.Note(L.T("{0} file(s) added: tick the tracks to use.", paths.Count)));
     }
 
     // ------------------------------------------------------------------ trim
@@ -811,34 +1163,42 @@ public sealed class JobEditorWindow : Window
         }
 
         var right = new StackPanel { Spacing = 12 };
+        if (p.UsesVideoFilters && p.EncodesVideo && !p.IsImages)
+        {
+            var gpu = new StackPanel { Spacing = 10, Children = { Ui.H2(L.T("GPU filters")) } };
+            var backend = _settings.EffectiveBackend;
+            if (RigayaEncoders.Wanted(_settings))
+            {
+                gpu.Children.Add(Ui.Muted(L.T("{0}'s own filters (--vpp-*): they run on the GPU inside the encoder, after the FFmpeg filters.", RigayaEncoders.DisplayName(backend))));
+                gpu.Children.Add(new ParamPages(new CommandLineModel(_settings.Encoder.GpuFilters, x => { _settings = _settings with { Encoder = _settings.Encoder with { GpuFilters = x } }; Save(); }),
+                    ct => _queue.ParameterOptionsAsync(QueueService.ParameterTools.Vpp, _settings, ct), tabs: false, example: "--vpp-resize spline36 --vpp-nlmeans"));
+            }
+            else if (backend == EncoderBackend.Software)
+                gpu.Children.Add(Ui.Muted(L.T("The video is encoded on the CPU: choose a GPU encoder in the Video tab to use its filters.")));
+            else if (VideoEncoders.GpuFilterSuffixes(backend).Count == 0)
+                gpu.Children.Add(Ui.Muted(L.T("FFmpeg has no filters for {0}: choose VCEEncC as the encoder program (Video tab) to use its GPU filters.", backend.Display())));
+            else
+            {
+                gpu.Children.Add(Ui.Muted(L.T("FFmpeg filters of {0}: the frames are uploaded to the GPU after the filters on the left and filtered there, right before the encoder.", backend.Display())));
+                gpu.Children.Add(new GpuFilterEditor(_settings.VideoFilters.Gpu, (tool, ct) => _queue.ParameterOptionsAsync(tool, _settings, ct),
+                    x => SetVideo(f => f with { Gpu = x })));
+            }
+            right.Children.Add(Ui.Card(gpu));
+        }
         if (p.UsesVideoFilters)
         {
-            var fs = _settings.Frameserver;
             var sec = new StackPanel { Spacing = 10, Children = { Ui.H2("VapourSynth / AviSynth") } };
             if (Frameserver.KindOf(_job.SourcePath) != FrameserverKind.None)
                 sec.Children.Add(Ui.Muted(L.T("The source is already a script: its video (and audio, if it sets one) is used directly.")));
             else
-            {
-                var kinds = new[] { (FrameserverKind.None, L.T("None (FFmpeg decodes the file)")), (FrameserverKind.VapourSynth, "VapourSynth"), (FrameserverKind.AviSynth, "AviSynth+") };
-                var templates = Frameserver.Templates.Where(t => t.Kind == fs.Kind).ToList();
-                sec.Children.Add(Ui.Columns(
-                    Ui.Field("Frameserver", Ui.Combo(kinds, fs.Kind, k => SetFs(x => x with
-                    {
-                        Kind = k,
-                        Script = string.IsNullOrWhiteSpace(x.Script) || Frameserver.Templates.Any(t => t.Body == x.Script)
-                            ? Frameserver.Templates.FirstOrDefault(t => t.Kind == k)?.Body : x.Script,
-                    }, true))),
-                    Ui.Field("Template", Ui.Combo(new[] { (-1, "—") }.Concat(templates.Select((t, i) => (i, t.Name))), -1,
-                        i => { if (i >= 0) SetFs(x => x with { Script = templates[i].Body }, true); }))));
-                if (fs.Kind != FrameserverKind.None)
+                sec.Children.Add(new FrameserverEditor(_settings.Frameserver, (fs, quiet) =>
                 {
-                    var script = Ui.Text(fs.Script, x => SetFs(f => f with { Script = x }, false), mono: true, multiline: true);
-                    script.MinHeight = 200;
-                    sec.Children.Add(Ui.Field(L.T("Script") + " ({source} = " + L.T("this file") + ")", script));
-                    sec.Children.Add(Ui.Toggle(L.T("Use the audio produced by the script"), fs.AudioFromScript, x => SetFs(f => f with { AudioFromScript = x }, false)));
-                    sec.Children.Add(Ui.Muted(L.T("VapourSynth: video = output 0, audio = output 1 (vspipe). AviSynth: AudioDub in the script. Decoding happens in the script, without hardware acceleration.")));
-                }
-            }
+                    var old = _settings.Frameserver;
+                    _settings = _settings with { Frameserver = fs };
+                    // Switching the frameserver (or its audio) changes which tracks exist: the track list follows.
+                    if (fs.Kind != old.Kind || fs.AudioFromScript != old.AudioFromScript) _ = MaterializeNowAsync();
+                    else Save();
+                }));
             right.Children.Add(Ui.Card(sec));
         }
 
@@ -855,207 +1215,11 @@ public sealed class JobEditorWindow : Window
         audio.Children.Add(Ui.Muted(L.T("Audio filters force re-encoding of the affected tracks.")));
         right.Children.Add(Ui.Card(audio));
 
-        var g = Ui.Columns(Ui.Card(picture), right);
-        g.ColumnSpacing = 16;
-        right.VerticalAlignment = VerticalAlignment.Top;
-        g.Children[0].VerticalAlignment = VerticalAlignment.Top;
-        return g;
-    }
-
-    // ------------------------------------------------------------------ output
-
-    // ------------------------------------------------------------------ video / audio / subtitles
-
-    /// <summary>The settings form for one tab, wired to this job (size budget, program parameters).</summary>
-    private SettingsForm Form(FormSection section)
-    {
-        var form = new SettingsForm(_settings, () => _queue.Settings.Capabilities, full: true, () => _queue.Tools, section)
-        {
-            AllowedContainers = _a!.AllowedContainers,
-            SizeInfo = SizeText,
-            ParameterOptions = (tool, s, ct) => _queue.ParameterOptionsAsync(tool, s, ct),
-            AiRuntimeInstalled = () => File.Exists(KnA.Core.Tools.ComponentManager.VenvPython(_queue.Store.DataDirectory)),
-            InstallComponent = id => Task.Run(() => _queue.Components.InstallAsync(id)),
-        };
-        form.Rebuild();   // the properties above are set after the constructor's first build
-        form.Changed += s => { _settings = s; Save(true); };
-        return form;
-    }
-
-    /// <summary>What a target size leaves for each stream of this file, with the current tracks and trim.</summary>
-    private string? SizeText(JobSettings s)
-    {
-        if (_queue.SizeBudget(_job, s, _edit) is not { } b) return null;
-        var text = SizePlanner.Describe(b);
-        return b.TooSmall ? "⚠ " + text + "\n" + L.T("Too small for this duration: the video gets the minimum and the file will be bigger.") : text;
-    }
-
-    private Control VideoTab()
-    {
-        var form = Form(FormSection.Video);
-        var info = new StackPanel { Spacing = 8 };
-        var v = _a!.Source.PrimaryVideo;
-        if (v is not null) info.Children.Add(Ui.Muted($"{L.T("Source")}: {v.CodecName} · {Details(v)}"));
-        info.Children.Add(Ui.Button(L.T("Encoder command"), async () =>
-        {
-            await SaveNowAsync(false);
-            var cmd = _a?.CommandLine ?? await _queue.PreviewCommandAsync(_job);
-            await TextWindow.ShowAsync(this, L.T("Encoder command"), cmd);
-        }));
-        // Compressibility check: a few short samples encoded exactly as the job will be predict the final size.
-        var estimate = Ui.Muted(L.T("Encodes a few seconds in several places with these settings and predicts the final size."));
-        info.Children.Add(Ui.Button(L.T("Estimate the final size"), async () =>
-        {
-            await SaveNowAsync(false);
-            estimate.Text = L.T("Encoding samples…");
-            try
-            {
-                var settings = _settings; var edit = _edit;
-                var e = await Task.Run(() => KnA.Core.Queue.SizeEstimator.EstimateAsync(_queue, _job, settings, edit, ct: _previewCts.Token));
-                estimate.Text = e.Describe();
-            }
-            catch (OperationCanceledException) { }
-            catch (Exception ex) { estimate.Text = ex.Message; }
-        }));
-        info.Children.Add(estimate);
-        info.Children.Add(Ui.Muted(L.T("Picture filters (crop, resize, denoise, VapourSynth/AviSynth scripts) are in the Filters tab; the cut in the Trim tab.")));
-        var g = Ui.Columns(form, Ui.Card(info));
-        g.ColumnSpacing = 20;
-        g.ColumnDefinitions[1].Width = new GridLength(320);
-        info.VerticalAlignment = VerticalAlignment.Top;
-        ((Control)g.Children[1]).VerticalAlignment = VerticalAlignment.Top;
-        return g;
-    }
-
-    /// <summary>Per-track codec choices of one kind (audio: codec + bitrate; subtitles: format + burning).</summary>
-    private Control PerTrack(string kind)
-    {
-        var list = Tracks;
-        var media = AllMedia();
-        var p = _settings.ProfileDefinition;
-        var rows = list.Select((t, i) => (t, i)).Where(x => x.t.Kind == kind).ToList();
-        var box = new StackPanel { Spacing = 6, Children = { Ui.H2(kind == "audio" ? L.T("Audio tracks") : L.T("Subtitle tracks")) } };
-        if (rows.Count == 0) { box.Children.Add(Ui.Muted(L.T("No tracks of this kind."))); return Ui.Card(box); }
-        bool outputs = p.EncodesVideo || p.IsRemux;
-        var grid = new Grid { ColumnDefinitions = new ColumnDefinitions("Auto,*,190,90,Auto"), ColumnSpacing = 10, RowSpacing = 6 };
-        int r = 0;
-        foreach (var (t, i) in rows)
-        {
-            int idx = i;
-            grid.RowDefinitions.Add(new RowDefinition(GridLength.Auto));
-            void Put(Control c, int col) { Grid.SetRow(c, r); Grid.SetColumn(c, col); c.VerticalAlignment = VerticalAlignment.Center; grid.Children.Add(c); }
-            var st = TrackPlanner.Lookup(t, media);
-            Put(Ui.Check("", t.Include, v => UpdateTrack(idx, x => x with { Include = v }, rerender: true)), 0);
-            Put(new StackPanel
-            {
-                Children =
-                {
-                    new TextBlock { Text = $"#{t.Stream} {t.Codec ?? st?.CodecName} {t.Language}" + (t.Title is { Length: > 0 } ti ? $" · {ti}" : ""), FontWeight = FontWeight.SemiBold, TextTrimming = TextTrimming.CharacterEllipsis },
-                    Ui.Muted((t.File == _job.SourcePath ? "" : Path.GetFileName(t.File) + " · ") + Details(st), 11.5),
-                },
-                Opacity = t.Include || t.Burn ? 1 : 0.55,
-            }, 1);
-            if (outputs)
-            {
-                var combo = Ui.Combo(OutputChoices(kind), t.Output, v => UpdateTrack(idx, x => x with { Output = v }, rerender: kind == "audio"));
-                combo.IsEnabled = t.Include;
-                Put(combo, 2);
-            }
-            if (outputs && kind == "audio")
-            {
-                bool copies = string.Equals(t.Output, nameof(AudioCodec.Copy), StringComparison.OrdinalIgnoreCase);
-                var kbps = Ui.Number(t.Bitrate ?? 0, 0, 1536, 16, v => UpdateTrack(idx, x => x with { Bitrate = v > 0 ? (int)v : null }), "0");
-                kbps.ShowButtonSpinner = false;
-                kbps.IsEnabled = !copies && t.Include;
-                ToolTip.SetTip(kbps, L.T("kb/s per stereo pair; 0 = the setting below"));
-                Put(kbps, 3);
-            }
-            if (kind == "subtitle" && st is SubtitleStream { CodecName: var cn } && KnA.Core.Ocr.SubtitleOcr.CanRead(cn))
-            {
-                // Subtitle Edit's OCR window (improved): read, check and correct, then save or use in this job
-                var ocrBtn = new Button { Content = "OCR…", Classes = { "ghost" } };
-                ToolTip.SetTip(ocrBtn, L.T("Opens the OCR editor: every picture next to its text, to check and correct, then save as SRT or use in this job."));
-                var track = t;
-                ocrBtn.Click += async (_, _) =>
-                {
-                    ocrBtn.IsEnabled = false;
-                    ocrBtn.Content = L.T("Reading…");
-                    try
-                    {
-                        await SaveNowAsync(false);
-                        var session = await Task.Run(() => KnA.Core.Ocr.OcrSession.OpenAsync(_queue, _job, track.File, track.Stream));
-                        var w = new OcrWindow(_queue, session) { Icon = Icon };
-                        await w.ShowDialog(this);
-                        if (w.UsedInJob)
-                        {
-                            _edit = _job.Edit;
-                            _a = await Task.Run(() => _queue.AnalyzeAsync(_job));
-                            RenderIssues();
-                            RenderTab();
-                        }
-                    }
-                    catch (Exception ex) { _issues.Children.Add(Ui.Note(ex.Message, true)); }
-                    finally { ocrBtn.Content = "OCR…"; ocrBtn.IsEnabled = true; }
-                };
-                Put(ocrBtn, 3);
-            }
-            if (kind == "subtitle" && p.UsesVideoFilters)
-            {
-                var rb = new RadioButton { GroupName = "burn" + _job.Id, IsChecked = t.Burn, Content = L.T("Burn") };
-                rb.IsCheckedChanged += (_, _) =>
-                {
-                    if (rb.IsChecked != true) return;
-                    var l = Materialize();
-                    for (int j = 0; j < l.Count; j++) if (l[j].Kind == "subtitle") l[j] = l[j] with { Burn = j == idx };
-                    Save(true);
-                };
-                Put(rb, 4);
-            }
-            r++;
-        }
-        box.Children.Add(grid);
-        if (kind == "audio" && outputs)
-            box.Children.Add(Ui.Muted(L.T("\"Job setting\" follows the codec and bitrate chosen below for every track.")));
-        if (kind == "subtitle" && p.UsesVideoFilters && rows.Any(x => x.t.Burn))
-            box.Children.Add(Ui.Button(L.T("Don't burn any subtitle"), () =>
-            {
-                var l = Materialize();
-                for (int j = 0; j < l.Count; j++) l[j] = l[j] with { Burn = false };
-                Save(true);
-            }));
-        return Ui.Card(box);
-    }
-
-    private Control AudioTab() => new StackPanel { Spacing = 14, Children = { PerTrack("audio"), Form(FormSection.Audio), Ui.Muted(L.T("Volume, normalisation, downmix and sample rate: Filters tab.")) } };
-
-    private Control SubtitlesTab() => new StackPanel { Spacing = 14, Children = { PerTrack("subtitle"), Form(FormSection.Subtitles) } };
-
-    // ------------------------------------------------------------------ output
-
-    private Control OutputTab()
-    {
-        var p = _settings.ProfileDefinition;
-        var form = Form(FormSection.Output);
-
-        var right = new StackPanel { Spacing = 14 };
-        {
-            var folder = Ui.Text(_edit.OutputFolder, x => { _edit = _edit with { OutputFolder = string.IsNullOrWhiteSpace(x) ? null : x.Trim() }; Save(); }, L.T("Same as the general setting"));
-            var browse = Ui.Button("…", async () =>
-            {
-                var r = await StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions());
-                if (r.FirstOrDefault()?.TryGetLocalPath() is { } path) folder.Text = path;
-            });
-            var dp = new DockPanel();
-            DockPanel.SetDock(browse, Dock.Right);
-            browse.Margin = new Thickness(6, 0, 0, 0);
-            dp.Children.Add(browse); dp.Children.Add(folder);
-            right.Children.Add(Ui.Field("Destination folder", dp));
-        }
         var aiAnalyse = Ui.Button(L.T("Analyse frames with AI"), async () =>
         {
             var w = new AiAssistantWindow(_queue, _settings, _job, analyse: true) { Icon = Icon };
             await w.ShowDialog(this);
-            if (w.Accepted is { } accepted) { _settings = accepted with { PresetName = null }; Save(true); }
+            if (w.Accepted is { } accepted) { _settings = accepted with { PresetName = null }; await MaterializeNowAsync(); }
         });
         right.Children.Add(Ui.Card(new StackPanel
         {
@@ -1066,60 +1230,38 @@ public sealed class JobEditorWindow : Window
                 Ui.Muted(L.T("A vision model looks at a few frames and proposes filters and the upscaler. Nothing changes until you apply it.")),
             },
         }));
-        if (p.IsDemux)
-            right.Children.Add(Ui.Note(L.T("Demux: choose the streams, attachments and chapters to extract in the Tracks tab.")));
 
-        var name = new TextBox { Text = _settings.PresetName ?? "", Watermark = L.T("Preset name") };
-        var presetMsg = Ui.Muted(L.T("Saves the settings of this file (not the tracks or the trim) for reuse."));
-        var savePreset = Ui.Button(L.T("Save as preset"), () =>
+        var g = Ui.Columns(Ui.Card(picture), right);
+        g.ColumnSpacing = 16;
+        right.VerticalAlignment = VerticalAlignment.Top;
+        g.Children[0].VerticalAlignment = VerticalAlignment.Top;
+        return g;
+    }
+
+    // ------------------------------------------------------------------ output
+
+    private Control OutputTab()
+    {
+        var p = _settings.ProfileDefinition;
+        var left = new StackPanel { Spacing = 14 };
+        left.Children.Add(Form(FormSection.Output));
+        if (_a!.AllowedContainers.Count > 0 && (p.EncodesVideo || p.IsRemux))
+            left.Children.Add(Ui.Muted(L.T("Only the containers that can hold every final stream (video, audio and subtitle formats, attachments) are offered.")));
+        if (p.UsesTrackPlan || p.IsDemux) left.Children.Add(TrackListCard("attachment"));
+        if (!p.IsKeyframes && !p.IsImages) left.Children.Add(Ui.Card(ChaptersSection()));
+
+        var right = new StackPanel { Spacing = 14 };
+        var folder = Ui.Text(_edit.OutputFolder, x => { _edit = _edit with { OutputFolder = string.IsNullOrWhiteSpace(x) ? null : x.Trim() }; Save(); }, L.T("Same as the general setting"));
+        var browse = Ui.Button("…", async () =>
         {
-            try
-            {
-                var n = (name.Text ?? "").Trim();
-                _queue.Presets.Save(new Preset(n, null, _settings with { PresetName = n }));
-                _settings = _settings with { PresetName = n };
-                presetMsg.Text = L.T("Preset \"{0}\" saved", n);
-                Save();
-            }
-            catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or IOException) { presetMsg.Text = ex.Message; }
+            var r = await StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions());
+            if (r.FirstOrDefault()?.TryGetLocalPath() is { } path) folder.Text = path;
         });
-        var row = new DockPanel();
-        DockPanel.SetDock(savePreset, Dock.Right);
-        savePreset.Margin = new Thickness(6, 0, 0, 0);
-        row.Children.Add(savePreset); row.Children.Add(name);
-        // Apply a preset to this file, only the chosen parts (the rest of the settings and the tracks stay).
-        var presets = _queue.Presets.All;
-        Preset? pick = presets.FirstOrDefault(x => x.Name == _settings.PresetName) ?? presets.FirstOrDefault();
-        var parts = PresetParts.All;
-        var partsPanel = new WrapPanel();
-        foreach (var (part, label) in new[]
-        {
-            (PresetParts.Video, L.T("Video")), (PresetParts.Audio, L.T("Audio")), (PresetParts.Subtitles, L.T("Subtitles")),
-            (PresetParts.Filters, L.T("Picture filters")), (PresetParts.Tracks, L.T("Track selection")),
-        })
-        {
-            var pr = part;
-            var c = Ui.Check(label, true, v => parts = v ? parts | pr : parts & ~pr);
-            c.Margin = new Thickness(0, 0, 10, 0);
-            partsPanel.Children.Add(c);
-        }
-        var applyPreset = Ui.Button(L.T("Apply"), () =>
-        {
-            if (pick is null || parts == PresetParts.None) return;
-            _settings = _settings.Merge(pick.Settings with { PresetName = pick.Name }, parts);
-            Save(true);
-        });
-        var presetCombo = Ui.Combo(presets.Select(x => (x.Name, (x.BuiltIn ? "" : "★ ") + x.Name)), pick?.Name ?? "", n => pick = presets.FirstOrDefault(x => x.Name == n));
-        right.Children.Add(Ui.Card(new StackPanel
-        {
-            Spacing = 8,
-            Children =
-            {
-                Ui.H2(L.T("Preset")), presetCombo, partsPanel, applyPreset,
-                Ui.Muted(L.T("Choose what the preset replaces; everything else of each file (and its tracks, cuts, chapters) stays as it is.")),
-                new Separator(), row, presetMsg,
-            },
-        }));
+        var dp = new DockPanel();
+        DockPanel.SetDock(browse, Dock.Right);
+        browse.Margin = new Thickness(6, 0, 0, 0);
+        dp.Children.Add(browse); dp.Children.Add(folder);
+        right.Children.Add(Ui.Field("Destination folder", dp));
         right.Children.Add(Ui.Button(L.T("FFmpeg command"), async () =>
         {
             await SaveNowAsync(false);
@@ -1128,8 +1270,10 @@ public sealed class JobEditorWindow : Window
         }));
         right.Children[^1].HorizontalAlignment = HorizontalAlignment.Left;
 
-        var g = Ui.Columns(form, right);
+        var g = Ui.Columns(left, right);
         g.ColumnSpacing = 20;
+        g.ColumnDefinitions[1].Width = new GridLength(320);
+        left.VerticalAlignment = VerticalAlignment.Top;
         right.VerticalAlignment = VerticalAlignment.Top;
         return g;
     }

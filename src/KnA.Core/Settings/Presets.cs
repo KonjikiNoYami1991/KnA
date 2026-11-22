@@ -111,57 +111,25 @@ public sealed record WizardAnswers(
     HdrMode Hdr = HdrMode.Auto,
     VideoFilterSettings? Filters = null);
 
-/// <summary>Turns plain-language answers into settings, choosing a working GPU when "fast" is asked.</summary>
-public static class PresetWizard
+/// <summary>Turns plain-language answers into settings (see <see cref="PresetWizard"/> for the detailed steps).</summary>
+public static partial class PresetWizard
 {
+    /// <summary>The short answers of earlier versions, as the detailed ones.</summary>
     public static JobSettings Build(WizardAnswers a, FfmpegCapabilities? caps)
     {
-        var profile = a.Goal switch
+        var d = new Dictionary<string, string>
         {
-            WizardGoal.Archive => ProfileKind.UniversalMkv,
-            WizardGoal.Tv => ProfileKind.BlurayAac,
-            WizardGoal.Web or WizardGoal.Phone => ProfileKind.Streaming,
-            WizardGoal.OldPlayer => ProfileKind.XvidMp3,
-            WizardGoal.Editing => ProfileKind.Workraw,
-            WizardGoal.Images => ProfileKind.Images,
-            _ => ProfileKind.Demux,
+            ["goal"] = a.Goal.ToString(),
+            ["codec"] = a.Goal is WizardGoal.Phone or WizardGoal.Tv or WizardGoal.Editing ? "H264"
+                : a.Codec switch { WizardCodec.Compatible => "H264", WizardCodec.Smallest => "AV1", _ => "HEVC" },
+            ["encoder"] = a.Speed == WizardSpeed.Fast ? "gpu" : "Software",
+            ["quality"] = a.Quality.ToString(),
+            ["resolution"] = a.Resolution.ToString(System.Globalization.CultureInfo.InvariantCulture),
+            ["subtitles"] = a.Subtitles.ToString(),
+            ["mix"] = a.Audio switch { WizardAudio.Stereo => "stereo", WizardAudio.Normalize => "normalize", _ => "keep" },
+            ["hdr"] = a.Hdr.ToString(),
         };
-        var codec = a.Codec switch
-        {
-            WizardCodec.Compatible => VideoCodec.H264,
-            WizardCodec.Smallest => VideoCodec.AV1,
-            _ => VideoCodec.HEVC,
-        };
-        if (a.Goal is WizardGoal.Phone or WizardGoal.Tv or WizardGoal.Editing) codec = VideoCodec.H264;
-        var p = Profiles.Get(profile);
-        if (!p.Codecs.Contains(codec)) codec = p.Codecs.FirstOrDefault(VideoCodec.H264);
-
-        var backend = EncoderBackend.Software;
-        if (a.Speed == WizardSpeed.Fast && p.AllowsHardware && caps is not null)
-        {
-            bool tenBit = codec != VideoCodec.H264;
-            foreach (var b in new[] { EncoderBackend.Nvenc, EncoderBackend.Qsv, EncoderBackend.Amf, EncoderBackend.VideoToolbox, EncoderBackend.Vaapi })
-                if (caps.IsUsable(codec, b, tenBit) || caps.IsUsable(codec, b, false)) { backend = b; break; }
-        }
-
-        int resolution = a.Goal == WizardGoal.Phone && a.Resolution is 0 or > 720 ? 720 : a.Resolution;
-        return new JobSettings
-        {
-            Profile = profile,
-            Codec = codec,
-            Backend = backend,
-            Quality = a.Quality,
-            Resolution = resolution,
-            Subtitles = profile == ProfileKind.Workraw ? SubtitleMode.None : a.Subtitles,
-            TenBit = codec != VideoCodec.H264,
-            Hdr = a.Hdr,
-            VideoFilters = a.Filters ?? new(),
-            AudioFilters = a.Audio switch
-            {
-                WizardAudio.Stereo => new AudioFilterSettings { DownmixStereo = true },
-                WizardAudio.Normalize => new AudioFilterSettings { Normalize = true },
-                _ => new AudioFilterSettings(),
-            },
-        };
+        var s = Build(d, caps);
+        return a.Filters is null ? s : s with { VideoFilters = a.Filters };
     }
 }

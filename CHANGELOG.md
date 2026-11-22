@@ -12,6 +12,36 @@
   tracks left out (e.g. PGS subtitles) instead of dropping them silently.
 - Dolby Vision found from the frames when the container has no configuration record (old mkvmerge remuxes).
 
+**Customization editor (the pencil), rebuilt**
+- Tabs: **Preset** · Trim · Video · Audio · Subtitles · Filters · Output · Preview. The Tracks tab is gone: each kind of
+  stream (video, audio, subtitles, attachments) is listed, kept or left out, ordered and labelled in its own tab, and
+  external files can be added from any of them. Chapters and attachments are in Output.
+- **Explicit settings only**: when the editor opens, what the profile would choose by itself (tracks, audio codec,
+  encoder and bitrate of each track, subtitle formats, container, the quality value and speed preset behind a quality
+  level) is written into the fields; a profile or preset can only be imported (Preset tab: "Import into the fields").
+- **Picking a profile in the Video tab** asks first, then resets the video parameters to what the profile allows
+  (e.g. Blu-ray AAC → H.264 8-bit, never HEVC) and lets it choose the audio and subtitle formats again.
+- **Video**: sub-tabs General · Quality and speed · and one page per group (rate control, GOP, analysis, colour/HDR,
+  profile, performance, input/output, other) with **every** parameter of the encoder that will run — FFmpeg's
+  encoders (x264/x265/SVT-AV1, NVENC, QSV, AMF, VA-API, Vulkan, VideoToolbox) and rigaya's NVEncC / QSVEncC / VCEEncC
+  — read from its own help, each with its value field and description. Options KnA sets itself are not listed twice.
+- **GPU encoders only when the GPU is there** (the hardware test must have passed on it; on the server, its own GPUs).
+- **Audio**: one sub-tab per kept track: codec, the exact encoder (qaac, libfdk_aac, AudioToolbox, fdkaac, FFmpeg's
+  aac, libopus…), bitrate, channels and every parameter of that encoder. **Subtitles**: the same, with format, burning
+  and the OCR editor.
+- **Filters**: the real **GPU filters** of the encoder — FFmpeg's (scale_cuda, vpp_qsv, denoise_vaapi, libplacebo…,
+  frames uploaded to the GPU right before the encoder) or rigaya's --vpp-* — and a **VapourSynth / AviSynth+ filter
+  list** like StaxRip's (QTGMC, Bwdif, IVTC, KNLMeansCL, DFTTest, SMDegrain, neo_f3kdb, CAS, LSFmod, AWarpSharp2,
+  DeHalo_alpha, resize, crop, levels, grain…) with a form for each filter; the script is written from the list, or by hand.
+- **Output** offers only the containers that can hold every final stream (e.g. no MP4 with FFV1, no WebM with FLAC).
+
+**Preset wizard, detailed**
+- Up to 20 questions, only the ones that apply: what the result is for, kind of picture (tune), codec, encoder (only
+  working GPUs), 8/10-bit, how the quality is decided (level, CRF/CQ value, bitrate or file size), resolution, HDR,
+  picture clean-up, container, audio codec / bitrate / channels / loudness, languages to keep, commentaries,
+  subtitles, external subtitles, OCR, segmented encoding; then a summary of what the preset will do. Same steps on
+  desktop and web.
+
 **Editor**
 - One tab per kind of stream: Tracks · Trim · **Video** · **Audio** · **Subtitles** · Filters · Output · Preview. Every
   setting is in one place: the quality level and the hand-set rate control are a single choice; codec and bitrate of each
@@ -82,6 +112,40 @@
 - Il log mostra solo i comandi eseguiti davvero (niente comando dell'encoder FFmpeg accanto a quello di NVEncC) ed elenca
   le tracce escluse (es. sottotitoli PGS) invece di scartarle in silenzio.
 - Dolby Vision riconosciuto dai fotogrammi quando il contenitore non ha il record di configurazione (vecchi remux mkvmerge).
+
+**Editor di personalizzazione (la matita), rifatto**
+- Schede: **Preset** · Taglio · Video · Audio · Sottotitoli · Filtri · Output · Anteprima. La scheda Tracce non c'è più:
+  ogni tipo di stream (video, audio, sottotitoli, allegati) si tiene o si esclude, si ordina e si etichetta nella sua
+  scheda, e da ognuna si possono aggiungere file esterni. Capitoli e allegati sono in Output.
+- **Solo impostazioni esplicite**: all'apertura, ciò che il profilo sceglierebbe da solo (tracce, codec, encoder e
+  bitrate di ogni traccia audio, formati dei sottotitoli, contenitore, valore di qualità e preset di velocità dietro a
+  un livello di qualità) viene scritto nei campi; un profilo o un preset si può solo importare (scheda Preset:
+  "Importa nei campi").
+- **Scegliere un profilo nella scheda Video** chiede conferma, poi riporta i parametri video a ciò che il profilo
+  permette (es. Blu-ray AAC → H.264 8 bit, mai HEVC) e gli fa scegliere di nuovo i formati audio e sottotitoli.
+- **Video**: sotto-schede Generale · Qualità e velocità · e una pagina per gruppo (rate control, GOP, analisi,
+  colore/HDR, profilo, prestazioni, ingresso/uscita, altro) con **tutti** i parametri dell'encoder che verrà usato — gli
+  encoder di FFmpeg (x264/x265/SVT-AV1, NVENC, QSV, AMF, VA-API, Vulkan, VideoToolbox) e NVEncC / QSVEncC / VCEEncC di
+  rigaya — letti dal suo help, ognuno con il suo campo e la sua descrizione. Le opzioni che KnA imposta da sé non
+  compaiono due volte.
+- **Encoder GPU solo se la GPU c'è** (deve aver superato il test hardware; sul server, le GPU del server).
+- **Audio**: una sotto-scheda per ogni traccia tenuta: codec, encoder esatto (qaac, libfdk_aac, AudioToolbox, fdkaac,
+  aac di FFmpeg, libopus…), bitrate, canali e tutti i parametri di quell'encoder. **Sottotitoli**: lo stesso, con
+  formato, hardsub ed editor OCR.
+- **Filtri**: i veri **filtri GPU** dell'encoder — quelli di FFmpeg (scale_cuda, vpp_qsv, denoise_vaapi, libplacebo…,
+  fotogrammi caricati sulla GPU subito prima dell'encoder) o i --vpp-* di rigaya — e un **elenco di filtri
+  VapourSynth / AviSynth+** come quello di StaxRip (QTGMC, Bwdif, IVTC, KNLMeansCL, DFTTest, SMDegrain, neo_f3kdb, CAS,
+  LSFmod, AWarpSharp2, DeHalo_alpha, ridimensiona, ritaglia, livelli, grana…) con un modulo per ogni filtro; lo script
+  viene scritto dall'elenco, oppure a mano.
+- **Output** propone solo i contenitori che possono contenere tutti gli stream finali (es. niente MP4 con FFV1, niente
+  WebM con FLAC).
+
+**Wizard dei preset, dettagliato**
+- Fino a 20 domande, solo quelle pertinenti: a cosa serve il risultato, tipo di immagine (tune), codec, encoder (solo
+  GPU funzionanti), 8/10 bit, come si decide la qualità (livello, valore CRF/CQ, bitrate o dimensione del file),
+  risoluzione, HDR, pulizia dell'immagine, contenitore, codec / bitrate / canali / volume dell'audio, lingue da tenere,
+  commenti, sottotitoli, sottotitoli esterni, OCR, codifica a segmenti; poi un riepilogo di cosa farà il preset. Stessi
+  passi su desktop e web.
 
 **Editor**
 - Una scheda per tipo di flusso: Tracce · Taglio · **Video** · **Audio** · **Sottotitoli** · Filtri · Uscita · Anteprima.

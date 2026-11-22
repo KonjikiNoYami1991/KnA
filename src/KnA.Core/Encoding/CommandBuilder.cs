@@ -304,6 +304,7 @@ public static class CommandBuilder
         bool tenBit = preview is null && s.EffectiveTenBit;
 
         var body = new List<string>();
+        IReadOnlyList<string>? gpuGlobal = null;   // device of the GPU filters (NVENC/QSV/VideoToolbox)
         bool plainPicture = false;   // no FFmpeg filter at all (a plain resize at most): the rigaya encoder can read the source itself
         ScaleResult? plainScale = null;
         var burnTrack = tracks.FirstOrDefault(t => t.Burn && t.Kind == "subtitle");
@@ -370,6 +371,19 @@ public static class CommandBuilder
             if (preview?.Kind == PreviewKind.Clip || (preview is null && !p.IsImages && hdr.Action == HdrAction.ToneMap && !tenBit))
                 post.Add("format=yuv420p");
             if (preview is null && p.EncodesVideo && VideoEncoders.FilterTail(backend, encodeCodec, tenBit) is { } tail) post.Add(tail);
+            // Filters of the GPU that encodes: after the upload, right before the FFmpeg hardware encoder.
+            if (preview is null && chunk?.Y4m != true && p.EncodesVideo && !rigaya && !p.IsImages && backend != EncoderBackend.Software
+                && s.VideoFilters.Gpu is { Length: > 0 } gpuChain && !string.IsNullOrWhiteSpace(gpuChain))
+            {
+                if (VideoEncoders.FilterTail(backend, encodeCodec, tenBit) is not null) post.Add(gpuChain.Trim());
+                else if (VideoEncoders.GpuFilterUpload(backend, tenBit) is { } upload)
+                {
+                    post.Add(upload.Upload);
+                    post.Add(gpuChain.Trim());
+                    gpuGlobal = upload.Global;
+                }
+                else issues.Add(Containers.Warning("{0} has no GPU filters in FFmpeg: the GPU filters are ignored.", backend.Display()));
+            }
 
             int bin = burnTrack is not null && burn?.BitmapStreamIndex is not null
                 ? inputs.Get(burn.BitmapFile ?? burnTrack.File, burn.BitmapFile is null ? burnTrack.DelaySeconds : burn.BitmapDelaySeconds) : -1;
@@ -419,6 +433,8 @@ public static class CommandBuilder
                 if (ctx.Options.CpuLevel >= 4 && venc.IndexOf("libx265") >= 0 && venc.IndexOf("-x265-params") is var xp and >= 0)
                     venc[xp + 1] += ":asm=avx512";
                 VideoEncoders.ApplyOverrides(venc, s.Encoder, s.VideoFilters.Fps ?? video.FrameRate);
+                // Frames already on the GPU: the encoder takes them as they are (no software pixel format).
+                if (gpuGlobal is not null && venc.IndexOf("-pix_fmt") is var pf and >= 0) venc.RemoveRange(pf, Math.Min(2, venc.Count - pf));
                 body.AddRange(venc);
             }
         }
@@ -445,7 +461,7 @@ public static class CommandBuilder
                     issues.Add(Containers.Warning("Audio track {0} of {1} not found: skipped.", t.Stream, Path.GetFileName(t.File)));
                     continue;
                 }
-                var aplan = AudioPlanner.Plan(ast, AudioPlanner.ForTrack(t, s), container, ctx.Options.AudioEncoders);   // the final container decides, also for the intermediate file
+                var aplan = AudioPlanner.PlanTrack(t, ast, s, container, ctx.Options.AudioEncoders);   // the final container decides, also for the intermediate file
                 if (aplan.Issue is { } ai) issues.Add(ai);
                 if (ctx.PreEncodedAudio.GetValueOrDefault($"{t.File}|{t.Stream}") is { } pre)
                 {
@@ -455,7 +471,7 @@ public static class CommandBuilder
                 else
                 {
                     body.AddRange(["-map", AudioInput(t, ast, inputs, ctx)]);
-                    body.AddRange(AudioPlanner.BuildArgs(aplan, audioOut, s.AudioFilters, s.Arguments.AudioFfmpeg));
+                    body.AddRange(AudioPlanner.BuildArgs(aplan, audioOut, s.AudioFilters, ToolArguments.Combine(s.Arguments.AudioFfmpeg, t.Arguments)));
                 }
                 if (container == "mxf" && !aplan.IsCopy) body.AddRange([$"-ar:a:{audioOut.ToString(CultureInfo.InvariantCulture)}", "48000"]); // MXF: 48 kHz only
                 body.AddRange(StreamMetadata(outIndex, t));
@@ -485,7 +501,7 @@ public static class CommandBuilder
                     continue;
                 }
                 body.AddRange(["-map", $"{inputs.Get(t.File, t.DelaySeconds)}:{t.Stream}", $"-c:s:{subOut}", codec]);
-                if (codec != "copy") body.AddRange(ToolArguments.ForStream(s.Arguments.Subtitles, 's', subOut));
+                if (codec != "copy") body.AddRange(ToolArguments.ForStream(ToolArguments.Combine(s.Arguments.Subtitles, t.Arguments), 's', subOut));
                 body.AddRange(StreamMetadata(outIndex, t));
                 subOut++;
                 outIndex++;
@@ -527,6 +543,8 @@ public static class CommandBuilder
         var a2 = new List<string> { "-hide_banner", "-nostdin", preview is null && chunk is null ? "-n" : "-y", "-ignore_unknown" };
         if (preview is null && !restOnly && VideoEncoders.GlobalArgs(backend, ctx.Options.VaapiDevice) is { Count: > 0 } g && p.EncodesVideo && !copyVideo)
             a2.AddRange(g);
+        else if (gpuGlobal is not null)
+            a2.AddRange(gpuGlobal);
         else if (body.Any(x => x.Contains("libplacebo=", StringComparison.Ordinal)))
             a2.AddRange(Ai.Upscalers.VulkanDeviceArgs());
 

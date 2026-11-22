@@ -157,6 +157,8 @@ public sealed record OcrRunRequest(KnA.Core.Ocr.OcrOptions? Options, List<int>? 
 public sealed record OcrEditRequest(string? Text, bool? Italic, double? Start, double? End);
 public sealed record OcrReplaceRequest(string Find, string? Replace, bool Regex);
 public sealed record EditRequest(JobSettings? Settings, JobEdit Edit);
+public sealed record MaterializeRequest(JobSettings? Settings, JobEdit? Edit, ProfileKind? Profile = null, string? Preset = null, List<PresetParts>? Parts = null);
+public sealed record PresetFromJobRequest(string Name, JobSettings Settings, JobEdit Edit);
 public sealed record ClearRequest(List<JobStatus> Statuses);
 public sealed record MoveRequest(int Delta);
 

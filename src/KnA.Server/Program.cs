@@ -303,8 +303,60 @@ app.MapGet("/api/jobs/{id:guid}/analysis", async (Guid id, CancellationToken ct)
 app.MapPost("/api/tools/options", async (ParameterOptionsRequest req, CancellationToken ct) =>
 {
     var (program, options) = await queue.ParameterOptionsAsync(req.Tool, req.Settings, ct);
-    return Results.Ok(new { program, options = options.Select(o => new { o.Name, o.Argument, o.Description, o.Values }) });
+    return Results.Ok(new { program, options = options.Select(o => new { o.Name, o.Argument, o.Description, o.Values, o.Default, o.Category }),
+        categories = KnA.Core.Tools.ToolHelp.Categories.Select(c => new { value = c, label = L.T(c) }) });
 });
+// Editor: the profile's automatic choices written into the fields (on open, after a profile or preset import).
+app.MapPost("/api/jobs/{id:guid}/materialize", async (Guid id, MaterializeRequest req, CancellationToken ct) =>
+{
+    var j = queue.Find(id) ?? throw new KeyNotFoundException();
+    var settings = req.Settings ?? j.Settings;
+    var edit = req.Edit ?? j.Edit;
+    var files = edit.ExternalFiles.Concat(edit.Tracks?.Select(t => t.File) ?? []).Distinct().Where(f => f != j.SourcePath && KnA.Core.Media.Frameserver.KindOf(f) == KnA.Core.Media.FrameserverKind.None);
+    if (files.FirstOrDefault(f => !browser.IsAllowed(f)) is { } bad)
+        return Results.Problem(L.T("Outside the allowed media roots: {0}", bad), statusCode: 403);
+    if (req.Profile is { } kind) (settings, edit) = EditorModel.ApplyProfile(settings, edit, kind);
+    if (req.Preset is { Length: > 0 } name)
+    {
+        var preset = queue.Presets.Get(name) ?? throw new KeyNotFoundException(name);
+        var parts = (req.Parts ?? []).Aggregate(PresetParts.None, (acc, x) => acc | x);
+        (settings, edit) = EditorModel.ApplyPreset(settings, edit, preset, parts == PresetParts.None ? PresetParts.All : parts);
+    }
+    var (s2, e2, a) = await EditorModel.MaterializeAsync(queue, id, settings, edit, ct);
+    return Results.Ok(new { settings = s2, edit = e2, analysis = AnalysisDto.From(a, j.SourcePath) });
+});
+// Editor: the constant-quality value and speed KnA uses for the settings' quality level (rate control fields).
+app.MapPost("/api/jobs/{id:guid}/rate", (Guid id, SizeRequest req) =>
+{
+    var j = queue.Find(id) ?? throw new KeyNotFoundException();
+    var s = req.Settings;
+    return Results.Ok(EditorModel.ExplicitRate(queue, s, j.Media?.PrimaryVideo, s.Container ?? s.EffectiveContainer));
+});
+// Editor: a preset from this file (per-track choices become the job-wide ones for other files).
+app.MapPost("/api/jobs/{id:guid}/preset", (Guid id, PresetFromJobRequest req) =>
+{
+    var saved = queue.Presets.Save(new Preset(req.Name, null, EditorModel.ForPreset(req.Settings, req.Edit) with { PresetName = req.Name }));
+    hub.Broadcast("presets", queue.Presets.All);
+    return Results.Ok(saved);
+});
+// The audio encoders available on this server for each codec (the editor's per-track encoder list).
+app.MapGet("/api/audio/encoders", () =>
+{
+    var set = JobRunner.AudioEncodersFor(queue.Settings.Capabilities, queue.Tools);
+    return Results.Ok(Enum.GetValues<AudioCodec>().Where(c => c is not (AudioCodec.Auto or AudioCodec.Copy))
+        .ToDictionary(c => c.ToString(), c => set.Available(c).Select(e => new { value = e, label = AudioEncoderSet.Describe(e) })));
+});
+// VapourSynth / AviSynth filter catalogue and the script written from a chain.
+app.MapGet("/api/frameserver/catalog", () => Results.Ok(new
+{
+    sources = KnA.Core.Media.FilterCatalog.Sources.Select(x => new { value = x.Id, label = x.Name }),
+    filters = KnA.Core.Media.FilterCatalog.All.Select(f => new
+    {
+        f.Id, Kind = f.Kind.ToString(), Category = f.EnglishCategory, CategoryLabel = f.Category, f.Name, f.Description, f.Requires,
+        Params = f.Params.Select(x => new { x.Name, x.Label, Type = x.Type.ToString(), x.Default, x.Min, x.Max, x.Choices, x.Help }),
+    }),
+}));
+app.MapPost("/api/frameserver/script", (KnA.Core.Media.FrameserverSettings fs) => Results.Ok(new { script = fs.EffectiveScript ?? "" }));
 // What a maximum file size leaves for each stream of a job.
 app.MapPost("/api/jobs/{id:guid}/size", (Guid id, SizeRequest req) =>
 {
@@ -439,7 +491,26 @@ app.MapDelete("/api/presets/{name}", (string name) =>
     hub.Broadcast("presets", queue.Presets.All);
     return ok ? Results.Ok() : Results.NotFound();
 });
-app.MapPost("/api/presets/wizard", (WizardAnswers a) => PresetWizard.Build(a, queue.Settings.Capabilities));
+// Preset wizard: the questions that apply to the answers so far (with their defaults), and the resulting settings.
+app.MapPost("/api/presets/wizard/steps", (Dictionary<string, string> answers) =>
+{
+    var caps = queue.Settings.Capabilities;
+    var audio = JobRunner.AudioEncodersFor(caps, queue.Tools);
+    var a = new Dictionary<string, string>(answers);
+    IReadOnlyList<WizardStep> steps = [];
+    for (int round = 0; round < 4; round++)
+    {
+        steps = PresetWizard.Steps(a, caps, audio);
+        bool added = false;
+        foreach (var st in steps)
+            if (st.Kind is WizardStepKind.Choice or WizardStepKind.Number && !a.ContainsKey(st.Key)) { a[st.Key] = st.Default; added = true; }
+        if (!added) break;
+    }
+    foreach (var key in a.Keys.Except(answers.Keys).ToList()) if (steps.All(x => x.Key != key)) a.Remove(key);
+    var settings = PresetWizard.Build(a, caps);
+    return Results.Ok(new { steps, answers = a, summary = PresetWizard.Summary(settings), settings });
+});
+app.MapPost("/api/presets/wizard", (Dictionary<string, string> answers) => PresetWizard.Build(answers, queue.Settings.Capabilities));
 
 // ---------------------------------------------------------------- settings
 app.MapPut("/api/settings", (SettingsUpdate u) =>

@@ -75,62 +75,47 @@ $("#btn-apply-sel").onclick = guard(async () => {
 });
 
 // ---------------------------------------------------------------- wizard
-const wiz = { step: 0, a: {} };
-const wizSteps = () => [
-  { key: "goal", title: t("What is the result for?"), choices: [
-    ["Archive", t("Archive / collection"), t("MKV, best quality per MB, subtitles kept")],
-    ["Tv", t("TV or Blu-ray player"), t("H.264 that every player reads")],
-    ["Web", t("Web / streaming"), t("MP4 with fast start")],
-    ["Phone", t("Phone / tablet"), t("Small 720p files")],
-    ["OldPlayer", t("Old DivX player"), t("XviD + MP3 in AVI")],
-    ["Editing", t("Timing / typesetting"), t("Workraw for Aegisub")],
-    ["Images", t("Images"), t("Frames as PNG/JPEG…")],
-    ["Extract", t("Extract tracks"), t("Demux without re-encoding")]] },
-  { key: "codec", title: t("Compatibility or size?"), skip: a => ["Tv", "Phone", "OldPlayer", "Editing", "Images", "Extract"].includes(a.goal), choices: [
-    ["Compatible", "H.264", t("Plays everywhere, biggest files")],
-    ["Balanced", "HEVC", t("Half the size of H.264, very compatible")],
-    ["Smallest", "AV1", t("Smallest files, newer devices")]] },
-  { key: "speed", title: t("Speed or compression?"), skip: a => ["OldPlayer", "Images", "Extract"].includes(a.goal), choices: [
-    ["BestQuality", t("Best compression (CPU)"), t("Slower, smaller files")],
-    ["Fast", t("Fast (GPU)"), t("Uses a working hardware encoder when available")]] },
-  { key: "quality", title: t("Quality"), skip: a => ["Images", "Extract"].includes(a.goal),
-    choices: state.options.qualities.map(q => [q.value, q.label, ""]) },
-  { key: "subtitles", title: t("Subtitles"), skip: a => ["Editing", "Extract"].includes(a.goal), choices: [
-    ["Hardsub", t("Burn into the picture"), t("Always visible, any player")],
-    ["Softsub", t("Keep as tracks"), t("Can be turned off, needs MKV")],
-    ["None", t("No subtitles"), ""]] },
-  { key: "audio", title: t("Audio"), skip: a => ["Images", "Extract"].includes(a.goal), choices: [
-    ["Keep", t("Keep as it is"), t("Copied when the format allows it")],
-    ["Stereo", t("Stereo"), t("Downmix surround")],
-    ["Normalize", t("Normalize loudness"), t("Even volume between episodes")]] },
-  { key: "name", title: t("Name your preset"), input: true },
-];
-function renderWizard() {
-  const steps = wizSteps().filter(s => !s.skip?.(wiz.a));
-  wiz.step = Math.min(wiz.step, steps.length - 1);
-  const s = steps[wiz.step];
+// The questions come from the server (KnA.Core PresetWizard.Steps, same as the desktop wizard): only the ones that
+// apply to the earlier answers, then a summary of what the preset will do.
+const wiz = { step: 0, given: {}, view: null };
+async function renderWizard() {
+  const r = await post("/api/presets/wizard/steps", wiz.given);
+  wiz.view = r;
+  const steps = r.steps;
+  wiz.step = Math.max(0, Math.min(wiz.step, steps.length - 1));
+  const s = steps[wiz.step], cur = r.answers[s.key] ?? s.default ?? "";
   $("#wiz-step").textContent = `${wiz.step + 1} / ${steps.length}`;
   $("#wiz-back").disabled = wiz.step === 0;
   $("#wiz-next").textContent = wiz.step === steps.length - 1 ? t("Create preset") : t("Next");
-  $("#wiz-body").innerHTML = `<h3 style="margin-top:0">${esc(s.title)}</h3>` + (s.input
-    ? `<input id="wiz-name" value="${esc(wiz.a.name ?? "")}" placeholder="${esc(t("e.g. Anime 1080p AV1"))}">`
-    : `<div class="choices">${s.choices.map(([v, l, d]) => `<button type="button" class="choice ${wiz.a[s.key] === v ? "on" : ""}" data-v="${esc(v)}"><b>${esc(l)}</b><span>${esc(d)}</span></button>`).join("")}</div>`);
-  $("#wiz-body").onclick = e => {
-    const b = e.target.closest(".choice"); if (!b) return;
-    wiz.a[s.key] = b.dataset.v; renderWizard();
-  };
+  const head = `<div class="wiz-progress"><span style="width:${((wiz.step + 1) / steps.length * 100).toFixed(1)}%"></span></div>
+    <h3 style="margin-top:0">${esc(s.title)}</h3>${s.help && s.kind !== "Summary" ? `<p class="muted small">${esc(s.help)}</p>` : ""}`;
+  let html = "";
+  if (s.kind === "Choice") html = `<div class="choices">${s.choices.map(c => `<button type="button" class="choice ${cur === c.value ? "on" : ""}" data-v="${esc(c.value)}" ${c.enabled ? "" : "disabled"}><b>${esc(c.label)}</b><span>${esc(c.hint ?? "")}</span></button>`).join("")}</div>`;
+  else if (s.kind === "Number") html = `<div class="row"><input id="wiz-input" type="number" min="${s.min}" max="${s.max}" step="${s.max - s.min > 1000 ? 100 : 0.5}" value="${esc(cur)}" style="max-width:220px">${s.unit ? `<span class="muted">${esc(s.unit)}</span>` : ""}</div>`;
+  else if (s.kind === "Text") html = `<input id="wiz-input" value="${esc(cur)}" placeholder="ita, jpn">`;
+  else html = `<p class="muted small">${esc(s.help ?? "")}</p><div class="section"><ul class="wiz-summary">${r.summary.map(l => `<li>${esc(l)}</li>`).join("")}</ul></div>
+    <label class="field"><span>${esc(t("Name"))}</span><input id="wiz-name" value="${esc(wiz.given.name ?? "")}" placeholder="${esc(t("e.g. Anime 1080p AV1"))}"></label>
+    <label class="field"><span>${esc(t("Description"))}</span><input id="wiz-desc" value="${esc(wiz.given.description ?? "")}" placeholder="${esc(t("Optional"))}"></label>
+    <p class="muted small">${esc(t("Everything can be changed later in the editor (pencil) of each file, or by applying the preset and saving it again."))}</p>`;
+  $("#wiz-body").innerHTML = head + html;
+  $("#wiz-body").onclick = guard(async e => {
+    const b = e.target.closest(".choice"); if (!b || b.disabled) return;
+    wiz.given[s.key] = b.dataset.v; await renderWizard();
+  });
+  $("#wiz-body").ondblclick = e => { if (e.target.closest(".choice")) $("#wiz-next").click(); };
   wiz.current = s; wiz.count = steps.length;
 }
-$("#btn-wizard").onclick = () => { wiz.step = 0; wiz.a = { goal: "Archive", codec: "Balanced", speed: "BestQuality", quality: "Normal", subtitles: "Hardsub", audio: "Keep" }; renderWizard(); $("#dlg-wizard").showModal(); };
-$("#wiz-back").onclick = () => { wiz.step--; renderWizard(); };
+$("#btn-wizard").onclick = guard(async () => { wiz.step = 0; wiz.given = {}; await renderWizard(); $("#dlg-wizard").showModal(); });
+$("#wiz-back").onclick = guard(async () => { wiz.step--; await renderWizard(); });
 $("#wiz-next").onclick = guard(async () => {
-  if (wiz.current.input) wiz.a.name = $("#wiz-name").value.trim();
-  if (wiz.step < wiz.count - 1) { wiz.step++; renderWizard(); return; }
-  if (!wiz.a.name) throw new Error(t("The preset needs a name."));
-  const settings = await post("/api/presets/wizard", {
-    goal: wiz.a.goal, codec: wiz.a.codec, speed: wiz.a.speed, quality: wiz.a.quality, resolution: 0, subtitles: wiz.a.subtitles, audio: wiz.a.audio, hdr: "Auto",
-  });
-  const p = await post("/api/presets", { name: wiz.a.name, description: null, settings });
+  const s = wiz.current;
+  if (s.kind === "Number" || s.kind === "Text") wiz.given[s.key] = $("#wiz-input").value.trim();
+  else if (s.kind === "Choice" && wiz.given[s.key] == null) wiz.given[s.key] = wiz.view.answers[s.key];   // the default shown is the answer
+  if (s.kind === "Summary") { wiz.given.name = $("#wiz-name").value.trim(); wiz.given.description = $("#wiz-desc").value.trim(); }
+  if (wiz.step < wiz.count - 1) { wiz.step++; await renderWizard(); return; }
+  if (!wiz.given.name) throw new Error(t("The preset needs a name."));
+  const settings = await post("/api/presets/wizard", wiz.view.answers);
+  const p = await post("/api/presets", { name: wiz.given.name, description: wiz.given.description || null, settings });
   state.form = { ...cloneSettings(p.settings), presetName: p.name };
   $("#dlg-wizard").close();
   renderForm();

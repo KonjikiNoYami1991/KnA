@@ -91,6 +91,44 @@ public static class RigayaEncoders
         _ => [],
     };
 
+    /// <summary>The constant-quality value KnA uses for a quality level (what "automatic" means for this encoder).</summary>
+    public static double DefaultQuality(string encoder, VideoCodec codec, QualityLevel quality)
+    {
+        int q = (int)quality;
+        double v = encoder switch
+        {
+            "nvencc" => Pick(q, NvencQ[codec is VideoCodec.H264 or VideoCodec.HEVC or VideoCodec.AV1 ? codec : VideoCodec.HEVC]),
+            "qsvencc" => Pick(q, QsvIcq[codec is VideoCodec.H264 or VideoCodec.HEVC or VideoCodec.AV1 ? codec : VideoCodec.HEVC]),
+            _ when codec == VideoCodec.HEVC => Pick(q, 18, 20, 22, 24, 26, 29, 32, 38),
+            _ => Pick(q, 36, 33, 31, 29, 27, 24, 21, 14),
+        };
+        return encoder == "nvencc" ? v : Math.Round(v);
+    }
+
+    /// <summary>The speed preset KnA uses for a quality level.</summary>
+    public static string DefaultSpeed(string encoder, QualityLevel quality)
+    {
+        var speeds = SpeedValues(encoder);
+        if (speeds.Count == 0) return "";
+        int q = (int)quality;
+        return speeds[Math.Clamp(speeds.Count - 1 - (int)Math.Round(q * (speeds.Count - 1) / 7.0), 0, speeds.Count - 1)];
+    }
+
+    /// <summary>
+    /// Options KnA sets from its own fields (rate control, speed, structure, input/output, HDR copy, GPU filters):
+    /// the parameter pages leave them out, so each one is set in exactly one place.
+    /// </summary>
+    public static bool IsOwnedOption(string name) => name is "-c" or "--codec" or "-i" or "--input" or "-o" or "--output"
+        or "--avhw" or "--avsw" or "--y4m" or "--raw" or "--avs" or "--vpy" or "--vpy-mt" or "--input-format"
+        or "--cqp" or "--qvbr" or "--icq" or "--la-icq" or "--vbr" or "--cbr" or "--avbr" or "--la" or "--la-hrd" or "--qvbr-quality"
+        or "--max-bitrate" or "-u" or "--preset" or "--quality" or "--tune" or "--lookahead" or "--la-depth"
+        or "--output-depth" or "--gop-len" or "-b" or "--bframes" or "--parallel"
+        or "-h" or "-?" or "--help" or "-v" or "--version" or "--check-hw" or "--check-device" or "--check-features"
+        or "--check-environment" or "--check-codecs" or "--check-decoders" or "--check-encoders" or "--check-profiles"
+        or "--check-formats" or "--check-protocols" or "--check-filters" or "--check-avversion" or "--check-clinfo"
+        or "--check-avcodec-dll" or "--check-features-html" or "--check-vppfeatures"
+        || name.StartsWith("--vpp-", StringComparison.Ordinal);
+
     /// <summary>Encoding options (codec, rate control, speed, depth, GOP, colour and static HDR).</summary>
     public static List<string> EncoderArgs(EncoderBackend backend, VideoCodec codec, QualityLevel quality, bool tenBit,
         EncoderOverrides o, double frameRate, HdrPlan hdr, VideoStream video, bool native)
@@ -110,13 +148,7 @@ public static class RigayaEncoders
             var qo = QualityOption(enc, codec)!.Value;
             double value = o.RateControl == RateControl.Quality && o.QualityValue is { } qv
                 ? Math.Clamp(qv, qo.Min, qo.Max)
-                : enc switch
-                {
-                    "nvencc" => Pick(q, NvencQ[codec]),
-                    "qsvencc" => Pick(q, QsvIcq[codec]),
-                    _ when codec == VideoCodec.HEVC => Pick(q, 18, 20, 22, 24, 26, 29, 32, 38),
-                    _ => Pick(q, 36, 33, 31, 29, 27, 24, 21, 14),
-                };
+                : DefaultQuality(enc, codec, quality);
             string v = VideoEncoders.Num(enc == "nvencc" ? value : Math.Round(value));
             if (qo.Option == "--cqp")
             {
@@ -130,8 +162,7 @@ public static class RigayaEncoders
 
         // ---------------------------------------------------------------- speed / tune
         var speeds = SpeedValues(enc);
-        string speed = o.Speed is { Length: > 0 } sp && speeds.Contains(sp) ? sp
-            : speeds[Math.Clamp(speeds.Count - 1 - (int)Math.Round(q * (speeds.Count - 1) / 7.0), 0, speeds.Count - 1)];
+        string speed = o.Speed is { Length: > 0 } sp && speeds.Contains(sp) ? sp : DefaultSpeed(enc, quality);
         a.AddRange(["-u", speed]);
         if (enc == "nvencc")
         {
@@ -169,8 +200,9 @@ public static class RigayaEncoders
         else
             a.AddRange(["--colorprim", "smpte170m", "--transfer", "smpte170m", "--colormatrix", "smpte170m", "--colorrange", "limited"]);
 
-        if (!string.IsNullOrWhiteSpace(o.Extra))
-            foreach (var (opt, value) in VideoEncoders.ParseExtra(o.Extra))
+        var extra = ToolArguments.Combine(o.GpuFilters, o.Extra);
+        if (!string.IsNullOrWhiteSpace(extra))
+            foreach (var (opt, value) in VideoEncoders.ParseExtra(extra))
             {
                 int i = a.IndexOf(opt);
                 if (value is null) { if (i < 0) a.Add(opt); }

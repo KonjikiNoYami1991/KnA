@@ -47,7 +47,7 @@ public static class SizePlanner
         foreach (var t in tracks.Where(t => t.Include && t.Kind == "audio"))
         {
             if (TrackPlanner.Lookup(t, media) is not AudioStream a) continue;
-            var plan = AudioPlanner.Plan(a, AudioPlanner.ForTrack(t, s), container, encoders);
+            var plan = AudioPlanner.PlanTrack(t, a, s, container, encoders);
             if (plan.IsCopy) yield return a.BitRate > 0 ? a.BitRate / 1000.0 : Guess(a);
             else if (plan.Kbps is { } k) yield return k;
             else yield return a.IsLossless || plan.Encoder is "flac" or "alac" or "wavpack" or "truehd" ? 600.0 * Math.Max(2, plan.Channels) / 2

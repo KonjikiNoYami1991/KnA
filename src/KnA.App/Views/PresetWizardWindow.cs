@@ -2,29 +2,28 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Layout;
 using Avalonia.Media;
-using KnA.Core.Encoding;
 using KnA.Core.Localization;
 using KnA.Core.Queue;
 using KnA.Core.Settings;
 
 namespace KnA.App.Views;
 
-/// <summary>Plain-language questions → a saved preset (same steps as the web wizard).</summary>
+/// <summary>
+/// The preset wizard: the questions come from <see cref="PresetWizard.Steps"/> (same as the web wizard), only the
+/// ones that apply to the earlier answers, and the last page shows what the preset will do before saving it.
+/// </summary>
 public sealed class PresetWizardWindow : Window
 {
-    private sealed record Step(string Key, string Title, (string Value, string Label, string Hint)[] Choices, Func<Dictionary<string, string>, bool>? Skip = null, bool Input = false);
-
     private readonly QueueService _queue;
-    private readonly Dictionary<string, string> _a = new()
-    {
-        ["goal"] = "Archive", ["codec"] = "Balanced", ["speed"] = "BestQuality", ["quality"] = "Normal", ["subtitles"] = "Hardsub", ["audio"] = "Keep", ["name"] = "",
-    };
+    /// <summary>Answers the user gave; the others are the steps' defaults (recomputed when an earlier answer changes).</summary>
+    private readonly Dictionary<string, string> _given = [];
     private int _step;
     private readonly ContentControl _body = new();
     private readonly TextBlock _counter = Ui.Muted("");
     private readonly TextBlock _error = new() { Foreground = Brushes.IndianRed, TextWrapping = TextWrapping.Wrap };
     private readonly Button _back = new() { Content = L.T("Back") };
     private readonly Button _next = new() { Classes = { "primary" }, MinWidth = 110 };
+    private readonly ProgressBar _progress = new() { Height = 4, Minimum = 0, Maximum = 1, Margin = new Thickness(0, 0, 0, 12) };
 
     public Preset? Result { get; private set; }
 
@@ -32,7 +31,7 @@ public sealed class PresetWizardWindow : Window
     {
         _queue = queue;
         Title = L.T("Preset wizard");
-        Width = 620; Height = 600; CanResize = false;
+        Width = 660; Height = 640; CanResize = false;
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
         _back.Click += (_, _) => { _step--; Render(); };
         _next.Click += (_, _) => Next();
@@ -43,8 +42,10 @@ public sealed class PresetWizardWindow : Window
         footer.Children.Add(_counter);
         _counter.VerticalAlignment = VerticalAlignment.Center;
         var root = new DockPanel { Margin = new Thickness(20) };
+        DockPanel.SetDock(_progress, Dock.Top);
         DockPanel.SetDock(footer, Dock.Bottom);
         DockPanel.SetDock(_error, Dock.Bottom);
+        root.Children.Add(_progress);
         root.Children.Add(footer);
         root.Children.Add(_error);
         root.Children.Add(new ScrollViewer { Content = _body });
@@ -52,90 +53,109 @@ public sealed class PresetWizardWindow : Window
         Render();
     }
 
-    private static bool In(Dictionary<string, string> a, params string[] goals) => goals.Contains(a["goal"]);
-
-    private List<Step> Steps() => new List<Step>
+    /// <summary>The answers given plus the defaults of the steps that apply to them.</summary>
+    private (IReadOnlyList<WizardStep> Steps, Dictionary<string, string> Answers) Resolve()
     {
-        new("goal", L.T("What is the result for?"), [
-            ("Archive", L.T("Archive / collection"), L.T("MKV, best quality per MB, subtitles kept")),
-            ("Tv", L.T("TV or Blu-ray player"), L.T("H.264 that every player reads")),
-            ("Web", L.T("Web / streaming"), L.T("MP4 with fast start")),
-            ("Phone", L.T("Phone / tablet"), L.T("Small 720p files")),
-            ("OldPlayer", L.T("Old DivX player"), L.T("XviD + MP3 in AVI")),
-            ("Editing", L.T("Timing / typesetting"), L.T("Workraw for Aegisub")),
-            ("Images", L.T("Images"), L.T("Frames as PNG/JPEG…")),
-            ("Extract", L.T("Extract tracks"), L.T("Demux without re-encoding"))]),
-        new("codec", L.T("Compatibility or size?"), [
-            ("Compatible", "H.264", L.T("Plays everywhere, biggest files")),
-            ("Balanced", "HEVC", L.T("Half the size of H.264, very compatible")),
-            ("Smallest", "AV1", L.T("Smallest files, newer devices"))],
-            a => In(a, "Tv", "Phone", "OldPlayer", "Editing", "Images", "Extract")),
-        new("speed", L.T("Speed or compression?"), [
-            ("BestQuality", L.T("Best compression (CPU)"), L.T("Slower, smaller files")),
-            ("Fast", L.T("Fast (GPU)"), L.T("Uses a working hardware encoder when available"))],
-            a => In(a, "OldPlayer", "Images", "Extract")),
-        new("quality", L.T("Quality"), Enum.GetValues<QualityLevel>().Select(q => (q.ToString(), q.Display(), "")).ToArray(),
-            a => In(a, "Images", "Extract")),
-        new("subtitles", L.T("Subtitles"), [
-            ("Hardsub", L.T("Burn into the picture"), L.T("Always visible, any player")),
-            ("Softsub", L.T("Keep as tracks"), L.T("Can be turned off, needs MKV")),
-            ("None", L.T("No subtitles"), "")],
-            a => In(a, "Editing", "Extract")),
-        new("audio", L.T("Audio"), [
-            ("Keep", L.T("Keep as it is"), L.T("Copied when the format allows it")),
-            ("Stereo", L.T("Stereo"), L.T("Downmix surround")),
-            ("Normalize", L.T("Normalize loudness"), L.T("Even volume between episodes"))],
-            a => In(a, "Images", "Extract")),
-        new("name", L.T("Name your preset"), [], Input: true),
-    }.Where(s => s.Skip?.Invoke(_a) != true).ToList();
+        var caps = _queue.Settings.Capabilities;
+        var audio = JobRunner.AudioEncodersFor(caps, _queue.Tools);
+        var answers = new Dictionary<string, string>(_given);
+        IReadOnlyList<WizardStep> steps = [];
+        // Defaults can make more steps apply (e.g. the rate step decides the next one): a few rounds settle it.
+        for (int round = 0; round < 4; round++)
+        {
+            steps = PresetWizard.Steps(answers, caps, audio);
+            bool added = false;
+            foreach (var s in steps)
+                if (s.Kind is WizardStepKind.Choice or WizardStepKind.Number && !answers.ContainsKey(s.Key)) { answers[s.Key] = s.Default; added = true; }
+            if (!added) break;
+        }
+        foreach (var key in answers.Keys.Except(_given.Keys).ToList())
+            if (steps.All(s => s.Key != key)) answers.Remove(key);
+        return (steps, answers);
+    }
 
     private void Render()
     {
-        var steps = Steps();
+        var (steps, answers) = Resolve();
         _step = Math.Clamp(_step, 0, steps.Count - 1);
         var s = steps[_step];
         _counter.Text = $"{_step + 1} / {steps.Count}";
+        _progress.Value = (_step + 1.0) / steps.Count;
         _back.IsEnabled = _step > 0;
         _next.Content = _step == steps.Count - 1 ? L.T("Create preset") : L.T("Next");
         _error.Text = "";
-        var panel = new StackPanel { Spacing = 8, Children = { new TextBlock { Text = s.Title, FontSize = 18, FontWeight = FontWeight.SemiBold, Margin = new Thickness(0, 0, 0, 6) } } };
-        if (s.Input)
+        var panel = new StackPanel { Spacing = 8, Children = { new TextBlock { Text = s.Title, FontSize = 18, FontWeight = FontWeight.SemiBold, TextWrapping = TextWrapping.Wrap } } };
+        if (s.Help is { Length: > 0 } help && s.Kind != WizardStepKind.Summary) panel.Children.Add(Ui.Muted(help));
+        panel.Children.Add(new Border { Height = 4 });
+        var current = answers.GetValueOrDefault(s.Key, s.Default);
+        switch (s.Kind)
         {
-            var box = new TextBox { Text = _a["name"], Watermark = L.T("e.g. Anime 1080p AV1") };
-            box.TextChanged += (_, _) => _a["name"] = box.Text ?? "";
-            panel.Children.Add(box);
-            box.AttachedToVisualTree += (_, _) => box.Focus();
-        }
-        else
-        {
-            foreach (var (value, label, hint) in s.Choices)
-            {
-                var b = new Button
+            case WizardStepKind.Choice:
+                foreach (var c in s.Choices)
                 {
-                    HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Left, Padding = new Thickness(14, 10),
-                    Content = new StackPanel { Children = { new TextBlock { Text = label, FontWeight = FontWeight.SemiBold }, Ui.Muted(hint) } },
-                };
-                if (_a[s.Key] == value) b.Classes.Add("primary");
-                b.Click += (_, _) => { _a[s.Key] = value; Render(); };
-                b.DoubleTapped += (_, _) => { _a[s.Key] = value; Next(); };
-                panel.Children.Add(b);
-            }
+                    var b = new Button
+                    {
+                        HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Left, Padding = new Thickness(14, 9),
+                        IsEnabled = c.Enabled,
+                        Content = new StackPanel { Children = { new TextBlock { Text = c.Label, FontWeight = FontWeight.SemiBold } } },
+                    };
+                    if (c.Hint.Length > 0) ((StackPanel)b.Content).Children.Add(Ui.Muted(c.Hint));
+                    if (current == c.Value) b.Classes.Add("primary");
+                    var value = c.Value;
+                    b.Click += (_, _) => { _given[s.Key] = value; Render(); };
+                    b.DoubleTapped += (_, _) => { _given[s.Key] = value; Next(); };
+                    panel.Children.Add(b);
+                }
+                break;
+            case WizardStepKind.Number:
+                double.TryParse(current, System.Globalization.NumberStyles.Float, System.Globalization.CultureInfo.InvariantCulture, out var n);
+                var num = Ui.Number(n, s.Min, s.Max, s.Max - s.Min > 1000 ? 100 : 0.5,
+                    v => _given[s.Key] = v.ToString(System.Globalization.CultureInfo.InvariantCulture), s.Max - s.Min > 1000 ? "0" : "0.#");
+                panel.Children.Add(s.Unit is { } unit ? Ui.Row(8, num, Ui.Muted(unit)) : num);
+                num.MinWidth = 200;
+                break;
+            case WizardStepKind.Text:
+                var box = new TextBox { Text = current, Watermark = "ita, jpn" };
+                box.TextChanged += (_, _) => _given[s.Key] = (box.Text ?? "").Trim();
+                panel.Children.Add(box);
+                box.AttachedToVisualTree += (_, _) => box.Focus();
+                break;
+            case WizardStepKind.Summary:
+                var settings = PresetWizard.Build(answers, _queue.Settings.Capabilities);
+                var summary = new StackPanel { Spacing = 3 };
+                foreach (var line in PresetWizard.Summary(settings)) summary.Children.Add(new TextBlock { Text = "• " + line, TextWrapping = TextWrapping.Wrap });
+                panel.Children.Add(Ui.Muted(s.Help ?? ""));
+                panel.Children.Add(Ui.Card(summary, 12));
+                var name = new TextBox { Text = _given.GetValueOrDefault("name", ""), Watermark = L.T("e.g. Anime 1080p AV1") };
+                name.TextChanged += (_, _) => _given["name"] = name.Text ?? "";
+                var desc = new TextBox { Text = _given.GetValueOrDefault("description", ""), Watermark = L.T("Optional") };
+                desc.TextChanged += (_, _) => _given["description"] = desc.Text ?? "";
+                panel.Children.Add(Ui.Field("Name", name));
+                panel.Children.Add(Ui.Field("Description", desc));
+                panel.Children.Add(Ui.Muted(L.T("Everything can be changed later in the editor (pencil) of each file, or by applying the preset and saving it again.")));
+                name.AttachedToVisualTree += (_, _) => name.Focus();
+                break;
         }
         _body.Content = panel;
     }
 
     private void Next()
     {
-        var steps = Steps();
-        if (_step < steps.Count - 1) { _step++; Render(); return; }
-        var name = _a["name"].Trim();
+        var (steps, answers) = Resolve();
+        if (_step < steps.Count - 1)
+        {
+            if (steps[_step].Kind is WizardStepKind.Choice or WizardStepKind.Number && !_given.ContainsKey(steps[_step].Key))
+                _given[steps[_step].Key] = answers[steps[_step].Key];   // the default shown is the answer
+            _step++;
+            Render();
+            return;
+        }
+        var name = _given.GetValueOrDefault("name", "").Trim();
         try
         {
-            var answers = new WizardAnswers(
-                Enum.Parse<WizardGoal>(_a["goal"]), Enum.Parse<WizardCodec>(_a["codec"]), Enum.Parse<WizardSpeed>(_a["speed"]),
-                Enum.Parse<QualityLevel>(_a["quality"]), 0, Enum.Parse<SubtitleMode>(_a["subtitles"]), Enum.Parse<WizardAudio>(_a["audio"]));
             var settings = PresetWizard.Build(answers, _queue.Settings.Capabilities);
-            Result = _queue.Presets.Save(new Preset(name, null, settings with { PresetName = name }));
+            var description = _given.GetValueOrDefault("description", "").Trim();
+            Result = _queue.Presets.Save(new Preset(name, description.Length > 0 ? description : null, settings with { PresetName = name }));
             Close();
         }
         catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or IOException)

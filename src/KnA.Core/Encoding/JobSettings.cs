@@ -48,6 +48,12 @@ public sealed record VideoFilterSettings
     public double? Fps { get; init; }
     /// <summary>Raw FFmpeg filters appended at the end of the chain (advanced).</summary>
     public string? Custom { get; init; }
+    /// <summary>
+    /// Filters of the GPU that encodes (FFmpeg syntax, e.g. "scale_cuda=w=1280:h=720,bwdif_cuda"): run on the GPU
+    /// after the frames are uploaded to it, right before the FFmpeg hardware encoder (NVENC, QSV, VA-API, Vulkan,
+    /// VideoToolbox). rigaya's encoders have their own (--vpp-*, see <see cref="EncoderOverrides.GpuFilters"/>).
+    /// </summary>
+    public string? Gpu { get; init; }
 
     [JsonIgnore]
     public bool ChangesFrameCount => Fps is > 0;
@@ -145,10 +151,12 @@ public sealed record EncoderOverrides
     public int? Lookahead { get; init; }
     /// <summary>Extra encoder options, FFmpeg syntax ("-x265-params …", "-spatial-aq 1"…).</summary>
     public string? Extra { get; init; }
+    /// <summary>GPU filters of rigaya's encoders ("--vpp-resize spline36 --vpp-nlmeans …"), applied by the encoder itself.</summary>
+    public string? GpuFilters { get; init; }
 
     [JsonIgnore]
     public bool IsEmpty => Program == EncoderProgram.FFmpeg && RateControl == RateControl.Auto && Speed is null && Tune is null && KeyframeSeconds is null
-                           && BFrames is null && Lookahead is null && string.IsNullOrWhiteSpace(Extra);
+                           && BFrames is null && Lookahead is null && string.IsNullOrWhiteSpace(Extra) && string.IsNullOrWhiteSpace(GpuFilters);
 }
 
 /// <summary>
@@ -171,6 +179,11 @@ public sealed record ToolArguments
 
     [JsonIgnore]
     public bool IsEmpty => new[] { AudioFfmpeg, Fdkaac, Qaac, Subtitles, Muxer }.All(string.IsNullOrWhiteSpace);
+
+    /// <summary>Two option texts as one (the second wins where both set the same option).</summary>
+    public static string? Combine(string? first, string? second) =>
+        string.IsNullOrWhiteSpace(first) ? (string.IsNullOrWhiteSpace(second) ? null : second.Trim())
+        : string.IsNullOrWhiteSpace(second) ? first.Trim() : first.Trim() + " " + second.Trim();
 
     /// <summary>"-opt value" pairs with a stream specifier added (-opt:a:2), for one output stream.</summary>
     public static List<string> ForStream(string? text, char kind, int index)
@@ -410,6 +423,18 @@ public sealed record TrackPlan
     public string? Output { get; init; }
     /// <summary>Audio bitrate of this track in kb/s per stereo pair (null = the job's setting).</summary>
     public int? Bitrate { get; init; }
+    /// <summary>
+    /// Exact encoder of an audio track ("libfdk_aac", "aac", "qaac", "fdkaac", "libopus"…); null = the best one
+    /// available for the codec in <see cref="Output"/>. Ignored when that encoder is not available.
+    /// </summary>
+    public string? Encoder { get; init; }
+    /// <summary>Maximum channels of an encoded audio track (2 = downmix to stereo, 1 = mono); null = as the codec allows.</summary>
+    public int? Channels { get; init; }
+    /// <summary>
+    /// Options of the program that encodes this track (FFmpeg encoder, fdkaac, qaac, subtitle encoder), in its own
+    /// syntax; applied after the job-wide ones in <see cref="ToolArguments"/>.
+    /// </summary>
+    public string? Arguments { get; init; }
 
     [JsonIgnore] public bool CopyVideo => Kind == "video" && string.Equals(Output, "copy", StringComparison.OrdinalIgnoreCase);
 

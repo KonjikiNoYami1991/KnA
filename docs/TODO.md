@@ -1,8 +1,8 @@
 # KnA — next work (requested by the user, not started yet)
 
-Nothing here is implemented. Work through it in order, on `master`; ask before releasing.
+Work through it in order, on `master`; ask before releasing. Items marked ✅ are done (see CHANGELOG).
 
-## 1. Customization editor (the pencil) — needs a thorough overhaul
+## 1. ✅ Customization editor (the pencil) — needs a thorough overhaul
 
 - **No duplicated settings anywhere.**
 - **Fully independent from the default profile's automation.** The most it may do is *import* a profile and convert
@@ -29,7 +29,7 @@ Nothing here is implemented. Work through it in order, on `master`; ask before r
 - **Output**: offer only the containers that can hold the final streams (e.g. MP4 cannot hold FFV1).
 - Desktop (Avalonia) and web (wwwroot) must get the same changes.
 
-## 2. Preset wizard
+## 2. ✅ Preset wizard
 
 Handy, but it must build the preset in a more specific, detailed way.
 

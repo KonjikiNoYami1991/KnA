@@ -4,11 +4,15 @@ import { $, $$, esc, state, t, label, profileOf, fillSelect, capability, api } f
 
 function backendStatus(codec, backend, tenBit) {
   const c = capability(codec, backend);
-  if (!state.settings.capabilities) return { ok: true, text: "" };
+  const caps = state.settings.capabilities;
+  // A GPU encoder only when the server's hardware detection found that GPU (a test encode worked on it).
+  if (!caps) return backend === "Software" ? { ok: true, text: "" } : { ok: false, text: t("hardware not detected yet") };
+  const gpuPresent = backend === "Software" || (caps.encoders ?? []).some(e => e.backend === backend && (e.works8Bit || e.works10Bit));
   if (!c) return { ok: false, text: t("not available for this codec") };
   if (tenBit ? c.works10Bit : c.works8Bit) return { ok: true, text: "" };
   const rig = state.options.rigayaEncoders?.[`${codec}|${backend}`];
-  if (rig && state.tools?.rigaya?.includes(backend)) return { ok: true, text: t("only with {0}", rig.name) };
+  if (rig && gpuPresent && state.tools?.rigaya?.includes(backend)) return { ok: true, text: t("only with {0}", rig.name) };
+  if (!gpuPresent) return { ok: false, text: t("no such GPU in this computer") };
   if (!c.compiled) return { ok: false, text: t("not in this FFmpeg build") };
   return { ok: false, text: tenBit && c.works8Bit ? t("8-bit only") : t("no compatible GPU/driver") };
 }
@@ -35,6 +39,8 @@ export function renderSettingsForm(root, s, opts = {}) {
   if (backends.find(b => b.value === s.backend)?.disabled) s.backend = backends.find(b => !b.disabled)?.value ?? "Software";
 
   const V = In("video");
+  if (sec === "videoRate") { root.innerHTML = p.encodesVideo && p.usesQuality && !p.isImages ? editorRate(s, codec) : `<p class="muted small">${esc(t("This profile does not encode the video."))}</p>`; bindForm(root, s, opts, codec); return; }
+  if (sec === "presetRules") { root.innerHTML = presetRules(s, p); bindForm(root, s, opts, codec); return; }
   const rcHand = (s.encoder?.rateControl ?? "Auto") !== "Auto";
   const show = {
     profile: V,
@@ -46,7 +52,7 @@ export function renderSettingsForm(root, s, opts = {}) {
     // one place decides the quality: the level in the quick panel (unless set by hand), the rate control in the editor
     quality: V && p.usesQuality && !full && !rcHand,
     qualityHand: V && p.usesQuality && !full && rcHand,
-    rate: V && full && p.encodesVideo && p.usesQuality,
+    rate: V && full && !sec && p.encodesVideo && p.usesQuality,
     subs: In("subtitles") && p.usesSubtitleMode,
     hdr: V && p.usesVideoFilters, images: V && p.isImages, demux: In("output") && p.isDemux,
     container: In("output") && full && (opts.allowedContainers?.length ?? 0) > 1,
@@ -78,7 +84,7 @@ export function renderSettingsForm(root, s, opts = {}) {
     </div>` : ""}
     ${show.rate ? rateControl(s, codec) : ""}
     ${show.subs ? `<label class="field"><span>${esc(t("Subtitles"))}</span><select data-k="subtitles"></select>
-      <small class="muted">${esc(t("Automatic plan: the editor (Tracks tab) can override it per file."))}</small></label>
+      <small class="muted">${esc(t("Automatic plan: the editor can override it per file."))}</small></label>
       ${s.subtitles === "Hardsub" ? `<label class="toggle"><input type="checkbox" data-k="useSidecarSubtitles" ${s.useSidecarSubtitles ? "checked" : ""}><span class="switch"></span><span>${esc(t("Prefer external .ass/.srt next to the video"))}</span></label>` : ""}
       ${s.subtitles === "Softsub" || full ? `<label class="toggle"><input type="checkbox" data-k="ocrPictureSubtitles" ${s.ocrPictureSubtitles ? "checked" : ""}><span class="switch"></span><span>${esc(t("Convert picture subtitles (PGS, DVD) to text with OCR"))}</span></label>
         ${s.ocrPictureSubtitles ? `<small class="muted">${esc(t("Tesseract with the language model of each track, like Subtitle Edit: lighter files, and subtitles MP4 and players without PGS support can show. Settings → Components installs it."))}</small>` : ""}` : ""}` : ""}
@@ -123,13 +129,14 @@ export function renderSettingsForm(root, s, opts = {}) {
       <label class="toggle"><input type="checkbox" data-k="demux.raw" ${s.demux.raw ? "checked" : ""}><span class="switch"></span><span>${esc(t("Raw elementary streams (.h264, .aac…) instead of MKA/MKS wrappers"))}</span></label>
       <label class="toggle"><input type="checkbox" data-k="demux.attachments" ${s.demux.attachments ? "checked" : ""}><span class="switch"></span><span>${esc(t("Extract attachments (fonts)"))}</span></label>
       <label class="toggle"><input type="checkbox" data-k="demux.chapters" ${s.demux.chapters ? "checked" : ""}><span class="switch"></span><span>${esc(t("Extract chapters"))}</span></label>` : ""}
-    ${V && full && p.encodesVideo ? advancedEncoder(s, codec) : ""}
-    ${In("audio") && full && p.usesAudio ? `
+    ${V && full && !sec && p.encodesVideo ? advancedEncoder(s, codec) : ""}
+    ${V && full && sec === "video" && p.encodesVideo ? encoderProgram(s, codec) : ""}
+    ${In("audio") && full && !sec && p.usesAudio ? `
       ${paramsBlock(t("FFmpeg audio encoder parameters"), "audio", "arguments.audioFfmpeg", s.arguments.audioFfmpeg, "-aac_coder twoloop")}
       ${state.tools?.fdkaac ? paramsBlock(t("fdkaac parameters"), "fdkaac", "arguments.fdkaac", s.arguments.fdkaac, "--afterburner 1") : ""}
       ${state.tools?.qaac ? paramsBlock(t("qaac parameters"), "qaac", "arguments.qaac", s.arguments.qaac, "--quality 2") : ""}` : ""}
-    ${In("subtitles") && full && p.usesTrackPlan ? paramsBlock(t("Subtitle encoder parameters"), "subtitles", "arguments.subtitles", s.arguments.subtitles, "-alignment 1") : ""}
-    ${In("output") && full && (p.encodesVideo || p.isRemux || p.isImages || p.isDemux) ? trackSelection(s) : ""}
+    ${In("subtitles") && full && !sec && p.usesTrackPlan ? paramsBlock(t("Subtitle encoder parameters"), "subtitles", "arguments.subtitles", s.arguments.subtitles, "-alignment 1") : ""}
+    ${In("output") && full && !sec && (p.encodesVideo || p.isRemux || p.isImages || p.isDemux) ? trackSelection(s) : ""}
     ${In("output") && full && !p.isImages ? paramsBlock(t("Container parameters"), "muxer", "arguments.muxer", s.arguments.muxer, "-reserve_index_space 50k") : ""}
   `;
   const sel = k => $(`[data-k="${k}"]`, root);
@@ -158,14 +165,29 @@ export function renderSettingsForm(root, s, opts = {}) {
   if (sel("toneMap")) fillSelect(sel("toneMap"), o.toneMapCurves, s.toneMap ?? "Spline");
   if (show.images) { fillSelect(sel("images.format"), o.imageFormats, s.images.format); fillSelect(sel("images.mode"), o.imageModes, s.images.mode); }
 
+  bindForm(root, s, opts, codec);
+}
+
+/** Events of a rendered form (also the editor's rate control and preset-rules sections). */
+function bindForm(root, s, opts, codec) {
   const changed = () => { renderSettingsForm(root, s, opts); opts.onChange?.(s); };
   // parameter rows save without redrawing the form (the row being typed in keeps its focus and stays open)
   mountParams(root, s, () => (opts.onQuietChange ?? opts.onChange)?.(s));
-  if (show.rate && s.encoder.rateControl === "TargetSize" && opts.sizeInfo) {
+  if ($("#size-info", root) && s.encoder?.rateControl === "TargetSize" && opts.sizeInfo) {
     const box = $("#size-info", root);
     opts.sizeInfo(s).then(text => { if (box && text) box.textContent = text; }).catch(() => {});
   }
   root.onchange = e => {
+    if (e.target.dataset.k === "levelFill") {
+      if (!e.target.value) return;
+      // a quality level only fills the fields with KnA's values for it: it is not kept as a rule
+      s.quality = e.target.value; s.encoder = { ...s.encoder, rateControl: "Auto", qualityValue: null, speed: null };
+      return opts.onLevel ? opts.onLevel(s) : changed();
+    }
+    if (e.target.dataset.k === "encoder.rateControl" && e.target.value === "Quality" && s.encoder?.qualityValue == null && opts.onLevel) {
+      s.encoder = { ...s.encoder, rateControl: "Auto", qualityValue: null };
+      return opts.onLevel(s);
+    }
     const k = e.target.dataset.k; if (!k) return;
     let v = e.target.type === "checkbox" ? e.target.checked : e.target.value;
     if (["resolution"].includes(k)) v = Number(v);
@@ -182,7 +204,7 @@ export function renderSettingsForm(root, s, opts = {}) {
       if (v === "Bitrate") s.encoder = { ...s.encoder, bitrateKbps: s.encoder?.bitrateKbps ?? 6000 };
       if (v === "TargetSize") s.encoder = { ...s.encoder, targetSizeMB: s.encoder?.targetSizeMB ?? 4096 };
     }
-    if (k === "encoder.program") s.encoder = { ...s.encoder, speed: null, tune: null, extra: null };
+    if (k === "encoder.program") s.encoder = { ...s.encoder, speed: null, tune: null, extra: null, gpuFilters: null };
     const [a, b] = k.split(".");
     if (b) s[a] = { ...s[a], [b]: v }; else s[a] = v;
     if (k === "profile") { s.container = null; }
@@ -200,6 +222,78 @@ export function renderSettingsForm(root, s, opts = {}) {
     const b = e.target.closest("[data-k=codec] button");
     if (b) { s.codec = b.dataset.v; changed(); }
   };
+}
+
+/** FFmpeg or rigaya's encoder for a GPU backend (editor, Video → General): it decides which parameter pages appear. */
+function encoderProgram(s, codec) {
+  const o = state.options, e = s.encoder ?? {};
+  const rig = o.rigayaEncoders?.[`${codec}|${s.backend ?? "Software"}`];
+  if (!rig) return "";
+  const ffEnc = o.encoderNames?.[`${codec}|${s.backend ?? "Software"}`] ?? "";
+  const installed = (state.tools?.rigaya ?? []).includes(s.backend);
+  const opt = (v, l, cur) => `<option value="${esc(v)}" ${String(cur ?? "") === v ? "selected" : ""}>${esc(l)}</option>`;
+  return `<label class="field"><span>${esc(t("Encoder program"))}</span><select data-k="encoder.program">
+      ${opt("FFmpeg", t("FFmpeg ({0})", ffEnc), e.program ?? "FFmpeg")}${opt("Rigaya", rig.name + " (rigaya)", e.program)}</select>
+      <small class="muted">${esc(t("{0} reads the source with GPU decoding, resizes on the GPU and copies Dolby Vision / HDR10+ when no FFmpeg filter is needed (otherwise FFmpeg decodes and filters, and sends the frames to it). Install it in Settings → Components.", rig.name))}</small>
+      ${e.program === "Rigaya" && !installed ? `<small class="warn">${esc(t("{0} is not installed: add it in Settings → Components, or choose FFmpeg as the encoder program.", rig.name))}</small>` : ""}</label>`;
+}
+
+/**
+ * Editor, Video → Rate control: explicit values only (constant quality, bitrate or maximum size) plus speed and
+ * structure; a quality level can fill them with KnA's values, it does not stay behind them.
+ */
+function editorRate(s, codec) {
+  const o = state.options, e = s.encoder ?? {};
+  const ffEnc = o.encoderNames?.[`${codec}|${s.backend ?? "Software"}`] ?? "";
+  const rig = o.rigayaEncoders?.[`${codec}|${s.backend ?? "Software"}`];
+  const useRig = !!rig && e.program === "Rigaya";
+  const enc = useRig ? rig.name : ffEnc;
+  const info = (useRig ? rig.info : o.encoders?.[ffEnc]) ?? { speeds: [], tunes: [] };
+  let rc = e.rateControl ?? "Auto";
+  if (rc === "Quality" && !info.qualityLabel) rc = "Auto";
+  if (rc === "Auto" && info.qualityLabel) rc = "Quality";
+  const opt = (v, l, cur) => `<option value="${esc(v)}" ${String(cur ?? "") === v ? "selected" : ""}>${esc(l)}</option>`;
+  const higher = /vceencc|_amf|_videotoolbox|VCEEncC/i.test(enc);
+  return `<small class="muted">${esc(t("Encoder: {0}.", enc))}</small>
+    <label class="field"><span>${esc(t("Rate control"))}</span><select data-k="encoder.rateControl">
+      ${info.qualityLabel ? opt("Quality", t("Constant quality ({0})", info.qualityLabel), rc) : opt("Auto", t("Quality level"), rc)}${opt("Bitrate", t("Average bitrate"), rc)}${opt("TargetSize", t("Maximum file size"), rc)}</select></label>
+    ${rc === "Quality" ? `<div class="grid2"><label class="field"><span>${esc(t("{0} value ({1}–{2})", info.qualityLabel, info.qualityMin, info.qualityMax))}</span>
+      <input type="number" step="0.5" min="${info.qualityMin}" max="${info.qualityMax}" data-k="encoder.qualityValue" value="${e.qualityValue ?? ""}">
+      <small class="muted">${esc(higher ? t("Higher = better and bigger.") : t("Lower = better and bigger."))}</small></label>
+      <label class="field"><span>${esc(t("Fill from a quality level"))}</span><select data-k="levelFill"><option value="">—</option>${o.qualities.map(q => `<option value="${esc(q.value)}">${esc(q.label)}</option>`).join("")}</select>
+      <small class="muted">${esc(t("KnA's tuned values for {0}: from best to smallest.", enc))}</small></label></div>` : ""}
+    ${rc === "Auto" ? `<label class="field"><span>${esc(t("Quality"))}</span><select data-k="quality">${o.qualities.map(q => `<option value="${esc(q.value)}" ${q.value === s.quality ? "selected" : ""}>${esc(q.label)}</option>`).join("")}</select>
+      <small class="muted">${esc(t("KnA's tuned values for {0}: from best to smallest.", enc))}</small></label>` : ""}
+    ${rc === "Bitrate" ? `<div class="grid2"><label class="field"><span>${esc(t("Bitrate (kb/s)"))}</span><input type="number" min="100" step="100" data-k="encoder.bitrateKbps" value="${e.bitrateKbps ?? 6000}"></label>
+      <label class="field"><span>${esc(t("Maximum (kb/s, 0 = none)"))}</span><input type="number" min="0" step="100" data-k="encoder.maxBitrateKbps" value="${e.maxBitrateKbps ?? 0}"></label></div>` : ""}
+    ${rc === "TargetSize" ? `<label class="field"><span>${esc(t("Maximum size (MB)"))}</span><input type="number" min="1" step="50" data-k="encoder.targetSizeMB" value="${e.targetSizeMB ?? 4096}">
+      <small class="muted">${esc(t("As Windows counts it (1 MB = 1024 KB). KnA aims 3 % lower so one-pass encoders stay below."))}</small></label>
+      <small class="muted" id="size-info">${esc(t("Audio, subtitles and the container are subtracted; the video gets the rest."))}</small>` : ""}
+    <div class="grid2">
+      <label class="field"><span>${esc(t("Speed preset (fastest → slowest)"))}</span><select data-k="encoder.speed">${!e.speed || !info.speeds.length ? opt("", t("Encoder default"), e.speed) : ""}${info.speeds.map(v => opt(v, v, e.speed)).join("")}</select></label>
+      <label class="field"><span>${esc(t("Tune"))}</span><select data-k="encoder.tune">${opt("", t("None"), e.tune)}${info.tunes.map(v => opt(v, v, e.tune)).join("")}</select></label>
+    </div>
+    <div class="grid3">
+      <label class="field"><span>${esc(t("Keyframe every (s, 0 = auto)"))}</span><input type="number" min="0" step="0.5" data-k="encoder.keyframeSeconds" value="${e.keyframeSeconds ?? 0}"></label>
+      <label class="field"><span>${esc(t("B-frames (−1 = auto)"))}</span><input type="number" min="-1" max="16" data-k="encoder.bFrames" value="${e.bFrames ?? -1}"></label>
+      <label class="field"><span>${esc(t("Lookahead (frames, −1 = auto)"))}</span><input type="number" min="-1" max="250" data-k="encoder.lookahead" value="${e.lookahead ?? -1}"></label>
+    </div>
+    <small class="muted">${esc(t("Every other parameter of the encoder is on the next pages, one per group."))}</small>`;
+}
+
+/** Editor, Preset tab: what a saved preset decides for the other files (their automatic track plan). */
+function presetRules(s, p) {
+  const o = state.options;
+  const opts = (list, cur) => list.map(x => `<option value="${esc(x.value)}" ${String(x.value) === String(cur) ? "selected" : ""}>${esc(x.label)}</option>`).join("");
+  return `${p.usesSubtitleMode ? `<label class="field"><span>${esc(t("Subtitles"))}</span><select data-k="subtitles">${opts(o.subtitleModes, s.subtitles)}</select>
+      <small class="muted">${esc(t("For the other files this preset is applied to: here the subtitles of this file are set in the Subtitles tab."))}</small></label>
+      ${s.subtitles === "Hardsub" ? `<label class="toggle"><input type="checkbox" data-k="useSidecarSubtitles" ${s.useSidecarSubtitles ? "checked" : ""}><span class="switch"></span><span>${esc(t("Prefer external .ass/.srt next to the video"))}</span></label>` : ""}
+      <label class="toggle"><input type="checkbox" data-k="ocrPictureSubtitles" ${s.ocrPictureSubtitles ? "checked" : ""}><span class="switch"></span><span>${esc(t("Convert picture subtitles (PGS, DVD) to text with OCR"))}</span></label>` : ""}
+    ${p.usesAudio ? `<div class="grid2">
+      <label class="field"><span>${esc(t("Audio"))}</span><select data-k="audioCodec">${opts(o.audioCodecs, s.audioCodec ?? "Auto")}</select></label>
+      <label class="field"><span>${esc(t("Bitrate (kb/s)"))}</span><input type="number" min="8" max="1536" step="8" data-k="audioBitrate" value="${s.audioBitrate ?? ""}" placeholder="${esc(t("auto"))}"></label>
+    </div>` : ""}
+    ${p.encodesVideo || p.isRemux || p.isImages || p.isDemux ? trackSelection(s) : ""}`;
 }
 
 /** Hand-set encoder parameters (full form only); empty = KnA's values for the quality level. */
@@ -388,3 +482,4 @@ function upscaleNote(method) {
 }
 
 export function cloneSettings(s) { return JSON.parse(JSON.stringify(s)); }
+export { parsePairs, formatPairs };

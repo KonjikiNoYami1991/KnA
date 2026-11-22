@@ -140,6 +140,32 @@ internal static class Ui
         return b;
     }
 
+    /// <summary>Yes/No question over <paramref name="owner"/>.</summary>
+    public static async Task<bool> ConfirmAsync(Window owner, string title, string message)
+    {
+        bool result = false;
+        var yes = new Button { Content = L.T("Yes"), Classes = { "primary" }, MinWidth = 80 };
+        var no = new Button { Content = L.T("No"), MinWidth = 80 };
+        var win = new Window
+        {
+            Title = title, SizeToContent = SizeToContent.WidthAndHeight, CanResize = false, Icon = owner.Icon,
+            WindowStartupLocation = WindowStartupLocation.CenterOwner,
+            Content = new StackPanel
+            {
+                Margin = new Thickness(20), Spacing = 16, MaxWidth = 460,
+                Children =
+                {
+                    new TextBlock { Text = message, TextWrapping = TextWrapping.Wrap },
+                    new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, HorizontalAlignment = HorizontalAlignment.Right, Children = { no, yes } },
+                },
+            },
+        };
+        yes.Click += (_, _) => { result = true; win.Close(); };
+        no.Click += (_, _) => win.Close();
+        await win.ShowDialog(owner);
+        return result;
+    }
+
     public static string Stamp(double seconds)
     {
         var t = TimeSpan.FromSeconds(Math.Max(0, seconds));
