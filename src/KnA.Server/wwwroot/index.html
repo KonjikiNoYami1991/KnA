@@ -304,6 +304,8 @@
       </section>
       <section data-pane="ai" hidden>
         <h3 data-i18n>LLM assistant</h3>
+        <div class="row" style="margin-bottom:8px"><button class="btn primary sm" type="button" id="s-ai-setup" data-i18n>Guided set-up…</button>
+          <span class="muted small" data-i18n>Step by step: install the server, check the connection, choose and try the models.</span></div>
         <div class="grid2">
           <label class="field"><span data-i18n>Server</span><select id="s-ai-provider"></select><small class="muted" id="s-ai-provider-note"></small></label>
           <label class="field"><span>URL</span><input id="s-ai-url" class="mono" placeholder="http://localhost:11434/v1"></label>
@@ -424,8 +426,27 @@
         <textarea id="ai-prompt" rows="3" data-i18n-ph="e.g. small MP4 for Telegram under 2 GB, 720p, burned Italian subtitles"></textarea></label>
       <div class="row"><button class="btn primary" id="ai-ask"><svg><use href="#i-spark"/></svg><span data-i18n>Suggest settings</span></button>
         <span class="muted small" id="ai-status"></span></div>
+      <div class="row" id="ai-setup-row" hidden><button class="btn primary" id="ai-setup"><svg><use href="#i-spark"/></svg><span data-i18n>Set up the AI assistant</span></button></div>
       <div id="ai-result"></div>
     </div>
+  </div>
+</dialog>
+
+<!-- AI assistant guided set-up -->
+<dialog id="dlg-ai-setup" class="dialog">
+  <div class="dialog-inner">
+    <header class="dialog-head">
+      <h2><svg class="h-icon"><use href="#i-spark"/></svg><span data-i18n>Set up the AI assistant</span></h2>
+      <div class="grow"></div>
+      <button class="btn icon ghost" id="ais-close" data-i18n-title="Close"><svg><use href="#i-x"/></svg></button>
+    </header>
+    <div class="dialog-body" id="ais-body"></div>
+    <footer class="dialog-foot">
+      <span class="muted small" id="ais-step"></span>
+      <div class="grow"></div>
+      <button class="btn" type="button" id="ais-back" data-i18n>Back</button>
+      <button class="btn primary" type="button" id="ais-next" data-i18n>Next</button>
+    </footer>
   </div>
 </dialog>
 

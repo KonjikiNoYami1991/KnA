@@ -360,3 +360,26 @@ public class EditorMaterializeTests(FeatureFixture fx) : IClassFixture<FeatureFi
         Assert.Contains("-c:a:0 ac3", a3.CommandLine);
     }
 }
+
+public class AiSetupTests
+{
+    [Fact]
+    public async Task The_connection_check_explains_what_is_wrong()
+    {
+        // A port where nothing listens: the check says so instead of a raw socket error.
+        var l = new System.Net.Sockets.TcpListener(System.Net.IPAddress.Loopback, 0);
+        l.Start();
+        int port = ((System.Net.IPEndPoint)l.LocalEndpoint).Port;
+        l.Stop();
+        var c = await KnA.Core.Ai.AiSetup.CheckAsync(new KnA.Core.Ai.AiSettings { Provider = "custom", BaseUrl = $"http://127.0.0.1:{port}/v1" });
+        Assert.False(c.Ok);
+        Assert.NotNull(c.Hint);
+        Assert.Contains(port.ToString(System.Globalization.CultureInfo.InvariantCulture), c.Hint);
+
+        Assert.True(KnA.Core.Ai.AiSetup.IsVision("qwen2.5vl:7b"));
+        Assert.True(KnA.Core.Ai.AiSetup.IsVision("llava:13b"));
+        Assert.False(KnA.Core.Ai.AiSetup.IsVision("qwen2.5:7b"));
+        Assert.NotEmpty(KnA.Core.Ai.AiSetup.Install("ollama"));
+        Assert.True(KnA.Core.Ai.AiSetup.NeedsKey("openai"));
+    }
+}

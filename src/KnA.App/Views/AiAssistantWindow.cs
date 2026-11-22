@@ -54,6 +54,13 @@ public sealed class AiAssistantWindow : Window
         };
         if (job is not null)
             page.Children.Insert(3, Ui.Button(L.T("Analyse frames with AI"), AnalyseAsync));
+        if (ai.Model is null)
+            page.Children.Insert(1, Ui.Button(L.T("Set up the AI assistant"), async () =>
+            {
+                var w = new AiSetupWindow(_queue) { Icon = Icon };
+                await w.ShowDialog(this);
+                if (w.Saved) ((TextBlock)page.Children[0]).Text = $"{_queue.Settings.Ai.Provider} · {_queue.Settings.Ai.Model}";
+            }, primary: true));
         Content = new ScrollViewer { Content = page };
         if (analyse && job is not null) Opened += async (_, _) => await AnalyseAsync();
     }

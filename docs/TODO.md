@@ -33,7 +33,7 @@ Work through it in order, on `master`; ask before releasing. Items marked ✅ ar
 
 Handy, but it must build the preset in a more specific, detailed way.
 
-## 3. AI assistant
+## 3. ✅ AI assistant
 
 Handy, but it needs guided set-up procedures (wizards), or users give up.
 

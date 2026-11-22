@@ -224,6 +224,17 @@ app.MapGet("/api/ai/models", async (CancellationToken ct) =>
         return Results.Problem(L.T("Cannot reach the LLM server at {0}: {1}", queue.Settings.Ai.EffectiveUrl, ex.Message), statusCode: 502);
     }
 });
+// AI assistant guided set-up: install steps, connection check with a plain diagnosis, a test question to a model.
+// The browser never receives the stored key: an empty key in the request means "the stored one".
+KnA.Core.Ai.AiSettings WithStoredKey(KnA.Core.Ai.AiSettings ai) => ai with { ApiKey = string.IsNullOrEmpty(ai.ApiKey) ? queue.Settings.Ai.ApiKey : ai.ApiKey == "-" ? null : ai.ApiKey };
+app.MapGet("/api/ai/setup/guide", (string provider) =>
+{
+    var (text, vision) = KnA.Core.Ai.AiSetup.Suggested(provider);
+    return Results.Ok(new { steps = KnA.Core.Ai.AiSetup.Install(provider), needsKey = KnA.Core.Ai.AiSetup.NeedsKey(provider), suggestedText = text, suggestedVision = vision,
+        url = (KnA.Core.Ai.AiSettings.Providers.FirstOrDefault(p => p.Id == provider)?.DefaultUrl) });
+});
+app.MapPost("/api/ai/setup/check", async (KnA.Core.Ai.AiSettings ai, CancellationToken ct) => Results.Ok(await KnA.Core.Ai.AiSetup.CheckAsync(WithStoredKey(ai), ct)));
+app.MapPost("/api/ai/setup/test", async (AiTestRequest req, CancellationToken ct) => Results.Ok(new { error = await KnA.Core.Ai.AiSetup.TestAsync(WithStoredKey(req.Ai), req.Model, ct) }));
 app.MapPost("/api/ai/suggest", async (AiSuggestRequest req, CancellationToken ct) =>
 {
     var media = req.JobId is { } jid ? queue.Find(jid)?.Media : null;

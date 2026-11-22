@@ -35,6 +35,12 @@
   DeHalo_alpha, resize, crop, levels, grain…) with a form for each filter; the script is written from the list, or by hand.
 - **Output** offers only the containers that can hold every final stream (e.g. no MP4 with FFV1, no WebM with FLAC).
 
+**AI assistant: guided set-up**
+- Settings → AI → "Guided set-up…" (and in the assistant when no model is chosen): which program runs the model,
+  how to install and start it, address and key with a connection check that says what is wrong in plain words
+  (not running, wrong port, key needed, missing /v1), text model with a real test question, optional vision model,
+  summary. Desktop and web.
+
 **Preset wizard, detailed**
 - Up to 20 questions, only the ones that apply: what the result is for, kind of picture (tune), codec, encoder (only
   working GPUs), 8/10-bit, how the quality is decided (level, CRF/CQ value, bitrate or file size), resolution, HDR,
@@ -139,6 +145,12 @@
   viene scritto dall'elenco, oppure a mano.
 - **Output** propone solo i contenitori che possono contenere tutti gli stream finali (es. niente MP4 con FFV1, niente
   WebM con FLAC).
+
+**Assistente AI: configurazione guidata**
+- Impostazioni → AI → "Configurazione guidata…" (e nell'assistente quando non c'è un modello): quale programma esegue
+  il modello, come installarlo e avviarlo, indirizzo e chiave con una verifica della connessione che spiega a parole
+  cosa non va (non avviato, porta sbagliata, chiave richiesta, /v1 mancante), modello di testo con una vera domanda di
+  prova, modello vision facoltativo, riepilogo. Desktop e web.
 
 **Wizard dei preset, dettagliato**
 - Fino a 20 domande, solo quelle pertinenti: a cosa serve il risultato, tipo di immagine (tune), codec, encoder (solo

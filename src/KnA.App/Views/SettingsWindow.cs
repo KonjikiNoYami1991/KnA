@@ -415,7 +415,30 @@ public sealed class SettingsWindow : Window
         return page;
     }
 
+    /// <summary>Settings → AI, with the guided set-up on top (the page is rebuilt with what it saved).</summary>
     private Control AiPage()
+    {
+        var host = new ContentControl();
+        Control Build()
+        {
+            var wizard = Ui.Button(L.T("Guided set-up…"), async () =>
+            {
+                var w = new AiSetupWindow(_queue) { Icon = Icon };
+                await w.ShowDialog(this);
+                if (!w.Saved) return;
+                var a = _queue.Settings.Ai;
+                _ai = _ai with { Provider = a.Provider, BaseUrl = a.BaseUrl, Model = a.Model, VisionModel = a.VisionModel, ApiKey = a.ApiKey };
+                host.Content = Build();
+            }, primary: true);
+            var page = AiPageContent();
+            page.Children.Insert(0, Ui.Row(10, wizard, Ui.Muted(L.T("Step by step: install the server, check the connection, choose and try the models."))));
+            return page;
+        }
+        host.Content = Build();
+        return host;
+    }
+
+    private StackPanel AiPageContent()
     {
         var providers = AiSettings.Providers.Select(p => (p.Id, p.Name)).ToList();
         var note = Ui.Muted(AiSettings.Providers.FirstOrDefault(p => p.Id == _ai.Provider)?.Notes ?? "");

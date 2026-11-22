@@ -3,7 +3,7 @@ import { $, $$, esc, state, t, api, post, toast, guard, fmtTime, fmtSize, label,
 import { renderSettingsForm, cloneSettings } from "./form.js";
 import { openEditor, editorJobChanged } from "./editor.js";
 import { openFiles, pickFiles } from "./files.js";
-import { openAssistant } from "./ai.js";
+import { openAssistant, openAiSetup } from "./ai.js";
 
 // ---------------------------------------------------------------- theme
 function applyTheme(theme) {
@@ -514,6 +514,7 @@ async function saveWatch() {
 }
 
 // ---------------------------------------------------------------- AI settings helpers
+$("#s-ai-setup").onclick = () => openAiSetup(() => $("#dlg-settings").close());
 $("#s-ai-list").onclick = guard(async () => {
   await saveAiOnly();
   const models = await api("GET", "/api/ai/models");
