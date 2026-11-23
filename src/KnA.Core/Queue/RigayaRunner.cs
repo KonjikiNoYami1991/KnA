@@ -7,9 +7,11 @@ using KnA.Core.Processing;
 namespace KnA.Core.Queue;
 
 /// <summary>
-/// Video encode with NVEncC / QSVEncC / VCEEncC:
-///  • native: the encoder opens the source with GPU decoding (--avhw), resizes on the GPU when needed and copies
-///    Dolby Vision / HDR10+ (the StaxRip way: decode → encode never leaves the GPU);
+/// Video encode with NVEncC / QSVEncC / VCEEncC, GPU first:
+///  • native: the encoder opens the source with GPU decoding (--avhw; --avsw for formats its GPU lacks) or the
+///    VapourSynth / AviSynth script (--vpy / --avs), runs KnA's filters as its --vpp-* GPU filters (crop, deinterlace,
+///    HDR → SDR, denoise, deband, resize, sharpen, burned subtitles, trim) and copies Dolby Vision / HDR10+ (the
+///    StaxRip way: decode → filters → encode never leave the GPU);
 ///  • pipe: FFmpeg decodes, filters, burns subtitles and trims exactly as in a single-pass encode and sends y4m
 ///    frames to the encoder's stdin (a VapourSynth or AI-upscaler process can sit in front of FFmpeg).
 /// If the native path fails (a format the GPU reader rejects), the pipe path runs instead. Audio, subtitles,
@@ -38,10 +40,20 @@ public static class RigayaRunner
         ctx.Changed(job);
         int exit = -1;
         double start = 0;
+        if (final.Gpu is { } gpu)
+        {
+            job.AppendLog(gpu.Summary);
+            foreach (var st in gpu.Steps.Where(x => x.Note is not null || x.GpuAlternative is not null))
+                job.AppendLog($"  {st.Name} [{GpuPipeline.Place(st.Place)}]: {st.Note}{(st.GpuAlternative is { } alt ? " → " + L.T("GPU alternative: {0}", alt) : "")}");
+        }
         if (plan.NativeArgs is { } native)
         {
             var args = native.ToList();
             args[^1] = video;
+            // Portable VapourSynth (Windows package): the encoder loads it from KnA's folder (--vsdir, Windows only).
+            if (args.Contains("--vpy") && OperatingSystem.IsWindows() && ctx.Tools.VsPipe is { } vspipe && Path.GetDirectoryName(vspipe) is { Length: > 0 } vsdir)
+                args.InsertRange(0, ["--vsdir", vsdir]);
+            start = plan.TrimStart;
             job.CommandLine = new EncodePlan(args, video).CommandLine(exe);
             job.AppendLog($"Command ({name}, GPU reader): " + job.CommandLine);
             exit = await RunChainAsync([(exe, args, "")], workDir, ctx,
@@ -51,6 +63,7 @@ public static class RigayaRunner
                 ct.ThrowIfCancellationRequested();
                 job.AppendLog(L.T("{0} could not read the source itself (exit code {1}): FFmpeg decodes it instead.", name, exit));
                 TryDelete(video);
+                start = 0;
             }
         }
         else job.AppendLog($"{name}: FFmpeg decodes the video ({plan.PipeReason}).");

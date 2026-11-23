@@ -159,11 +159,11 @@ public static class EditorModel
         var p = s.ProfileDefinition;
         if (!p.EncodesVideo || p.IsImages || o.RateControl != RateControl.Auto) return o;
         if (RigayaEncoders.Wanted(s) && RigayaEncoders.ToolId(s.Backend) is { } rid)
-            return o with
-            {
-                RateControl = RateControl.Quality, QualityValue = RigayaEncoders.DefaultQuality(rid, s.EffectiveCodec, s.Quality),
-                Speed = o.Speed ?? RigayaEncoders.DefaultSpeed(rid, s.Quality),
-            };
+        {
+            // Speed, tune, lookahead and the profile's options from the GPU the hardware test found.
+            if (o.Speed is null) o = RigayaProfiles.Apply(o, RigayaProfiles.Recommended(s.Backend, s.EffectiveCodec, s.Quality, q.Settings.Capabilities));
+            return o with { RateControl = RateControl.Quality, QualityValue = RigayaEncoders.DefaultQuality(rid, s.EffectiveCodec, s.Quality) };
+        }
         var caps = q.Settings.Capabilities;
         var req = new VideoEncodeRequest(s.EffectiveCodec, s.EffectiveBackend, s.Quality, s.EffectiveTenBit, s.Profile,
             s.VideoFilters.Fps ?? video?.FrameRate ?? 25, container is "mp4" or "mov")

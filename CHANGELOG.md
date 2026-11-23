@@ -42,6 +42,30 @@
   DeHalo_alpha, resize, crop, levels, grain…) with a form for each filter; the script is written from the list, or by hand.
 - **Output** offers only the containers that can hold every final stream (e.g. no MP4 with FFV1, no WebM with FLAC).
 
+**GPU-first video with NVEncC / QSVEncC / VCEEncC**
+- **The frame stays on the GPU**: KnA's filters become the encoder's own GPU filters, so the encoder reads the file
+  itself (`--avhw`; `--avsw` for formats its GPU cannot decode) even with filters: deinterlace (`--vpp-bwdif`), crop,
+  HDR → SDR (`--vpp-colorspace hdr2sdr`, Hable / Mobius / BT.2390), denoise (`--vpp-hqdn3d`, the same values as
+  FFmpeg's hqdn3d), deband, resize (`--output-res` + Lanczos), sharpen (`--vpp-cas`), burned subtitles
+  (`--vpp-subburn`, text and PGS) and the trim (`--trim`, exact frames). Every option checked against the official
+  option documents of NVEncC 9.41, QSVEncC 8.38 and VCEEncC 9.23.
+- **No silent fallback**: the Filters tab shows where each step runs (GPU / CPU) and why; a filter without a GPU
+  equivalent (custom FFmpeg filters, frame-rate change, HLG tone mapping, rotation, VFR trim…) is named in the
+  editor, the warnings and the log, with the GPU filter to use instead where there is one.
+- **Scripts read by the encoder**: VapourSynth / AviSynth scripts go straight to the encoder (`--vpy` / `--avs`,
+  `--vsdir` for the portable VapourSynth on Windows) instead of vspipe → FFmpeg → pipe; a catalogue chain made only
+  of filters the GPU has too (Bwdif, crop, resize, CAS, bit depth) runs on the GPU without the script. CPU-only
+  filters (QTGMC, SMDegrain…) stay in VapourSynth and each shows its GPU alternative (`--vpp-rtgmc`,
+  `--vpp-degrain`, `--vpp-nlmeans`…) with a **"Use the GPU filter instead"** button.
+- **The script is always shown**: the whole picture chain as a VapourSynth script, each step marked with where it
+  runs (Filters tab).
+- **Speed / quality profiles** per encoder — Best quality, Balanced, Fast — built on StaxRip's defaults and moved
+  towards GPU work (P7 + UHQ tune, lookahead, temporal AQ, `--split-enc` for HEVC/AV1 on NVENC; QSV/AMF presets with
+  pyramid B-frames / VBAQ / pre-encode), explained and editable. **Starting values from the detected GPU** (newer
+  generations with hardware AV1 start one step more careful); **AV1 only where the GPU encodes it in hardware**.
+- **Optional GPU mini benchmark**: a 10-second 1080p clip encoded with each profile gives this job's expected time
+  with each one and the suggested profile (Video → Quality and speed). Desktop and web.
+
 **Segmented encoding and progress**
 - Encodes that can't be written as resumable pieces (encoders without forced keyframes) use the segment logic with one
   worker: a stop or crash only loses the segment being encoded.
@@ -168,6 +192,31 @@
   viene scritto dall'elenco, oppure a mano.
 - **Output** propone solo i contenitori che possono contenere tutti gli stream finali (es. niente MP4 con FFV1, niente
   WebM con FLAC).
+
+**Video GPU-first con NVEncC / QSVEncC / VCEEncC**
+- **Il fotogramma resta sulla GPU**: i filtri di KnA diventano i filtri GPU dell'encoder, così l'encoder legge il file
+  da sé (`--avhw`; `--avsw` per i formati che la sua GPU non decodifica) anche con i filtri: deinterlacciamento
+  (`--vpp-bwdif`), ritaglio, HDR → SDR (`--vpp-colorspace hdr2sdr`, Hable / Mobius / BT.2390), riduzione rumore
+  (`--vpp-hqdn3d`, gli stessi valori dell'hqdn3d di FFmpeg), deband, ridimensionamento (`--output-res` + Lanczos),
+  nitidezza (`--vpp-cas`), sottotitoli impressi (`--vpp-subburn`, testo e PGS) e il taglio (`--trim`, fotogrammi
+  esatti). Ogni opzione verificata sui documenti ufficiali delle opzioni di NVEncC 9.41, QSVEncC 8.38 e VCEEncC 9.23.
+- **Nessun ripiego silenzioso**: la scheda Filtri mostra dove gira ogni passo (GPU / CPU) e perché; un filtro senza
+  equivalente GPU (filtri FFmpeg personalizzati, cambio di frame rate, tone mapping HLG, rotazione, taglio di video
+  VFR…) è nominato nell'editor, negli avvisi e nel log, con il filtro GPU da usare al suo posto quando esiste.
+- **Script letti dall'encoder**: gli script VapourSynth / AviSynth vanno direttamente all'encoder (`--vpy` / `--avs`,
+  `--vsdir` per il VapourSynth portable su Windows) invece di vspipe → FFmpeg → pipe; una catena del catalogo fatta
+  solo di filtri che anche la GPU ha (Bwdif, ritaglio, ridimensionamento, CAS, profondità di bit) gira sulla GPU senza
+  lo script. I filtri solo CPU (QTGMC, SMDegrain…) restano in VapourSynth e ognuno mostra la sua alternativa GPU
+  (`--vpp-rtgmc`, `--vpp-degrain`, `--vpp-nlmeans`…) con il pulsante **"Usa invece il filtro GPU"**.
+- **Lo script è sempre mostrato**: tutta la catena dell'immagine come script VapourSynth, ogni passo con il punto in
+  cui gira (scheda Filtri).
+- **Profili velocità / qualità** per encoder — Qualità massima, Bilanciato, Veloce — costruiti sui valori di StaxRip
+  e spostati verso il lavoro sulla GPU (P7 + tune UHQ, lookahead, AQ temporale, `--split-enc` per HEVC/AV1 su NVENC;
+  preset QSV/AMF con B-frame a piramide / VBAQ / pre-codifica), spiegati e modificabili. **Valori iniziali dalla GPU
+  rilevata** (le generazioni con AV1 hardware partono un passo più accurate); **AV1 solo dove la GPU lo codifica in
+  hardware**.
+- **Mini benchmark GPU facoltativo**: una clip 1080p di 10 secondi codificata con ogni profilo dà il tempo previsto
+  di questo lavoro con ciascuno e il profilo consigliato (Video → Qualità e velocità). Desktop e web.
 
 **Codifica a segmenti e avanzamento**
 - Le codifiche che non si possono scrivere a pezzi ripristinabili (encoder senza keyframe forzati) usano la logica dei

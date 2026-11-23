@@ -156,6 +156,28 @@ public class MainWindowTests
         tabsEditor.Close();
         await queue.SetEditAsync(job0.Id, keep);
 
+        // GPU-first with NVEncC: where each step runs (Filters tab) and the speed / quality profiles (Video tab)
+        var keepSettings = job0.Settings;
+        queue.UpdateSettings([job0.Id], _ => keepSettings with
+        {
+            Codec = VideoCodec.HEVC, Backend = EncoderBackend.Nvenc, Encoder = new EncoderOverrides { Program = EncoderProgram.Rigaya },
+            VideoFilters = new VideoFilterSettings { Denoise = FilterStrength.Light, Sharpen = FilterStrength.Light },
+        });
+        var gpuEditor = new JobEditorWindow(queue, job0, "filters") { Width = 1280, Height = 900 };
+        gpuEditor.Show();
+        await Pump(() => false, 3000);
+        Shot(gpuEditor, "app-05-editor-gpu-filters.png");
+        var tabsG = gpuEditor.GetVisualDescendants().OfType<TabControl>().First();
+        tabsG.SelectedItem = tabsG.Items.OfType<TabItem>().First(t => (string?)t.Tag == "video");
+        await Pump(() => false, 1500);
+        TabControl SubG() => gpuEditor.GetVisualDescendants().OfType<TabControl>().First(t => t.Items.OfType<TabItem>().Any(i => (string?)i.Tag == "general"));
+        SubG().SelectedItem = SubG().Items.OfType<TabItem>().First(i => (string?)i.Tag == "rate");
+        await Pump(() => false, 1500);
+        Shot(gpuEditor, "app-05-editor-gpu-profiles.png");
+        gpuEditor.Close();
+        queue.UpdateSettings([job0.Id], _ => keepSettings);
+        await queue.SetEditAsync(job0.Id, keep);
+
         // standalone trim on a small window: only the cut, and the frame fits the visible area
         var trim = new JobEditorWindow(queue, vm.Jobs[0].Job, JobEditorTabs.TrimOnly) { Width = 960, Height = 640 };
         trim.Show();

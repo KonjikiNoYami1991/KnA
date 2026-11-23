@@ -69,6 +69,8 @@ public static class FfprobeParser
                     case "video":
                         var frameRateRational = Str(s, "avg_frame_rate") is { } avg && avg != "0/0" ? avg : Str(s, "r_frame_rate");
                         double fps = ParseRational(frameRateRational);
+                        double rfr = ParseRational(Str(s, "r_frame_rate")), afr = ParseRational(Str(s, "avg_frame_rate"));
+                        bool vfr = rfr > 0 && afr > 0 && Math.Abs(rfr - afr) / rfr > 0.01;
                         long frames = Long(s, "nb_frames");
                         if (frames <= 0 && Tag(s, "NUMBER_OF_FRAMES") is { } nf) long.TryParse(nf, out frames);
                         var streamDuration = ParseSeconds(Str(s, "duration"));
@@ -91,7 +93,7 @@ public static class FfprobeParser
                             IsDefault = isDefault, IsForced = isForced, IsAttachedPicture = isAttachedPic, BitRate = bitRate, SizeBytes = streamBytes,
                             Width = Int(s, "width"), Height = Int(s, "height"),
                             SampleAspectRatio = ParseRatio(Str(s, "sample_aspect_ratio")),
-                            FrameRate = fps, FrameRateRational = frameRateRational, FrameCount = frames,
+                            FrameRate = fps, FrameRateRational = frameRateRational, FrameCount = frames, VariableFrameRate = vfr,
                             PixelFormat = pixFmt, BitDepth = GuessBitDepth(pixFmt, Str(s, "bits_per_raw_sample")),
                             FieldOrder = Str(s, "field_order"),
                             ColorPrimaries = Str(s, "color_primaries"),

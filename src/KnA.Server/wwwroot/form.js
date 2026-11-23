@@ -11,7 +11,8 @@ function backendStatus(codec, backend, tenBit) {
   if (!c) return { ok: false, text: t("not available for this codec") };
   if (tenBit ? c.works10Bit : c.works8Bit) return { ok: true, text: "" };
   const rig = state.options.rigayaEncoders?.[`${codec}|${backend}`];
-  if (rig && gpuPresent && state.tools?.rigaya?.includes(backend)) return { ok: true, text: t("only with {0}", rig.name) };
+  // Not for AV1: a GPU whose AV1 test failed has no AV1 encoder (only Ada/Blackwell, Arc, RDNA 3 and newer have one).
+  if (rig && gpuPresent && codec !== "AV1" && state.tools?.rigaya?.includes(backend)) return { ok: true, text: t("only with {0}", rig.name) };
   if (!gpuPresent) return { ok: false, text: t("no such GPU in this computer") };
   if (!c.compiled) return { ok: false, text: t("not in this FFmpeg build") };
   return { ok: false, text: tenBit && c.works8Bit ? t("8-bit only") : t("no compatible GPU/driver") };
@@ -173,6 +174,18 @@ function bindForm(root, s, opts, codec) {
   const changed = () => { renderSettingsForm(root, s, opts); opts.onChange?.(s); };
   // parameter rows save without redrawing the form (the row being typed in keeps its focus and stays open)
   mountParams(root, s, () => (opts.onQuietChange ?? opts.onChange)?.(s));
+  // Optional GPU mini benchmark (editor only): expected time of this job with each rigaya profile.
+  if ($("#gpu-estimate", root) && opts.gpuEstimate) {
+    const box = $("#gpu-estimate", root), btn = $("[data-a=gpu-bench]", root);
+    box.parentElement.hidden = false;
+    opts.gpuEstimate(s).then(text => { if (box && text) box.textContent = text; }).catch(() => {});
+    btn.onclick = async () => {
+      box.textContent = t("Measuring…"); btn.disabled = true;
+      try { await opts.gpuBenchmark(s); box.textContent = (await opts.gpuEstimate(s)) ?? ""; }
+      catch (err) { box.textContent = err.message; }
+      finally { btn.disabled = false; }
+    };
+  }
   if ($("#size-info", root) && s.encoder?.rateControl === "TargetSize" && opts.sizeInfo) {
     const box = $("#size-info", root);
     opts.sizeInfo(s).then(text => { if (box && text) box.textContent = text; }).catch(() => {});
@@ -183,6 +196,12 @@ function bindForm(root, s, opts, codec) {
       // a quality level only fills the fields with KnA's values for it: it is not kept as a rule
       s.quality = e.target.value; s.encoder = { ...s.encoder, rateControl: "Auto", qualityValue: null, speed: null };
       return opts.onLevel ? opts.onLevel(s) : changed();
+    }
+    if (e.target.dataset.k === "rigayaProfile") {
+      const rig = state.options.rigayaEncoders?.[`${codec}|${s.backend ?? "Software"}`];
+      const pick = rig?.profiles?.find(p => p.id === e.target.value);
+      if (pick) { s.encoder = applyRigayaProfile(s.encoder ?? {}, pick); changed(); }
+      return;
     }
     if (e.target.dataset.k === "encoder.rateControl" && e.target.value === "Quality" && s.encoder?.qualityValue == null && opts.onLevel) {
       s.encoder = { ...s.encoder, rateControl: "Auto", qualityValue: null };
@@ -269,6 +288,7 @@ function editorRate(s, codec) {
     ${rc === "TargetSize" ? `<label class="field"><span>${esc(t("Maximum size (MB)"))}</span><input type="number" min="1" step="50" data-k="encoder.targetSizeMB" value="${e.targetSizeMB ?? 4096}">
       <small class="muted">${esc(t("As Windows counts it (1 MB = 1024 KB). KnA aims 3 % lower so one-pass encoders stay below."))}</small></label>
       <small class="muted" id="size-info">${esc(t("Audio, subtitles and the container are subtracted; the video gets the rest."))}</small>` : ""}
+    ${useRig ? rigayaProfileField(rig, e) : ""}
     <div class="grid2">
       <label class="field"><span>${esc(t("Speed preset (fastest → slowest)"))}</span><select data-k="encoder.speed">${!e.speed || !info.speeds.length ? opt("", t("Encoder default"), e.speed) : ""}${info.speeds.map(v => opt(v, v, e.speed)).join("")}</select></label>
       <label class="field"><span>${esc(t("Tune"))}</span><select data-k="encoder.tune">${opt("", t("None"), e.tune)}${info.tunes.map(v => opt(v, v, e.tune)).join("")}</select></label>
@@ -279,6 +299,31 @@ function editorRate(s, codec) {
       <label class="field"><span>${esc(t("Lookahead (frames, −1 = auto)"))}</span><input type="number" min="-1" max="250" data-k="encoder.lookahead" value="${e.lookahead ?? -1}"></label>
     </div>
     <small class="muted">${esc(t("Every other parameter of the encoder is on the next pages, one per group."))}</small>`;
+}
+
+/** Options the rigaya profiles write (mirror of RigayaProfiles.Owned). */
+const profileOwned = ["--aq-temporal", "--split-enc", "--b-pyramid", "--vbaq", "--pe"];
+const splitOpts = text => (text ?? "").match(/(?:"[^"]*"|\S)+/g)?.reduce((l, w) => { if (w.startsWith("-") && !/^-\d/.test(w)) l.push([w, null]); else if (l.length && l[l.length - 1][1] == null) l[l.length - 1][1] = w; else l.push([w, null]); return l; }, []) ?? [];
+const joinOpts = l => l.map(([o, v]) => v == null ? o : `${o} ${v}`).join(" ");
+/** The profile the encoder values match (mirror of RigayaProfiles.Current), or null. */
+export function currentRigayaProfile(rig, e) {
+  const own = joinOpts(splitOpts(e.extra).filter(([o]) => profileOwned.includes(o)));
+  return (rig.profiles ?? []).find(p => (p.speed ?? "").toLowerCase() === (e.speed ?? "").toLowerCase() && (p.tune ?? null) === (e.tune ?? null)
+    && (p.lookahead ?? null) === (e.lookahead ?? null) && joinOpts(splitOpts(p.extra)) === own) ?? null;
+}
+/** The encoder values with a profile written into them (mirror of RigayaProfiles.Apply). */
+export function applyRigayaProfile(e, p) {
+  const kept = joinOpts(splitOpts(e.extra).filter(([o]) => !profileOwned.includes(o)));
+  const extra = [kept, p.extra ?? ""].map(x => x.trim()).filter(Boolean).join(" ");
+  return { ...e, speed: p.speed, tune: p.tune ?? null, lookahead: p.lookahead ?? null, extra: extra || null };
+}
+function rigayaProfileField(rig, e) {
+  const cur = currentRigayaProfile(rig, e);
+  return `<label class="field"><span>${esc(t("{0} profile", rig.name))}</span><select data-k="rigayaProfile">
+      ${cur ? "" : `<option value="" selected>${esc(t("Set by hand"))}</option>`}${(rig.profiles ?? []).map(p => `<option value="${esc(p.id)}" ${cur?.id === p.id ? "selected" : ""}>${esc(p.name)}</option>`).join("")}</select>
+    <small class="muted">${esc(cur?.description ?? t("Speed, tune or options changed by hand: pick a profile to start again from its values."))}</small></label>
+    <div class="gpu-estimate" hidden><small class="muted" id="gpu-estimate">${esc(t("Measure this GPU once (about a minute) to see how long this job takes with each profile."))}</small>
+      <button type="button" class="btn sm" data-a="gpu-bench">${esc(t("Measure the GPU speed"))}</button></div>`;
 }
 
 /** Editor, Preset tab: what a saved preset decides for the other files (their automatic track plan). */

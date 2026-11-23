@@ -527,6 +527,8 @@ public sealed class JobEditorWindow : Window
             AiRuntimeInstalled = () => File.Exists(KnA.Core.Tools.ComponentManager.VenvPython(_queue.Store.DataDirectory)),
             InstallComponent = id => Task.Run(() => _queue.Components.InstallAsync(id)),
             AutoRate = s => EditorModel.ExplicitRate(_queue, s, _a?.Source.PrimaryVideo, s.Container ?? _a?.Container ?? s.EffectiveContainer),
+            GpuEstimate = s => _a is null ? null : GpuBenchmark.EstimateFor(s, _a.Source, _edit, _queue.Settings.GpuBenchmarks),
+            RunGpuBenchmark = s => Task.Run(() => GpuBenchmark.RunAsync(_queue, s.Backend, s.EffectiveCodec)),
         };
         form.Rebuild();   // the properties above are set after the constructor's first build
         form.Changed += OnFormChanged;
@@ -1290,7 +1292,8 @@ public sealed class JobEditorWindow : Window
             var backend = _settings.EffectiveBackend;
             if (RigayaEncoders.Wanted(_settings))
             {
-                gpu.Children.Add(Ui.Muted(L.T("{0}'s own filters (--vpp-*): they run on the GPU inside the encoder, after the FFmpeg filters.", RigayaEncoders.DisplayName(backend))));
+                if (_a?.Gpu is { } pipeline) gpu.Children.Add(PipelineView(pipeline));
+                gpu.Children.Add(Ui.Muted(L.T("{0}'s own filters (--vpp-*): the filters on the left become them by themselves; add others here (they run after KnA's).", RigayaEncoders.DisplayName(backend))));
                 gpu.Children.Add(new ParamPages(new CommandLineModel(_settings.Encoder.GpuFilters, x => { _settings = _settings with { Encoder = _settings.Encoder with { GpuFilters = x } }; Save(); }),
                     ct => _queue.ParameterOptionsAsync(QueueService.ParameterTools.Vpp, _settings, ct), tabs: false, example: "--vpp-resize spline36 --vpp-nlmeans"));
             }
@@ -1320,6 +1323,13 @@ public sealed class JobEditorWindow : Window
                     if (fs.Kind != old.Kind || fs.AudioFromScript != old.AudioFromScript) _ = MaterializeNowAsync();
                     else Save();
                 }));
+            // The whole chain of this encode as a VapourSynth script, each step marked with where it runs.
+            if (_a?.Script is { Length: > 0 } scriptText)
+                sec.Children.Add(new Expander
+                {
+                    Header = L.T("Script of this encode (where each step runs)"), HorizontalAlignment = HorizontalAlignment.Stretch,
+                    Content = new TextBox { Text = scriptText, IsReadOnly = true, FontFamily = Ui.Mono, FontSize = 11.5, AcceptsReturn = true, TextWrapping = TextWrapping.NoWrap, MaxHeight = 320 },
+                });
             right.Children.Add(Ui.Card(sec));
         }
 
@@ -1345,6 +1355,52 @@ public sealed class JobEditorWindow : Window
         right.VerticalAlignment = VerticalAlignment.Top;
         g.Children[0].VerticalAlignment = VerticalAlignment.Top;
         return g;
+    }
+
+    /// <summary>
+    /// Where each step runs with NVEncC / QSVEncC / VCEEncC: GPU or CPU (FFmpeg / script), the option used, why a step
+    /// is on the CPU and the GPU filter that could replace it ("Use the GPU filter instead").
+    /// </summary>
+    private Control PipelineView(GpuPipeline pipeline)
+    {
+        var box = new StackPanel { Spacing = 6 };
+        box.Children.Add(new TextBlock
+        {
+            Text = pipeline.AllOnGpu ? "⚡ " + L.T("Everything runs on the GPU (faster).") : L.T("Part of the work runs on the CPU:"),
+            FontWeight = FontWeight.SemiBold, TextWrapping = TextWrapping.Wrap,
+        });
+        foreach (var st in pipeline.Steps)
+        {
+            var badge = new Border
+            {
+                CornerRadius = new CornerRadius(4), Padding = new Thickness(6, 1), VerticalAlignment = VerticalAlignment.Top,
+                Background = st.Place == StepPlace.Gpu ? new SolidColorBrush(Color.FromArgb(0x40, 0x22, 0xC5, 0x5E)) : new SolidColorBrush(Color.FromArgb(0x40, 0xF5, 0x9E, 0x0B)),
+                Child = new TextBlock { Text = GpuPipeline.Place(st.Place), FontSize = 11, FontWeight = FontWeight.SemiBold },
+            };
+            var text = new StackPanel { Spacing = 2, Children = { new TextBlock { Text = st.Name, TextWrapping = TextWrapping.Wrap } } };
+            if (st.Option is { Length: > 0 } opt) text.Children.Add(new TextBlock { Text = opt, FontFamily = Ui.Mono, FontSize = 11.5, Opacity = 0.75, TextWrapping = TextWrapping.Wrap });
+            if (st.Note is { Length: > 0 } note) text.Children.Add(Ui.Muted(note, 11.5));
+            if (st.GpuAlternative is { Length: > 0 } alt)
+            {
+                var row = new StackPanel { Spacing = 4, Children = { Ui.Muted("GPU: " + alt, 11.5) } };
+                ((TextBlock)row.Children[0]).TextWrapping = TextWrapping.Wrap;
+                if (st.ChainIndex is int ci)
+                {
+                    var use = Ui.Button(L.T("Use the GPU filter instead"), async () =>
+                    {
+                        _settings = RigayaFilters.UseGpuInstead(_settings, ci);
+                        await MaterializeNowAsync();
+                    });
+                    use.HorizontalAlignment = HorizontalAlignment.Left;
+                    row.Children.Add(use);
+                }
+                text.Children.Add(row);
+            }
+            var line = new DockPanel { Children = { WithDock(badge, Dock.Left), text } };
+            badge.Margin = new Thickness(0, 0, 8, 0);
+            box.Children.Add(line);
+        }
+        return new Border { Padding = new Thickness(0, 0, 0, 8), Child = box };
     }
 
     // ------------------------------------------------------------------ output

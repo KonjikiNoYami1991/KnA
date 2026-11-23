@@ -632,6 +632,8 @@ function renderTrim(body) {
 const formOpts = section => ({
   full: true, section, allowedContainers: ed.analysis.allowedContainers, onChange: s => formChanged(s), onQuietChange: () => save(),
   sizeInfo: async s => (await api("POST", `/api/jobs/${ed.id}/size`, { settings: s, edit: ed.edit })).text,
+  gpuEstimate: async s => (await api("POST", `/api/jobs/${ed.id}/gpu-estimate`, { settings: s, edit: ed.edit })).text,
+  gpuBenchmark: async s => api("POST", "/api/gpu/benchmark", { backend: s.backend, codec: s.codec }),
   onLevel: async s => { ed.settings.encoder = await api("POST", `/api/jobs/${ed.id}/rate`, { settings: s }); saveAndRender(); },
 });
 
@@ -954,12 +956,13 @@ function renderFilters(body) {
       </div>
       <div>
         ${p.usesVideoFilters && p.encodesVideo && !p.isImages ? `<div class="section"><h3>${esc(t("GPU filters"))}</h3>
-          ${useRig ? `<p class="muted small">${esc(t("{0}'s own filters (--vpp-*): they run on the GPU inside the encoder, after the FFmpeg filters.", rig.name))}</p><div id="vpp"></div>`
+          ${useRig ? `${pipelineHtml(ed.analysis.gpu)}<p class="muted small">${esc(t("{0}'s own filters (--vpp-*): the filters on the left become them by themselves; add others here (they run after KnA's).", rig.name))}</p><div id="vpp"></div>`
             : backend === "Software" ? `<p class="muted small">${esc(t("The video is encoded on the CPU: choose a GPU encoder in the Video tab to use its filters."))}</p>`
             : !gpuSuffix ? `<p class="muted small">${esc(t("FFmpeg has no filters for {0}: choose VCEEncC as the encoder program (Video tab) to use its GPU filters.", backendLabel))}</p>`
             : `<p class="muted small">${esc(t("FFmpeg filters of {0}: the frames are uploaded to the GPU after the filters on the left and filtered there, right before the encoder.", backendLabel))}</p><div id="gpu-filters"></div>`}
         </div>` : ""}
-        ${p.usesVideoFilters ? `<div class="section"><h3>VapourSynth / AviSynth</h3><div id="fs-editor"></div></div>` : ""}
+        ${p.usesVideoFilters ? `<div class="section"><h3>VapourSynth / AviSynth</h3><div id="fs-editor"></div>
+          ${ed.analysis.script ? `<details class="script-preview"><summary>${esc(t("Script of this encode (where each step runs)"))}</summary><pre class="mono small">${esc(ed.analysis.script)}</pre></details>` : ""}</div>` : ""}
         <div class="section"><h3>${esc(t("AI assistant"))}</h3>
           <div class="row"><button class="btn sm" data-a="ai-analyze"><svg><use href="#i-spark"/></svg><span>${esc(t("Analyse frames with AI"))}</span></button>
           <button class="btn sm" data-a="ai-ask"><svg><use href="#i-spark"/></svg><span>${esc(t("Ask"))}</span></button></div>
@@ -997,6 +1000,11 @@ function renderFilters(body) {
     const applyAi = s => { ed.settings = { ...s, presetName: null }; materializeNow(); };
     if (a === "ai-analyze") { await saveNow(); await analyzeJob(ed.id, ed.settings, applyAi); }
     if (a === "ai-ask") { await saveNow(); openAssistant(applyAi, ed.id); }
+    if (a === "gpu-instead") {
+      const b = e.target.closest("[data-a]");
+      ed.settings = await api("POST", "/api/gpu-instead", { settings: ed.settings, index: +b.dataset.ci });
+      return materializeNow();
+    }
     if (a !== "autocrop") return;
     toast(t("Analysing black borders…"));
     await saveNow();
@@ -1009,6 +1017,21 @@ function renderFilters(body) {
 }
 
 /** The FFmpeg filters of the GPU that encodes: pick from what this FFmpeg offers for it, set their options, order. */
+/**
+ * Where each step runs with NVEncC / QSVEncC / VCEEncC: GPU or CPU (FFmpeg / script), the option used, why a step is
+ * on the CPU and the GPU filter that could replace it. Mirrors JobEditorWindow.PipelineView.
+ */
+function pipelineHtml(g) {
+  if (!g) return "";
+  return `<div class="pipeline">
+    <p><b>${g.allOnGpu ? "⚡ " + esc(t("Everything runs on the GPU (faster).")) : esc(t("Part of the work runs on the CPU:"))}</b></p>
+    ${g.steps.map(s => `<div class="pipe-step"><span class="pipe-badge ${s.place === "Gpu" ? "gpu" : "cpu"}">${esc(s.placeLabel)}</span><div>
+      <div>${esc(s.name)}</div>${s.option ? `<div class="mono small muted">${esc(s.option)}</div>` : ""}${s.note ? `<div class="small muted">${esc(s.note)}</div>` : ""}
+      ${s.gpuAlternative ? `<div class="small muted">GPU: ${esc(s.gpuAlternative)}</div>${s.chainIndex != null ? `<button class="btn sm" data-a="gpu-instead" data-ci="${s.chainIndex}">${esc(t("Use the GPU filter instead"))}</button>` : ""}` : ""}
+    </div></div>`).join("")}
+  </div>`;
+}
+
 async function gpuFilters(el) {
   const chain = parseChain(ed.settings.videoFilters.gpu);
   const emit = () => { ed.settings.videoFilters = { ...ed.settings.videoFilters, gpu: formatChain(chain) }; save(); };

@@ -439,3 +439,14 @@ details.upscale[open] > summary { color: color-mix(in srgb, var(--accent) 80%, v
 .progress .bar.indet { position: relative; overflow: hidden; }
 .progress .bar.indet i { position: absolute; left: 0; animation: kna-indet 1.4s ease-in-out infinite; }
 @keyframes kna-indet { 0% { left: -30%; } 100% { left: 100%; } }
+
+/* GPU-first pipeline (Filters tab, rigaya encoders): where each step runs */
+.pipeline { margin-bottom: 10px; }
+.pipeline p { margin: 0 0 6px; }
+.pipe-step { display: flex; gap: 8px; align-items: flex-start; margin: 5px 0; }
+.pipe-step .btn { margin-top: 4px; }
+.pipe-badge { flex-shrink: 0; font: 600 11px var(--font); padding: 1px 6px; border-radius: 4px; white-space: nowrap; }
+.pipe-badge.gpu { background: color-mix(in srgb, var(--ok) 25%, transparent); }
+.pipe-badge.cpu { background: color-mix(in srgb, var(--warn) 25%, transparent); }
+.script-preview { margin-top: 10px; }
+.script-preview pre { max-height: 320px; overflow: auto; background: var(--surface-2); border: 1px solid var(--border); border-radius: 6px; padding: 8px; white-space: pre; }

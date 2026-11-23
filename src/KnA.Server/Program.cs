@@ -311,6 +311,8 @@ app.MapGet("/api/jobs/{id:guid}/analysis", async (Guid id, CancellationToken ct)
     return Results.Ok(AnalysisDto.From(await queue.AnalyzeAsync(j, ct), j.SourcePath));
 });
 // Every option of the program that runs for a stream (read from its own help), for the parameter editors.
+// "Use the GPU filter instead" (editor, Filters tab): a script filter replaced by the encoder's --vpp-* filter.
+app.MapPost("/api/gpu-instead", (GpuInsteadRequest req) => Results.Ok(KnA.Core.Encoding.RigayaFilters.UseGpuInstead(req.Settings, req.Index)));
 app.MapPost("/api/tools/options", async (ParameterOptionsRequest req, CancellationToken ct) =>
 {
     var (program, options) = await queue.ParameterOptionsAsync(req.Tool, req.Settings, ct);
@@ -337,6 +339,17 @@ app.MapPost("/api/jobs/{id:guid}/materialize", async (Guid id, MaterializeReques
     return Results.Ok(new { settings = s2, edit = e2, analysis = AnalysisDto.From(a, j.SourcePath) });
 });
 // Editor: the constant-quality value and speed KnA uses for the settings' quality level (rate control fields).
+// Editor (rigaya encoders): expected time of the job with each profile, from the optional GPU benchmark.
+app.MapPost("/api/jobs/{id:guid}/gpu-estimate", (Guid id, SizeRequest req) =>
+{
+    var j = queue.Find(id) ?? throw new KeyNotFoundException();
+    return Results.Ok(new { text = j.Media is null ? null : KnA.Core.Encoding.GpuBenchmark.EstimateFor(req.Settings, j.Media, req.Edit ?? j.Edit, queue.Settings.GpuBenchmarks) });
+});
+app.MapPost("/api/gpu/benchmark", async (GpuBenchmarkRequest req, CancellationToken ct) =>
+{
+    try { return Results.Ok(await KnA.Core.Encoding.GpuBenchmark.RunAsync(queue, req.Backend, req.Codec, null, ct)); }
+    catch (InvalidOperationException ex) { return Results.Problem(ex.Message, statusCode: 400); }
+});
 app.MapPost("/api/jobs/{id:guid}/rate", (Guid id, SizeRequest req) =>
 {
     var j = queue.Find(id) ?? throw new KeyNotFoundException();

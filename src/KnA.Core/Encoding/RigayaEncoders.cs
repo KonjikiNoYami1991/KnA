@@ -24,6 +24,8 @@ public sealed record RigayaPlan(EncoderBackend Backend, IReadOnlyList<string> En
     public IReadOnlyList<string>? NativeArgs { get; init; }
     /// <summary>Why the native path is not used (shown in the log).</summary>
     public string? PipeReason { get; init; }
+    /// <summary>Where the video of the native path starts on the source timeline (a single trim done with --trim).</summary>
+    public double TrimStart { get; init; }
 }
 
 /// <summary>
@@ -213,20 +215,21 @@ public static class RigayaEncoders
     }
 
     /// <summary>
-    /// Command for the native path: the encoder opens the source, decodes on the GPU and writes a video-only MKV.
-    /// Dolby Vision RPU and HDR10+ are copied when kept (HEVC/AV1); --parallel splits the file between the GPU's
-    /// encoder engines when nothing forbids it.
+    /// Command for the native path: the encoder opens the source (--avhw GPU decoding, --avsw CPU decoding) or the
+    /// script (--vpy / --avs) and runs the --vpp-* filters in <paramref name="encoderArgs"/> on the GPU. Dolby Vision
+    /// RPU and HDR10+ are copied when kept (HEVC/AV1, file sources, as before: not with a crop); --parallel splits the file between the GPU's
+    /// encoder engines when nothing forbids it (the encoder turns it off by itself with --trim or --vpp-subburn).
     /// </summary>
-    public static List<string> NativeArgs(string source, IReadOnlyList<string> encoderArgs, VideoStream video, HdrPlan hdr,
+    public static List<string> NativeArgs(string source, string reader, IReadOnlyList<string> encoderArgs, VideoStream video, HdrPlan hdr,
         VideoCodec codec, VideoFilterSettings filters, string output, bool parallel)
     {
-        var a = new List<string> { "--avhw", "-i", source };
-        if (filters.Crop is { IsEmpty: false } c)
-            a.AddRange(["--crop", $"{c.Left},{c.Top},{c.Right},{c.Bottom}"]);
+        var a = new List<string> { reader, "-i", source };
         a.AddRange(encoderArgs);
-        if (hdr.Action == HdrAction.Preserve && codec != VideoCodec.H264)
+        if (hdr.Action == HdrAction.Preserve && codec != VideoCodec.H264 && reader is "--avhw" or "--avsw")
         {
-            if (video.Hdr.IsDolbyVision && !video.Hdr.DolbyVisionWithoutFallback && filters.Crop is not { IsEmpty: false })
+            // The RPU describes the full picture: a crop or resize would make it wrong.
+            // The RPU's active area is in source pixels: a crop would make it wrong (a resize keeps the proportions).
+            if (video.Hdr.IsDolbyVision && !video.Hdr.DolbyVisionWithoutFallback && !encoderArgs.Contains("--crop"))
                 a.AddRange(["--dolby-vision-rpu", "copy", "--dolby-vision-profile", "8.1"]);
             if (video.Hdr.HasHdr10Plus) a.AddRange(["--dhdr10-info", "copy"]);
         }

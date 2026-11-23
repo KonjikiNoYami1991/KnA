@@ -56,21 +56,47 @@ public class RigayaArgsTests
         Assert.False(job.HasErrors, string.Join("\n", job.Issues.Select(i => i.Message)));
         var r = Assert.IsType<RigayaPlan>(job.Rigaya);
         var n = Assert.IsAssignableFrom<IReadOnlyList<string>>(r.NativeArgs);
-        Assert.Equal(["--avhw", "-i", "/m/film.mkv", "--output-res", "1920x1080"], n.Take(5));
+        Assert.Equal(["--avhw", "-i", "/m/film.mkv", "--output-res", "1920x1080", "--vpp-resize", "lanczos3"], n.Take(7));
         Assert.Contains("--master-display", n);
         Assert.Equal("copy", n[n.ToList().IndexOf("--dolby-vision-rpu") + 1]);
         Assert.Equal("video.mkv", n[^1]);
     }
 
     [Fact]
-    public void Filters_or_a_trim_send_y4m_frames_through_a_pipe()
+    public void Filters_and_trim_run_on_the_gpu_inside_the_encoder()
     {
         var m = Media(Uhd);
-        var job = CommandBuilder.Compile(Ctx(m, Nvencc with { VideoFilters = new VideoFilterSettings { Denoise = FilterStrength.Light } }));
-        Assert.Null(job.Rigaya!.NativeArgs);
-        Assert.Contains("filters", job.Rigaya.PipeReason);
+        var job = CommandBuilder.Compile(Ctx(m, Nvencc with
+        {
+            Resolution = 1080,
+            VideoFilters = new VideoFilterSettings { Denoise = FilterStrength.Light, Deband = FilterStrength.Medium, Sharpen = FilterStrength.Light, Deinterlace = DeinterlaceMode.Force, Crop = new CropSettings(0, 140, 0, 140) },
+        }));
+        var n = job.Rigaya!.NativeArgs!.ToList();
+        Assert.Null(job.Rigaya.PipeReason);
+        Assert.Equal(["--avhw", "-i", "/m/film.mkv"], n.Take(3));
+        Assert.Equal("luma_spatial=2,chroma_spatial=1.5,luma_temporal=3,chroma_temporal=2.25", n[n.IndexOf("--vpp-hqdn3d") + 1]);   // = FFmpeg's hqdn3d light
+        Assert.Equal("range=15,thre=15,dither=15", n[n.IndexOf("--vpp-deband") + 1]);
+        Assert.Equal("sharpness=0.3", n[n.IndexOf("--vpp-cas") + 1]);
+        Assert.Equal("0,140,0,140", n[n.IndexOf("--crop") + 1]);
+        Assert.Equal("1920x940", n[n.IndexOf("--output-res") + 1]);   // 3840×1880 after the crop
+        Assert.Equal("lanczos3", n[n.IndexOf("--vpp-resize") + 1]);
+        Assert.Contains("--vpp-bwdif", n);
+        Assert.True(job.Gpu!.AllOnGpu);
+
         var trimmed = CommandBuilder.Compile(Ctx(m, Nvencc, new JobEdit { TrimStart = 10, TrimEnd = 20 }));
-        Assert.Equal("trim", trimmed.Rigaya!.PipeReason);
+        var t = trimmed.Rigaya!.NativeArgs!.ToList();
+        Assert.Equal("240:479", t[t.IndexOf("--trim") + 1]);   // frames 10 s × 23.976 … 20 s, exact
+        Assert.Equal(10, trimmed.Rigaya.TrimStart);
+        var toEnd = CommandBuilder.Compile(Ctx(m, Nvencc, new JobEdit { TrimStart = 10 })).Rigaya!.NativeArgs!.ToList();
+        Assert.Equal("240:0", toEnd[toEnd.IndexOf("--trim") + 1]);
+
+        // A variable frame rate can't be cut by frame number: FFmpeg reads and trims, and KnA says why.
+        var vfr = new VideoStream { Index = 0, Kind = "video", CodecName = "h264", Width = 1920, Height = 1080, FrameRate = 29.97, VariableFrameRate = true };
+        var piped = CommandBuilder.Compile(Ctx(Media(vfr), Nvencc with { Codec = VideoCodec.H264 }, new JobEdit { TrimStart = 10, TrimEnd = 20 }));
+        Assert.Null(piped.Rigaya!.NativeArgs);
+        Assert.Contains("variable", piped.Rigaya.PipeReason);
+        Assert.Contains(piped.Gpu!.Steps, x => x.Place == StepPlace.CpuFfmpeg);
+        Assert.Contains(piped.Issues, x => !x.IsError && x.Message.Contains("no GPU equivalent"));
 
         var y4m = CommandBuilder.Compile(Ctx(m, Nvencc) with { Chunk = new ChunkRequest(10, 20) { Y4m = true } });
         var a = y4m.Plan.Arguments.ToList();
@@ -107,23 +133,28 @@ public class RigayaArgsTests
 public class RigayaRunTests(FeatureFixture fx) : IClassFixture<FeatureFixture>
 {
     /// <summary>A stand-in for NVEncC (no NVIDIA GPU here): FFmpeg encodes what the real encoder would read.</summary>
-    private static void WriteFakeEncoder(string data, string ffmpeg, bool failNative)
+    internal static void WriteFakeEncoder(string data, string ffmpeg, bool failNative)
     {
         var dir = Path.Combine(AppPaths.Tools(data), "nvencc");
         Directory.CreateDirectory(dir);
         var path = Path.Combine(dir, "nvencc");
         File.WriteAllText(path, $$"""
             #!/bin/sh
-            out=""; in=""; y4m=0; prev=""
+            out=""; in=""; y4m=0; prev=""; trim=""
             for a in "$@"; do
-              case "$prev" in -o) out="$a";; -i) in="$a";; esac
+              case "$prev" in -o) out="$a";; -i) in="$a";; --trim) trim="$a";; esac
               [ "$a" = "--y4m" ] && y4m=1
               prev="$a"
             done
             echo "[50.0%] 100 frames: 250.00 fps, 1000 kb/s, remain 0:00:01" >&2
             if [ $y4m = 1 ]; then exec "{{ffmpeg}}" -v error -y -f yuv4mpegpipe -i - -c:v libx264 -preset ultrafast "$out"; fi
             {{(failNative ? "echo 'avhw: unsupported' >&2; exit 3" : "")}}
-            exec "{{ffmpeg}}" -v error -y -i "$in" -map 0:v:0 -c:v libx264 -preset ultrafast "$out"
+            vf="null"
+            if [ -n "$trim" ]; then
+              first="${trim%%:*}"; last="${trim##*:}"
+              if [ "$last" = "0" ]; then vf="select=gte(n\\,$first),setpts=N/FRAME_RATE/TB"; else vf="select=between(n\\,$first\\,$last),setpts=N/FRAME_RATE/TB"; fi
+            fi
+            exec "{{ffmpeg}}" -v error -y -i "$in" -map 0:v:0 -vf "$vf" -c:v libx264 -preset ultrafast "$out"
             """.Replace("\r", ""));
         File.SetUnixFileMode(path, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
     }
@@ -159,7 +190,8 @@ public class RigayaRunTests(FeatureFixture fx) : IClassFixture<FeatureFixture>
         q.Start();
         await done.Task.WaitAsync(TimeSpan.FromMinutes(3));
         Assert.True(job.Status is JobStatus.Done or JobStatus.Warning, job.Message + "\n" + job.Log);
-        Assert.Contains(trim || failNative ? "FFmpeg pipe" : "GPU reader", job.Log);
+        Assert.Contains(failNative ? "FFmpeg pipe" : "GPU reader", job.Log);   // a trim is done by the encoder too (--trim)
+        if (trim && !failNative) Assert.Contains("--trim 50:149", job.Log);
         if (failNative) Assert.Contains("could not read the source itself", job.Log);
         var m = await new MediaProber(fx.Tools.Ffprobe).ProbeAsync(job.OutputPath!);
         Assert.Single(m.Audio);
@@ -167,6 +199,37 @@ public class RigayaRunTests(FeatureFixture fx) : IClassFixture<FeatureFixture>
         var frames = await ProcessRunner.RunAsync(fx.Tools.Ffprobe, ["-v", "error", "-count_frames", "-select_streams", "v:0",
             "-show_entries", "stream=nb_read_frames", "-of", "csv=p=0", job.OutputPath!]);
         Assert.Equal(trim ? 100 : 250, int.Parse(frames.StdOut.Trim().TrimEnd(','), System.Globalization.CultureInfo.InvariantCulture));
+    }
+}
+
+public class GpuBenchmarkTests(FeatureFixture fx) : IClassFixture<FeatureFixture>
+{
+    [Fact]
+    public async Task The_mini_benchmark_measures_every_profile_and_estimates_the_job()
+    {
+        if (fx.Tools is null || !OperatingSystem.IsLinux()) return;
+        var data = Path.Combine(fx.Dir, "data-bench");
+        RigayaRunTests.WriteFakeEncoder(data, fx.Tools.Ffmpeg, failNative: false);
+        using var q = new QueueService(new SettingsStore(data), restoreQueue: false);
+        var r = await GpuBenchmark.RunAsync(q, EncoderBackend.Nvenc, VideoCodec.HEVC);
+        Assert.Equal(["best", "balanced", "fast"], r.Select(x => x.Profile));
+        Assert.All(r, x => Assert.True(x.Fps1080 > 0));
+        Assert.Equal(3, q.Settings.GpuBenchmarks.Count);
+
+        var source = new MediaInfo
+        {
+            Path = "/m/f.mkv", Duration = TimeSpan.FromMinutes(45),
+            Video = [new VideoStream { Index = 0, Kind = "video", CodecName = "h264", Width = 3840, Height = 2160, FrameRate = 24, FrameCount = 64800 }],
+        };
+        var s = new JobSettings { Profile = ProfileKind.UniversalMkv, Codec = VideoCodec.HEVC, Backend = EncoderBackend.Nvenc, Resolution = 1080, Encoder = new EncoderOverrides { Program = EncoderProgram.Rigaya } };
+        var text = GpuBenchmark.EstimateFor(s, source, new JobEdit(), q.Settings.GpuBenchmarks);
+        Assert.NotNull(text);
+        Assert.Contains("Balanced", text);
+        // A fixed set: 60 fps at 1080p → 45 min of 24 fps 4K → 1080p = 64800 frames / 60 = 18 min.
+        var e = GpuBenchmark.Estimate([new GpuBenchmarkResult(EncoderBackend.Nvenc, VideoCodec.HEVC, "balanced", 60, DateTimeOffset.Now)],
+            EncoderBackend.Nvenc, VideoCodec.HEVC, 1920, 1080, 24, TimeSpan.FromMinutes(45));
+        Assert.Equal(18, Assert.Single(e).Time.TotalMinutes, 1);
+        Assert.Equal("balanced", GpuBenchmark.Suggest(e, 24)!.Id);
     }
 }
 

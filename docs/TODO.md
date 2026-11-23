@@ -89,6 +89,16 @@ Do this before item 8. Desktop and web.
 
 ## 8. GPU-first video with rigaya's encoders, VapourSynth as standard (confirmed by the user)
 
+**Status**: done except the two points marked ⏳ below (see CHANGELOG): GPU filter translation and native reading with
+filters/trim/burned subtitles, the GPU/CPU pipeline with alternatives and "Use the GPU filter instead", scripts read by
+the encoder (--vpy/--avs/--vsdir), pure-GPU catalogue chains run without the script, the generated script shown,
+speed/quality profiles, starting values from the GPU, AV1 only with hardware AV1, optional mini benchmark.
+- ⏳ **Packages**: VapourSynth + the catalogue's plugins are still only in the Windows package; Linux and macOS need a
+  portable/relocatable build (CI work, not started — must be verified on real runners).
+- ⏳ **VapourSynth for every encode**: the script is always generated and shown, but it only *runs* when the job uses
+  script filters; KnA's own filters run as GPU filters (rigaya) or FFmpeg filters. Making VapourSynth execute every
+  encode depends on the point above (otherwise Linux/macOS packages would lack it, against the standalone rule).
+
 Where StaxRip's speed comes from: the smart use of rigaya's parameters (NVEncC / QSVEncC / VCEEncC), not phase
 parallelism. KnA must be **GPU-first** for video whenever possible, CPU only as a fallback. OCR stays a separate step
 before the encode (as today).

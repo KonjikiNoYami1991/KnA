@@ -83,6 +83,11 @@ public sealed class VideoStream : StreamBase
     /// <summary>Frame rate as an exact rational ("24000/1001"), when known.</summary>
     public string? FrameRateRational { get; init; }
     public long FrameCount { get; init; }
+    /// <summary>
+    /// The container's frame rate and the average one differ (variable frame rate, or field rate): frame numbers
+    /// don't map to times exactly.
+    /// </summary>
+    public bool VariableFrameRate { get; init; }
     public string? PixelFormat { get; init; }
     public int BitDepth { get; init; } = 8;
     public string? FieldOrder { get; init; }

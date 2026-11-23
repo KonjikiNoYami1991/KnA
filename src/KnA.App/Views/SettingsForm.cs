@@ -93,6 +93,10 @@ public sealed class SettingsForm : StackPanel
         return L.T("AAC: FFmpeg's own encoder. Install fdkaac in Settings → Components for better quality.");
     }
 
+    /// <summary>Editor: expected time of the job with each rigaya profile (from the GPU benchmark), or null.</summary>
+    public Func<JobSettings, string?>? GpuEstimate { get; set; }
+    /// <summary>Editor: runs the optional GPU mini benchmark for the job's encoder and codec.</summary>
+    public Func<JobSettings, Task>? RunGpuBenchmark { get; set; }
     /// <summary>External programs found (qaac, fdkaac, rigaya encoders), given by the window.</summary>
     private readonly Func<FfmpegTools?>? _tools;
 
@@ -150,7 +154,8 @@ public sealed class SettingsForm : StackPanel
                 bool gpuPresent = b == EncoderBackend.Software || caps?.Encoders.Any(e => e.Backend == b && e.Usable) == true;
                 bool ok = b == EncoderBackend.Software ? caps is null || caps.IsUsable(codec, b, tenBit) : caps is not null && caps.IsUsable(codec, b, tenBit);
                 // The FFmpeg encoder may fail (old driver, missing SDK) where rigaya's encoder works.
-                bool rigayaOnly = !ok && gpuPresent && RigayaEncoders.Supports(codec, b) && _tools is not null && KnA.Core.Queue.JobRunner.RigayaFor(_tools()).ContainsKey(b);
+                // Not for AV1: a GPU whose AV1 test failed has no AV1 encoder (only Ada/Blackwell, Arc, RDNA 3 and newer have one).
+                bool rigayaOnly = !ok && gpuPresent && codec != VideoCodec.AV1 && RigayaEncoders.Supports(codec, b) && _tools is not null && KnA.Core.Queue.JobRunner.RigayaFor(_tools()).ContainsKey(b);
                 string note = ok ? "" : rigayaOnly ? L.T("only with {0}", RigayaEncoders.DisplayName(b))
                     : caps is null ? L.T("hardware not detected yet")
                     : !gpuPresent ? L.T("no such GPU in this computer")
@@ -513,6 +518,31 @@ public sealed class SettingsForm : StackPanel
                 break;
         }
 
+        if (rigaya)
+        {
+            // Speed / quality profiles: they fill speed, tune, lookahead and a few encoder options (all editable).
+            var profiles = RigayaProfiles.For(s.Backend, codec);
+            var cur = RigayaProfiles.Current(o, s.Backend, codec);
+            var items = profiles.Select(x => ((string?)x.Id, x.Name)).ToList();
+            if (cur is null) items.Insert(0, (null, L.T("Set by hand")));
+            Children.Add(Ui.Field(L.T("{0} profile", RigayaEncoders.DisplayName(s.Backend)), Ui.Combo(items, cur?.Id, v =>
+            {
+                if (profiles.FirstOrDefault(x => x.Id == v) is { } pick) Set(_s with { Encoder = RigayaProfiles.Apply(_s.Encoder, pick) });
+            }), cur?.Description ?? L.T("Speed, tune or options changed by hand: pick a profile to start again from its values.")));
+            // Optional mini benchmark: time of this job with each profile on this GPU, and the suggested one.
+            if (GpuEstimate is not null && RunGpuBenchmark is not null)
+            {
+                var est = Ui.Muted(GpuEstimate(s) ?? L.T("Measure this GPU once (about a minute) to see how long this job takes with each profile."));
+                var run = Ui.Button(L.T("Measure the GPU speed"), async () =>
+                {
+                    est.Text = L.T("Measuring…");
+                    try { await RunGpuBenchmark(_s); est.Text = GpuEstimate(_s) ?? ""; }
+                    catch (Exception ex) { est.Text = ex.Message; }
+                });
+                run.HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Left;
+                Children.Add(new StackPanel { Spacing = 6, Children = { est, run } });
+            }
+        }
         var speeds = rigaya ? RigayaEncoders.SpeedValues(enc) : VideoEncoders.SpeedOption(enc)?.Values ?? [];
         var speed = new List<(string?, string)>();
         if (o.Speed is null || speeds.Count == 0) speed.Add((null, L.T("Encoder default")));

@@ -114,6 +114,10 @@ public sealed record CompiledJob(
     public PipeSource? Pipe { get; init; }
     /// <summary>The video is encoded by NVEncC / QSVEncC / VCEEncC (see <see cref="RigayaEncoders"/>), or null.</summary>
     public RigayaPlan? Rigaya { get; init; }
+    /// <summary>Where each step of a rigaya encode runs (GPU or CPU) and why; null for the other encoders.</summary>
+    public GpuPipeline? Gpu { get; init; }
+    /// <summary>The picture chain written as a VapourSynth script (shown in the editor), null when nothing is encoded.</summary>
+    public string? Script { get; init; }
 
     public bool HasErrors => Issues.Any(i => i.IsError);
 }
@@ -192,6 +196,8 @@ public static class CommandBuilder
         if (rigaya && !ctx.Options.RigayaEncoders.ContainsKey(s.Backend))
             issues.Add(Containers.Error("{0} is not installed: add it in Settings → Components, or choose FFmpeg as the encoder program.",
                 RigayaEncoders.DisplayName(s.Backend)));
+        if (rigaya && encodeCodec == VideoCodec.AV1 && ctx.Options.Capabilities is { IsCurrent: true } rc && !RigayaProfiles.Av1InHardware(s.Backend, rc))
+            issues.Add(Containers.Error("This GPU has no AV1 encoder (the hardware test found none): AV1 needs NVIDIA RTX 40/50, Intel Arc / Core Ultra or AMD RX 7000 or newer. Choose HEVC or H.264."));
         if (rigaya && s.Chunks.Enabled && chunk is null)
             chunkedJob = false; // the encoder splits the file itself (--parallel)
         if (!copyVideo && p.EncodesVideo && preview is null && !rigaya)
@@ -305,8 +311,8 @@ public static class CommandBuilder
 
         var body = new List<string>();
         IReadOnlyList<string>? gpuGlobal = null;   // device of the GPU filters (NVENC/QSV/VideoToolbox)
-        bool plainPicture = false;   // no FFmpeg filter at all (a plain resize at most): the rigaya encoder can read the source itself
-        ScaleResult? plainScale = null;
+        ScaleResult? rigayaScale = null;          // the resize the rigaya encoder does on the GPU
+        PreparedSubtitles? burnPrepared = null;   // the burned subtitle as prepared for this run (or the standard names)
         var burnTrack = tracks.FirstOrDefault(t => t.Burn && t.Kind == "subtitle");
         if (burnTrack is not null && !p.UsesVideoFilters && p.Kind != ProfileKind.RemuxMp4)
             burnTrack = null;
@@ -357,11 +363,8 @@ public static class CommandBuilder
             else if (neural && enlarge is null)
                 scaleOverride = $"scale={croppedSource.Width & ~1}:{croppedSource.Height & ~1}:flags=lanczos"; // restoration only: back to the source size
             var post = FilterBuilder.VideoPost(cropped, s, textFilter, scaleOverride);
-            if (rigaya && !neural && !placebo && burnTrack is null && pre.Count == 0 && scaleOverride is null)
-            {
-                plainScale = ScaleCalculator.Compute(cropped, p.UsesResolution ? s.Resolution : 0);
-                plainPicture = post.Count == (plainScale is null ? 0 : 1) && plainScale is not { SquarePixels: false };
-            }
+            burnPrepared = burn;
+            if (rigaya && scaleOverride is null) rigayaScale = ScaleCalculator.Compute(cropped, p.UsesResolution ? s.Resolution : 0);
             if (neural) post.Insert(0, $"scale=out_color_matrix={Ai.UpscaleSidecar.Matrix(video, hdr.Action)}:out_range=tv,format=yuv444p16le");
             if (preview is not null && preview.MaxWidth > 0)
                 post.Add($"scale='min({preview.MaxWidth},iw)':-2");
@@ -668,31 +671,101 @@ public static class CommandBuilder
             a2.Add(output);
         }
         RigayaPlan? rigayaPlan = null;
+        GpuPipeline? gpuPipeline = null;
         if (rigaya && !copyVideo)
+            (rigayaPlan, gpuPipeline) = PlanRigaya(ctx, s, p, media, videoTrack, video, encodeCodec, tenBit, hdr, rigayaScale,
+                burnTrack, burnPrepared, placebo || neural ? Ai.UpscaleText.Display(up.Method) : null, issues);
+        string? scriptText = null;
+        if (p.EncodesVideo && !p.IsImages && !copyVideo && preview is null && concat is null && chunk is null && !ctx.RestOnly)
+            scriptText = ScriptPreview.Build(s, video, videoTrack.File, hdr,
+                placebo || neural ? null : ScaleCalculator.Compute(croppedSource, p.UsesResolution ? s.Resolution : 0),
+                ctx.Edit, burnTrack, burnPrepared, gpuPipeline);
+        return new CompiledJob(new EncodePlan(a2, output), issues, hdr, tracks, container, duration) { Pipe = inputs.Pipe, Rigaya = rigayaPlan, Gpu = gpuPipeline, Script = scriptText };
+    }
+
+    /// <summary>
+    /// GPU-first plan of a NVEncC / QSVEncC / VCEEncC encode: KnA's filters become the encoder's --vpp-* filters and
+    /// the encoder reads the file (--avhw / --avsw) or the script (--vpy / --avs) itself. What has no GPU equivalent
+    /// is named in the plan (and in the log) and the frames then come from FFmpeg on a pipe.
+    /// </summary>
+    private static (RigayaPlan, GpuPipeline) PlanRigaya(CompileContext ctx, JobSettings s, ProfileDefinition p, IReadOnlyDictionary<string, MediaInfo> media,
+        TrackPlan videoTrack, VideoStream video, VideoCodec encodeCodec, bool tenBit, HdrPlan hdr, ScaleResult? scale,
+        TrackPlan? burnTrack, PreparedSubtitles? burn, string? upscaler, List<ValidationIssue> issues)
+    {
+        double fr = s.VideoFilters.Fps ?? video.FrameRate;
+        string file = videoTrack.File;
+        var kind = Frameserver.KindOf(file);
+        bool script = kind != FrameserverKind.None;
+        var stepsBefore = new List<PipelineStep>();
+        var extra = new List<string>();
+        var readVideo = video;
+        // A catalogue chain made only of filters the encoder has on the GPU (crop, resize, Bwdif, CAS…): the script is
+        // not needed to run, the encoder reads the file and does the same steps.
+        if (script && file != ctx.Source.Path && ctx.Source.PrimaryVideo is { } src && !src.Hdr.IsHdr
+            && RigayaFilters.ChainOnGpu(s.Frameserver, s.Backend) is { } chain
+            && !(chain.Any(c => c.Args.Contains("--crop")) && s.VideoFilters.Crop is { IsEmpty: false }))
         {
-            double fr = s.VideoFilters.Fps ?? video.FrameRate;
-            string? why = trimmed || ctx.Edit.IsMultiSegment ? "trim"
-                : !plainPicture ? "FFmpeg filters (tone mapping, crop, deinterlace, denoise, subtitles…)"
-                : Math.Abs(videoTrack.DelaySeconds) >= 0.0005 ? "video delay"
-                : Frameserver.IsVapourSynth(videoTrack.File) || KnA.Core.Media.Discs.DiscSource.IsTitlePath(videoTrack.File) ? "script or disc source"
-                : !RigayaEncoders.HwDecodable(video.CodecName) ? $"{video.CodecName} cannot be decoded by the GPU reader"
-                : video.Rotation != 0 || s.VideoFilters.OverridesOrientation ? "rotation"
-                : media.GetValueOrDefault(videoTrack.File)?.Video.Count(v => !v.IsAttachedPicture) is not 1 ? "several video streams"
-                : null;
-            var encArgs = RigayaEncoders.EncoderArgs(s.Backend, encodeCodec, s.Quality, tenBit, s.Encoder, fr, hdr, video, why is null);
-            rigayaPlan = new RigayaPlan(s.Backend, RigayaEncoders.EncoderArgs(s.Backend, encodeCodec, s.Quality, tenBit, s.Encoder, fr, hdr, video, false))
+            foreach (var (name, args) in chain)
             {
-                PipeReason = why,
-                NativeArgs = why is null
-                    ? RigayaEncoders.NativeArgs(videoTrack.File, [.. (plainScale is { } ps ? ["--output-res", $"{ps.Width}x{ps.Height}"] : Array.Empty<string>()), .. encArgs],
-                        video, hdr, encodeCodec, s.VideoFilters, "video.mkv", s.Chunks.Enabled)
-                    : null,
-            };
-            if (s.Chunks.Enabled && why is not null)
-                issues.Add(Containers.Warning("{0} splits the file in parallel only when it reads the source itself ({1} prevents it).",
-                    RigayaEncoders.DisplayName(s.Backend), why));
+                // KnA's own resize (Video tab) is the final size: the script's one is then not needed.
+                if (args.Contains("--output-res") && scale is not null) continue;
+                extra.AddRange(args);
+                stepsBefore.Add(new PipelineStep(name, StepPlace.Gpu, args.Count > 0 ? string.Join(' ', args) : null, L.T("From the script: the same filter runs on the GPU.")));
+            }
+            file = ctx.Source.Path;
+            readVideo = src;
+            script = false;
+            kind = FrameserverKind.None;
         }
-        return new CompiledJob(new EncodePlan(a2, output), issues, hdr, tracks, container, duration) { Pipe = inputs.Pipe, Rigaya = rigayaPlan };
+        var t = RigayaFilters.Translate(new RigayaFilters.Input
+        {
+            Backend = s.Backend, Video = readVideo, Settings = s, Hdr = hdr, Scale = scale,
+            Burn = burnTrack, Prepared = burn, SourceMedia = media.GetValueOrDefault(file), Script = script,
+            Edit = ctx.Edit, DelaySeconds = videoTrack.DelaySeconds, Upscaler = upscaler,
+        });
+        var blockers = t.Blockers.ToList();
+        if (!script && Media.Discs.DiscSource.IsTitlePath(file)) blockers.Add(L.T("disc source"));
+        if (!script && media.GetValueOrDefault(file)?.Video.Count(v => !v.IsAttachedPicture) is not 1) blockers.Add(L.T("several video streams"));
+        if (script && kind == FrameserverKind.AviSynth && !OperatingSystem.IsWindows()) blockers.Add(L.T("AviSynth script outside Windows"));
+
+        var steps = t.Steps.ToList();
+        if (script && s.Frameserver.Kind != FrameserverKind.None && file != ctx.Source.Path)
+        {
+            // The script's own filters: each stays on the CPU, with the GPU filter that could replace it.
+            int at = steps.FindIndex(x => x.Place == StepPlace.CpuScript);
+            steps.InsertRange(at + 1, RigayaFilters.ScriptSteps(s.Frameserver));
+        }
+        int afterRead = Math.Max(0, steps.FindIndex(x => x.Place == StepPlace.Gpu && x.Option is "--avhw") + 1);
+        steps.InsertRange(afterRead, stepsBefore);
+        string? why = blockers.Count > 0 ? string.Join(", ", blockers.Distinct()) : null;
+        if (why is not null)
+        {
+            // FFmpeg then decodes and runs every KnA filter itself: only the encoder (and the user's own --vpp-*) stay on the GPU.
+            int last = steps.Count - 1;   // the encode itself
+            steps = steps.Select((x, k) => x.Place == StepPlace.Gpu && k < last && x.Name != L.T("Your GPU filters")
+                ? x with { Place = StepPlace.CpuFfmpeg, Option = null, Note = L.T("On the GPU ({0}) once nothing needs FFmpeg.", x.Option ?? "") }
+                : x).ToList();
+            steps.Insert(0, new PipelineStep(L.T("FFmpeg decodes and filters on the CPU"), StepPlace.CpuFfmpeg, null,
+                L.T("Needed for: {0}. Frames go to {1} on a pipe.", why, RigayaEncoders.DisplayName(s.Backend))));
+        }
+
+        var native = RigayaEncoders.EncoderArgs(s.Backend, encodeCodec, s.Quality, tenBit, s.Encoder, fr, hdr, video, why is null && !script);
+        var plan = new RigayaPlan(s.Backend, RigayaEncoders.EncoderArgs(s.Backend, encodeCodec, s.Quality, tenBit, s.Encoder, fr, hdr, video, false))
+        {
+            PipeReason = why,
+            TrimStart = t.TrimStart,
+            NativeArgs = why is null
+                ? RigayaEncoders.NativeArgs(file, script ? (kind == FrameserverKind.VapourSynth ? "--vpy" : "--avs") : RigayaEncoders.HwDecodable(readVideo.CodecName) ? "--avhw" : "--avsw",
+                    [.. extra, .. t.Args, .. native], readVideo, hdr, encodeCodec, s.VideoFilters, "video.mkv", s.Chunks.Enabled && !script)
+                : null,
+        };
+        if (s.Chunks.Enabled && why is not null)
+            issues.Add(Containers.Warning("{0} splits the file in parallel only when it reads the source itself ({1} prevents it).",
+                RigayaEncoders.DisplayName(s.Backend), why));
+        if (why is not null)
+            issues.Add(Containers.Warning("{0}: {1} has no GPU equivalent, so FFmpeg decodes and filters on the CPU (slower). See the Filters tab.",
+                RigayaEncoders.DisplayName(s.Backend), why));
+        return (plan, new GpuPipeline(steps));
     }
 
     private static VideoStream Enlarged(VideoStream v, int k) => new()

@@ -19,7 +19,7 @@ with **HDR10 / HDR10+ / Dolby Vision**, resumable segmented encoding, **GPU and 
   **track selection rules** in presets, and a **preset manager** that applies only the parts you choose.
 - **HDR → SDR** with stable brightness, a choice of tone-mapping curve and no HDR metadata left in SDR files.
 - **Truly portable**: one executable, FFmpeg included, every dependency in its own subfolder.
-- **NVEncC / QSVEncC / VCEEncC** (rigaya) as encoder program: GPU decoding, GPU resize, Dolby Vision / HDR10+ copy, parallel parts.
+- **NVEncC / QSVEncC / VCEEncC** (rigaya) as encoder program, GPU first: GPU decoding, KnA's filters as the encoder's GPU filters (crop, deinterlace, HDR → SDR, denoise, deband, resize, sharpen, burned subtitles, trim), scripts read directly (--vpy / --avs), speed / quality profiles, Dolby Vision / HDR10+ copy, parallel parts.
 - **qaac** (Apple AAC) first, libfdk_aac / fdkaac as fallback; **Real-ESRGAN and Ollama models** downloadable from Components.
 - **x86-64-v3/v4** aware (AVX-512 for x265); previews render on release instead of while zapping.
 

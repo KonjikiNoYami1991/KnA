@@ -62,7 +62,10 @@ public sealed record OptionsDto(
          let id = KnA.Core.Encoding.RigayaEncoders.ToolId(b)!
          let q = KnA.Core.Encoding.RigayaEncoders.QualityOption(id, c)
          select (Key: $"{c}|{b}", Value: new RigayaInfoDto(KnA.Core.Encoding.RigayaEncoders.DisplayName(b),
-             new EncoderInfoDto(q?.Label, q?.Min, q?.Max, KnA.Core.Encoding.RigayaEncoders.SpeedValues(id), KnA.Core.Encoding.RigayaEncoders.TuneValues(id, c)))))
+             new EncoderInfoDto(q?.Label, q?.Min, q?.Max, KnA.Core.Encoding.RigayaEncoders.SpeedValues(id), KnA.Core.Encoding.RigayaEncoders.TuneValues(id, c)))
+             {
+                 Profiles = KnA.Core.Encoding.RigayaProfiles.For(b, c).Select(p => new RigayaProfileDto(p.Id, p.Name, p.Description, p.Speed, p.Tune, p.Lookahead, p.Extra)).ToList(),
+             }))
         .ToDictionary(x => x.Key, x => x.Value);
     public IReadOnlyList<OptionDto> ToneMapCurves { get; init; } = Enum.GetValues<ToneMapCurve>().Select(a => new OptionDto(a.ToString(), a.Display())).ToList();
     public IReadOnlyList<OptionDto> ChromaFormats { get; init; } = Enum.GetValues<ChromaFormat>().Select(a => new OptionDto(a.ToString(), a.Display())).ToList();
@@ -98,7 +101,12 @@ public sealed record OptionsDto(
         Enum.GetValues<ImageMode>().Select(m => new OptionDto(m.ToString(), m.Display())).ToList());
 }
 
-public sealed record RigayaInfoDto(string Name, EncoderInfoDto Info);
+public sealed record RigayaInfoDto(string Name, EncoderInfoDto Info)
+{
+    /// <summary>Speed / quality profiles (Best quality, Balanced, Fast) and the values each writes.</summary>
+    public IReadOnlyList<RigayaProfileDto> Profiles { get; init; } = [];
+}
+public sealed record RigayaProfileDto(string Id, string Name, string Description, string Speed, string? Tune, int? Lookahead, string? Extra);
 
 public sealed record EncoderInfoDto(string? QualityLabel, double? QualityMin, double? QualityMax, IReadOnlyList<string> Speeds, IReadOnlyList<string> Tunes);
 
@@ -125,12 +133,25 @@ public sealed record AnalysisDto(IReadOnlyList<TrackPlan> Tracks, bool TracksAre
     string Container, IReadOnlyList<string> AllowedContainers, string HdrSummary, string? CommandLine, double OutputDuration,
     IReadOnlyList<FileDto> Files, double FrameRate, int Rotation)
 {
+    /// <summary>Where each step of a rigaya encode runs ("Gpu", "CpuFfmpeg", "CpuScript"); null for the other encoders.</summary>
+    public object? Gpu { get; init; }
+    /// <summary>The picture chain as a VapourSynth script, each step marked with where it runs.</summary>
+    public string? Script { get; init; }
+
     public static AnalysisDto From(JobAnalysis a, string source)
     {
         var files = new List<FileDto> { File(a.Source, true) };
         files.AddRange(a.External.Values.Select(m => File(m, false)));
         return new AnalysisDto(a.Tracks, a.TracksAreDefault, a.Issues, a.Container, a.AllowedContainers, a.HdrSummary, a.CommandLine,
-            a.OutputDuration.TotalSeconds, files, a.Source.PrimaryVideo?.FrameRate ?? 25, a.Source.PrimaryVideo?.Rotation ?? 0);
+            a.OutputDuration.TotalSeconds, files, a.Source.PrimaryVideo?.FrameRate ?? 25, a.Source.PrimaryVideo?.Rotation ?? 0)
+        {
+            Gpu = a.Gpu is { } g ? new
+            {
+                g.Summary, g.AllOnGpu,
+                steps = g.Steps.Select(s => new { s.Name, place = s.Place.ToString(), placeLabel = KnA.Core.Encoding.GpuPipeline.Place(s.Place), s.Option, s.Note, s.GpuAlternative, s.ChainIndex }),
+            } : null,
+            Script = a.Script,
+        };
     }
 
     private static FileDto File(MediaInfo m, bool isSource) => new(m.Path, Path.GetFileName(m.Path), isSource, m.Summary, m.Duration.TotalSeconds,
@@ -152,12 +173,14 @@ public sealed record IdsRequest(List<Guid> Ids);
 public sealed record UpdateJobsRequest(List<Guid> Ids, JobSettings Settings);
 public sealed record ParameterOptionsRequest(string Tool, JobSettings Settings);
 public sealed record SizeRequest(JobSettings Settings, JobEdit? Edit);
+public sealed record GpuBenchmarkRequest(EncoderBackend Backend, VideoCodec Codec);
 public sealed record OcrRequest(string File, int Stream, string? Language);
 public sealed record OcrOpenRequest(Guid JobId, string File, int Stream, int Copy = 0);
 public sealed record OcrRunRequest(KnA.Core.Ocr.OcrOptions? Options, List<int>? Only);
 public sealed record OcrEditRequest(string? Text, bool? Italic, double? Start, double? End);
 public sealed record OcrReplaceRequest(string Find, string? Replace, bool Regex);
 public sealed record EditRequest(JobSettings? Settings, JobEdit Edit);
+public sealed record GpuInsteadRequest(JobSettings Settings, int Index);
 public sealed record MaterializeRequest(JobSettings? Settings, JobEdit? Edit, ProfileKind? Profile = null, string? Preset = null, List<PresetParts>? Parts = null);
 public sealed record AiTestRequest(KnA.Core.Ai.AiSettings Ai, string Model);
 public sealed record PresetFromJobRequest(string Name, JobSettings Settings, JobEdit Edit);

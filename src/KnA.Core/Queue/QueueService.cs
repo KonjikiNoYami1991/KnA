@@ -18,7 +18,13 @@ public sealed record JobAnalysis(
     IReadOnlyList<string> AllowedContainers,
     string HdrSummary,
     string? CommandLine,
-    TimeSpan OutputDuration);
+    TimeSpan OutputDuration)
+{
+    /// <summary>Where each step of a NVEncC / QSVEncC / VCEEncC encode runs (GPU / CPU) and why; null otherwise.</summary>
+    public GpuPipeline? Gpu { get; init; }
+    /// <summary>The picture chain as a VapourSynth script, each step marked with where it runs (editor, Filters tab).</summary>
+    public string? Script { get; init; }
+}
 
 /// <summary>
 /// The encoding queue, shared by the desktop app and the web server.
@@ -476,7 +482,20 @@ public sealed class QueueService : IDisposable
         return new JobAnalysis(j.Media, j.ExternalMedia, tracks, isDefault, compiled.Issues, compiled.Container,
             Containers.AllowedFor(j.Settings, tracks, new Dictionary<string, MediaInfo>(j.ExternalMedia) { [j.SourcePath] = j.Media },
                 JobRunner.AudioEncodersFor(Settings.Capabilities, tools)), compiled.Hdr.Summary,
-            compiled.Plan.Arguments.Count > 0 ? compiled.Plan.CommandLine(tools.Ffmpeg) : null, compiled.OutputDuration);
+            RigayaCommand(compiled, ctx.Options, tools) ?? (compiled.Plan.Arguments.Count > 0 ? compiled.Plan.CommandLine(tools.Ffmpeg) : null), compiled.OutputDuration)
+        { Gpu = compiled.Gpu, Script = compiled.Script };
+    }
+
+    /// <summary>The commands a rigaya encode really runs: the encoder (GPU reader or FFmpeg pipe), then FFmpeg for the rest.</summary>
+    private static string? RigayaCommand(CompiledJob c, BuildOptions o, FfmpegTools tools)
+    {
+        if (c.Rigaya is not { } r) return null;
+        var exe = o.RigayaEncoders.GetValueOrDefault(r.Backend) ?? RigayaEncoders.DisplayName(r.Backend);
+        var video = r.NativeArgs is { } n
+            ? new EncodePlan(n, "video.mkv").CommandLine(exe)
+            : "ffmpeg … -f yuv4mpegpipe - | " + new EncodePlan(RigayaEncoders.PipeArgs(r.EncoderArgs, "video.mkv"), "video.mkv").CommandLine(exe)
+              + "\n# " + L.T("FFmpeg decodes and filters on the CPU because of: {0}", r.PipeReason ?? "");
+        return video + "\n\n# " + L.T("Audio, subtitles and the final file (FFmpeg, video copied):") + "\n" + c.Plan.CommandLine(tools.Ffmpeg);
     }
 
     /// <summary>Marks finished/failed/stopped jobs as ready again.</summary>
