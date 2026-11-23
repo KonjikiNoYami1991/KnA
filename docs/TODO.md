@@ -37,7 +37,7 @@ Handy, but it must build the preset in a more specific, detailed way.
 
 Handy, but it needs guided set-up procedures (wizards), or users give up.
 
-## 4. Chunked encoding: resumable and continuous
+## 4. ✅ Chunked encoding: resumable and continuous
 
 - **Resumable even when not parallel**: reuse the parallel-encoding logic to encode one segment at a time, so every
   encode can be resumed after a stop or crash, even with a single worker.
@@ -46,7 +46,7 @@ Handy, but it needs guided set-up procedures (wizards), or users give up.
   heavy, bursty load. Instead keep a steady pool: start the next segment as soon as any worker frees up, stagger the
   starts, and use segments of varied length / more segments than workers so the queue drains gradually.
 
-## 5. Progress bar for every step of a job
+## 5. ✅ Progress bar for every step of a job
 
 The progress bar in the queue item's card is nice, but today it only follows the video encode. After START it must
 show progress (with the step's name) for every step of the job: archive extraction, probing, OCR, audio/subtitle

@@ -32,7 +32,7 @@ public static class JobRunner
         {
             if (!KnA.Core.Media.Discs.DiscSource.Exists(job.SourcePath)) throw new FileNotFoundException(L.T("Source file not found."), job.SourcePath);
 
-            job.Stage = L.T("Analysing");
+            job.BeginStage(L.T("Analysing"));
             ctx.Changed(job);
             var prober = MediaProber.For(ctx.Tools);
             job.Media = await prober.ProbeAsync(job.SourcePath, ct);
@@ -51,7 +51,7 @@ public static class JobRunner
 
             if (p.IsKeyframes)
             {
-                job.Stage = L.T("Generating keyframes");
+                job.BeginStage(L.T("Generating keyframes"));
                 ctx.Changed(job);
                 job.OutputPath = await KeyframeGenerator.RunAsync(job, ctx, ct);
                 Complete(job, JobStatus.Done, null, ctx);
@@ -83,7 +83,7 @@ public static class JobRunner
             var burnTrack = check.Tracks.FirstOrDefault(t => t.Burn && t.Kind == "subtitle");
             if (burnTrack is not null && p.UsesVideoFilters)
             {
-                job.Stage = L.T("Preparing subtitles");
+                job.BeginStage(L.T("Preparing subtitles"));
                 ctx.Changed(job);
                 subs = await PrepareSubtitlesAsync(job, burnTrack, check.Tracks, workDir, ctx, ct);
             }
@@ -91,17 +91,18 @@ public static class JobRunner
             HdrSideFiles? sideFiles = null;
             if (check.Hdr.UseDolbyVisionRpu || check.Hdr.UseHdr10PlusJson)
             {
-                job.Stage = L.T("Extracting HDR metadata");
+                job.BeginStage(L.T("Extracting HDR metadata"));
                 ctx.Changed(job);
                 sideFiles = await ExtractHdrMetadataAsync(job, check.Hdr, workDir, ctx, ct);
             }
 
             if (baseCtx.Upscale is { ModelPath: { } model, ModelKnown: true } && !File.Exists(model))
             {
-                job.Stage = L.T("Downloading the AI model");
+                job.BeginStage(L.T("Downloading the AI model"));
                 ctx.Changed(job);
                 job.AppendLog("AI model: downloading " + Path.GetFileName(model));
-                await Ai.UpscaleModels.EnsureAsync(job.Settings.Upscale.Model, ctx.Store.DataDirectory, null, ct);
+                await Ai.UpscaleModels.EnsureAsync(job.Settings.Upscale.Model, ctx.Store.DataDirectory,
+                    new Progress<double>(pc => { job.StagePercent = Math.Clamp(pc, 0, 100); ctx.Changed(job); }), ct);
             }
 
             var scriptAudio = await RenderScriptAudioAsync(check.Tracks, workDir, ctx, job, ct);
@@ -130,7 +131,7 @@ public static class JobRunner
             else Directory.CreateDirectory(Path.GetDirectoryName(compiled.Plan.OutputPath)!);
 
             // ------------------------------------------------------------ run
-            job.Stage = p.IsRemux ? L.T("Remuxing") : p.IsImages ? L.T("Exporting images") : L.T("Encoding");
+            job.BeginStage(p.IsRemux ? L.T("Remuxing") : p.IsImages ? L.T("Exporting images") : L.T("Encoding"));
             ctx.Changed(job);
             bool videoCopied = compiled.Tracks.FirstOrDefault(t => t.Include && t.Kind == "video")?.CopyVideo == true;
             int exit = job.Edit.IsMultiSegment
@@ -141,6 +142,11 @@ public static class JobRunner
                 ? await ResumableEncoder.RunAsync(job, ctx, baseCtx with { Burn = subs, HdrFiles = sideFiles }, compiled, workDir, ct)
                 : s.Chunks.Enabled && p.EncodesVideo && !videoCopied
                 ? await ChunkedEncoder.RunAsync(job, ctx, baseCtx with { Burn = subs, HdrFiles = sideFiles }, compiled, workDir, ct)
+                // The encoder can't write resumable pieces: the segment logic with one worker, one segment at a time,
+                // so a stop or a crash still only loses the segment being encoded.
+                : ChunkedEncoder.CanResumeOneByOne(job, compiled, ctx.Settings)
+                ? await ChunkedEncoder.RunAsync(job, ctx, baseCtx with { Burn = subs, HdrFiles = sideFiles }, compiled, workDir, ct,
+                    s.Chunks with { Enabled = true, Workers = 1 })
                 : await RunFfmpegWithProgressAsync(job, compiled.Plan.Arguments, workDir, compiled.OutputDuration, ctx, ct, compiled.Pipe);
 
             if (exit != 0)
@@ -151,6 +157,8 @@ public static class JobRunner
             }
 
             // ------------------------------------------------------------ verify
+            job.BeginStage(L.T("Checking the result"));
+            ctx.Changed(job);
             if (p.IsImages)
             {
                 int n = Directory.Exists(createdFolder) ? Directory.GetFiles(createdFolder).Length : 0;
@@ -208,7 +216,7 @@ public static class JobRunner
             };
             var c = CommandBuilder.Compile(partCtx);
             if (c.HasErrors) throw new InvalidOperationException(c.Issues.First(x => x.IsError).Message);
-            job.Stage = L.T("Encoding segment {0} of {1}", i + 1, parts.Count);
+            job.BeginStage(L.T("Encoding segment {0} of {1}", i + 1, parts.Count));
             ctx.Changed(job);
             job.AppendLog($"Segment {i + 1}/{parts.Count}: {start:0.###}s → {end:0.###}s");
             job.AppendLog("Command: " + c.Plan.CommandLine(ctx.Tools.Ffmpeg));
@@ -218,7 +226,7 @@ public static class JobRunner
             files.Add(file);
         }
 
-        job.Stage = L.T("Joining segments");
+        job.BeginStage(L.T("Joining segments"));
         ctx.Changed(job);
         var list = Path.Combine(workDir, "parts.txt");
         await File.WriteAllLinesAsync(list, files.Select(f => "file '" + f.Replace("'", "'\\''") + "'"), ct);
@@ -275,10 +283,10 @@ public static class JobRunner
         var prober = new MediaProber(ctx.Tools.Ffprobe);
         foreach (var (t, i) in wanted)
         {
-            job.Stage = L.T("Subtitle OCR ({0})", t.Language ?? "und");
+            job.BeginStage(L.T("Subtitle OCR ({0})", t.Language ?? "und"));
             ctx.Changed(job);
             var srt = Path.Combine(workDir, $"ocr-{i}.srt");
-            var progress = new Progress<double>(pc => { job.Progress = new EncodeProgress(TimeSpan.FromSeconds(pc), TimeSpan.FromSeconds(100), 0, 0, 0, 0, false); ctx.Changed(job); });
+            var progress = new Progress<double>(pc => { job.StagePercent = Math.Clamp(pc, 0, 100); ctx.Changed(job); });
             var codec = (TrackPlanner.Lookup(t, media) as SubtitleStream)?.CodecName;
             var r = await Ocr.SubtitleOcr.RecognizeAsync(ctx.Tools.Ffmpeg, tesseract ?? "", ctx.Store.DataDirectory, t.File, t.Stream, t.Language, srt, workDir,
                 progress, line => job.AppendLog(line), ct, codec, options with { Language = null });
@@ -408,7 +416,7 @@ public static class JobRunner
             bool useQaac = plan.Encoder == AudioEncoderSet.Qaac && ctx.Tools.Qaac is not null;
             var tool = useQaac ? ctx.Tools.Qaac! : ctx.Tools.Fdkaac ?? throw new InvalidOperationException("fdkaac not found.");
             var toolName = useQaac ? "qaac" : "fdkaac";
-            job.Stage = L.T("Encoding audio ({0})", toolName);
+            job.BeginStage(L.T("Encoding audio ({0})", toolName));
             ctx.Changed(job);
             string input = t.File;
             int index = ast.Index;
@@ -510,7 +518,7 @@ public static class JobRunner
         job.CommandLine = plan.Plan.CommandLine(ctx.Tools.Ffmpeg);
         job.AppendLog("Command: " + job.CommandLine);
         foreach (var o in plan.Outputs) job.AppendLog($"  {DemuxBuilder.Describe(o)} → {o.FileName}");
-        job.Stage = L.T("Extracting streams");
+        job.BeginStage(L.T("Extracting streams"));
         ctx.Changed(job);
         var args = plan.Plan.Arguments.ToList();
         int pos = args.LastIndexOf("-i");
@@ -766,7 +774,7 @@ public static class JobRunner
             if (ctx.Tools.VsPipe is null) throw new InvalidOperationException(L.T("vspipe was not found: install VapourSynth (or set KNA_VSPIPE)."));
             Directory.CreateDirectory(workDir);
             var file = Path.Combine(workDir, $"script-audio-{t.Stream}.w64");
-            job.Stage = L.T("Rendering script audio");
+            job.BeginStage(L.T("Rendering script audio"));
             ctx.Changed(job);
             var r = await ProcessRunner.RunAsync(ctx.Tools.VsPipe, ["-o", t.Stream.ToString(System.Globalization.CultureInfo.InvariantCulture), "-c", "w64", t.File, file],
                 workingDirectory: workDir, timeout: TimeSpan.FromHours(6), ct: ct);

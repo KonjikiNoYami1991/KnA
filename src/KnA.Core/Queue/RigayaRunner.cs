@@ -34,7 +34,7 @@ public static class RigayaRunner
         TryDelete(video);
         var restTask = ChunkedEncoder.BuildRestAsync(job, ctx, baseCtx, dir, workDir, ct);
 
-        job.Stage = L.T("Encoding ({0})", name);
+        job.BeginStage(L.T("Encoding ({0})", name));
         ctx.Changed(job);
         int exit = -1;
         double start = 0;

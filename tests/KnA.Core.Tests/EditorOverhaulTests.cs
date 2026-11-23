@@ -383,3 +383,34 @@ public class AiSetupTests
         Assert.True(KnA.Core.Ai.AiSetup.NeedsKey("openai"));
     }
 }
+
+public class ContinuousChunkTests
+{
+    [Fact]
+    public void Segments_vary_and_get_shorter_towards_the_end()
+    {
+        var t = ChunkedEncoder.SplitTimes(0, 1200, 60, 4).ToList();
+        var lengths = t.Prepend(0).Zip(t.Append(1200), (a, b) => b - a).ToList();
+        Assert.True(lengths.Count >= 12, "at least three segments per worker");
+        Assert.True(lengths.Distinct().Count() > 3, "varied lengths, not all equal");
+        Assert.True(lengths.TakeLast(4).Average() < lengths.Take(4).Average(), "shorter at the end");
+        Assert.All(lengths, l => Assert.True(l >= 10 * 0.4 - 0.01));
+        // one worker: plain steps, as before
+        Assert.Equal([60, 120], ChunkedEncoder.SplitTimes(0, 180, 60, 1));
+    }
+
+    [Fact]
+    public void Every_step_has_its_progress()
+    {
+        var job = new QueueJob { SourcePath = "/m/a.mkv" };
+        job.Status = JobStatus.Running;
+        job.BeginStage("Subtitle OCR");
+        Assert.True(job.StageIndeterminate);
+        job.StagePercent = 40;
+        Assert.False(job.StageIndeterminate);
+        Assert.Equal(40, job.Percent);
+        job.BeginStage("Checking the result");
+        Assert.Null(job.StagePercent);
+        Assert.Equal(0, job.Percent);
+    }
+}

@@ -13,7 +13,7 @@ public sealed record JobDto(
     JobStatus Status, string? Stage, string? Message, double Percent, string? MediaSummary, string? ProbeError,
     string? OutputPath, double? Fps, double? Speed, long? Size, long? EstimatedSize, double? RemainingSeconds,
     double? ElapsedSeconds, double PositionSeconds, double DurationSeconds, string? HdrSummary,
-    IReadOnlyList<ValidationIssue> Issues, bool IsEdited)
+    IReadOnlyList<ValidationIssue> Issues, bool IsEdited, bool Encoding = false, bool Indeterminate = false, double? StagePercent = null)
 {
     public static JobDto From(QueueJob j) => new(
         j.Id, j.FileName, j.Folder, j.SourcePath, j.Settings, j.Edit, j.Settings.Label, j.Status, j.Stage, j.Message,
@@ -22,7 +22,8 @@ public sealed record JobDto(
         j.Progress?.Remaining?.TotalSeconds, j.Elapsed?.TotalSeconds,
         j.Progress?.Position.TotalSeconds ?? 0, j.Progress?.Duration.TotalSeconds ?? j.Media?.Duration.TotalSeconds ?? 0,
         j.HdrSummary, j.Issues,
-        j.Edit.Tracks is not null || j.Edit.IsTrimmed || j.Edit.ExternalFiles.Count > 0 || j.Edit.Chapters is not null);
+        j.Edit.Tracks is not null || j.Edit.IsTrimmed || j.Edit.ExternalFiles.Count > 0 || j.Edit.Chapters is not null,
+        j.Progress is not null, j.StageIndeterminate, j.StagePercent is { } sp ? Math.Round(sp, 1) : null);
 }
 
 public sealed record QueueStateDto(bool Running, bool Paused, Guid? CurrentJob, int Total, int Ready, int Done, int Failed);

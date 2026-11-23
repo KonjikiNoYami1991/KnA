@@ -425,3 +425,7 @@ details.upscale[open] > summary { color: color-mix(in srgb, var(--accent) 80%, v
 .wiz-progress span { display: block; height: 100%; background: var(--accent-2); transition: width .2s; }
 .wiz-summary { margin: 0; padding-left: 18px; display: grid; gap: 3px; }
 .choice[disabled] { opacity: .45; cursor: not-allowed; }
+
+.progress .bar.indet { position: relative; overflow: hidden; }
+.progress .bar.indet i { position: absolute; left: 0; animation: kna-indet 1.4s ease-in-out infinite; }
+@keyframes kna-indet { 0% { left: -30%; } 100% { left: 100%; } }

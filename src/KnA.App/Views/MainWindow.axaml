@@ -125,7 +125,7 @@
                       <TextBlock Grid.Row="2" Grid.Column="1" Grid.ColumnSpan="2" Text="{Binding Media}" Classes="muted" FontSize="12" />
 
                       <StackPanel Grid.Row="3" Grid.Column="1" Grid.ColumnSpan="2" Margin="0,8,0,0" Spacing="6">
-                        <ProgressBar Value="{Binding Percent}" Maximum="100" IsVisible="{Binding ShowProgress}"
+                        <ProgressBar Value="{Binding Percent}" Maximum="100" IsVisible="{Binding ShowProgress}" IsIndeterminate="{Binding IsIndeterminate}"
                                      Classes.done="{Binding IsDone}" Classes.error="{Binding IsError}" Classes.paused="{Binding IsPaused}" />
                         <TextBlock Text="{Binding Stats}" Classes="muted" FontSize="12"
                                    IsVisible="{Binding Stats, Converter={x:Static StringConverters.IsNotNullOrEmpty}}" />

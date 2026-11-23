@@ -35,6 +35,14 @@
   DeHalo_alpha, resize, crop, levels, grain…) with a form for each filter; the script is written from the list, or by hand.
 - **Output** offers only the containers that can hold every final stream (e.g. no MP4 with FFV1, no WebM with FLAC).
 
+**Segmented encoding and progress**
+- Encodes that can't be written as resumable pieces (encoders without forced keyframes) use the segment logic with one
+  worker: a stop or crash only loses the segment being encoded.
+- Parallel segments as a steady pool (like av1an): at least three segments per worker, varied lengths, shorter ones at
+  the end and staggered first starts, so the encoders don't all start and finish together.
+- The queue card's bar follows every step with its name: OCR and AI model downloads with their percentage, joining,
+  result check; steps that can't be measured show a moving bar. Desktop and web.
+
 **AI assistant: guided set-up**
 - Settings → AI → "Guided set-up…" (and in the assistant when no model is chosen): which program runs the model,
   how to install and start it, address and key with a connection check that says what is wrong in plain words
@@ -145,6 +153,14 @@
   viene scritto dall'elenco, oppure a mano.
 - **Output** propone solo i contenitori che possono contenere tutti gli stream finali (es. niente MP4 con FFV1, niente
   WebM con FLAC).
+
+**Codifica a segmenti e avanzamento**
+- Le codifiche che non si possono scrivere a pezzi ripristinabili (encoder senza keyframe forzati) usano la logica dei
+  segmenti con un solo processo: uno stop o un crash perde solo il segmento in corso.
+- Segmenti in parallelo come una coda costante (stile av1an): almeno tre segmenti per processo, lunghezze variate, più
+  corti alla fine e prime partenze sfalsate, così gli encoder non partono e finiscono tutti insieme.
+- La barra della scheda in coda segue ogni fase con il suo nome: OCR e download del modello AI con la percentuale, unione,
+  controllo del risultato; le fasi non misurabili mostrano una barra in movimento. Desktop e web.
 
 **Assistente AI: configurazione guidata**
 - Impostazioni → AI → "Configurazione guidata…" (e nell'assistente quando non c'è un modello): quale programma esegue

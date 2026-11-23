@@ -25,12 +25,31 @@ public static class ChunkedEncoder
 {
     private sealed record Manifest(string Key, List<double> Bounds, List<bool> Done);
 
+    /// <summary>
+    /// A single encode that can still be resumed through segments (one worker) when the encoder can't write resumable
+    /// pieces itself (see <see cref="ResumableEncoder"/>): never with dynamic HDR metadata or a copied video.
+    /// </summary>
+    public static bool CanResumeOneByOne(QueueJob job, CompiledJob final, AppSettings settings) =>
+        settings.ResumableEncoding
+        && job.Settings.ProfileDefinition.EncodesVideo
+        && !KnA.Core.Media.Discs.DiscSource.IsTitlePath(job.SourcePath)
+        && job.Media is { Duration.TotalSeconds: > 120 }
+        && !job.Edit.IsMultiSegment
+        && !final.Hdr.UseDolbyVisionRpu && !final.Hdr.UseHdr10PlusJson
+        && final.Tracks.FirstOrDefault(t => t.Include && t.Kind == "video") is { CopyVideo: false };
+
     public static string ChunksRoot(SettingsStore store) => Path.Combine(store.DataDirectory, "chunks");
 
+    /// <summary>Pause between the first starts of the workers, so the segments don't all end together (settable for tests).</summary>
+    public static double StaggerSeconds { get; set; } = 4;
+
+    /// <param name="chunks">Segment settings to use instead of the job's (one worker = resumable single encode).</param>
     public static async Task<int> RunAsync(QueueJob job, RunnerContext ctx, CompileContext baseCtx, CompiledJob final,
-        string workDir, CancellationToken ct)
+        string workDir, CancellationToken ct, ChunkSettings? chunks = null)
     {
         var s = job.Settings;
+        var cs = chunks ?? s.Chunks;
+        int workers = Math.Clamp(cs.Workers, 1, 32);
         var media = job.Media!;
         var tracks = final.Tracks;
         var videoTrack = tracks.First(t => t.Include && t.Kind == "video");
@@ -56,14 +75,14 @@ public static class ChunkedEncoder
         else
         {
             foreach (var f in Directory.GetFiles(dir)) File.Delete(f);
-            job.Stage = L.T("Finding split points");
+            job.BeginStage(L.T("Finding split points"));
             ctx.Changed(job);
-            double target = Math.Max(5, s.Chunks.TargetSeconds);
+            double target = Math.Max(5, cs.TargetSeconds);
             var keyframes = await KeyframesNearAsync(ctx, videoTrack.File, video.Index,
-                StepTimes(start - delay, end - delay, target).ToList(), ct);
-            var bounds = BoundsFromKeyframes(keyframes.Select(k => k + delay).ToList(), start, end, target);
+                SplitTimes(start - delay, end - delay, target, workers).ToList(), ct);
+            var bounds = BoundsFromKeyframes(keyframes.Select(k => k + delay).ToList(), start, end, target, workers);
             manifest = new Manifest(key, bounds, Enumerable.Repeat(false, bounds.Count - 1).ToList());
-            job.AppendLog($"Chunks: {manifest.Done.Count} segments ({(keyframes.Count > 1 ? "keyframe aligned" : "fixed length")}), {s.Chunks.Workers} worker(s).");
+            job.AppendLog($"Chunks: {manifest.Done.Count} segments ({(keyframes.Count > 1 ? "keyframe aligned" : "fixed length")}), {workers} worker(s).");
         }
         Save(manifestPath, manifest);
 
@@ -95,7 +114,10 @@ public static class ChunkedEncoder
         }
 
         using var failCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
-        using var gate = new SemaphoreSlim(Math.Clamp(s.Chunks.Workers, 1, 32));
+        // A steady pool: a segment starts as soon as a worker is free; the first starts are staggered and the segments
+        // have varied lengths (shorter towards the end), so the encoders don't all start and stop at the same moment.
+        using var gate = new SemaphoreSlim(workers);
+        int started = 0;
         string? failure = null;
         var tasks = new List<Task>();
         for (int i = 0; i < count; i++)
@@ -107,6 +129,8 @@ public static class ChunkedEncoder
                 await gate.WaitAsync(failCts.Token);
                 try
                 {
+                    int order = Interlocked.Increment(ref started) - 1;
+                    if (order > 0 && order < workers && StaggerSeconds > 0) await Task.Delay(TimeSpan.FromSeconds(order * StaggerSeconds), failCts.Token);
                     var target = ChunkPath(dir, idx);
                     var tmp = target + ".part.mkv";
                     var compiled = CommandBuilder.Compile(baseCtx with
@@ -203,7 +227,7 @@ public static class ChunkedEncoder
         IReadOnlyList<string> segments, double firstBound, string workDir, CancellationToken ct, Task<(int Exit, bool HasRest)>? restTask = null)
     {
         var s = job.Settings;
-        job.Stage = L.T("Joining segments");
+        job.BeginStage(L.T("Joining segments"));
         ctx.Changed(job);
         var list = Path.Combine(dir, "concat.txt");
         File.WriteAllLines(list, segments.Select(f => "file '" + f.Replace("'", "'\\''") + "'"));
@@ -274,6 +298,30 @@ public static class ChunkedEncoder
         return bounds;
     }
 
+    /// <summary>
+    /// Wanted split times. One worker: every <paramref name="target"/> seconds. Several (av1an-like steady pool): at
+    /// least three segments per worker when the video allows it (never under 10 s), lengths varied around the target,
+    /// and shorter segments towards the end so the queue drains gradually instead of all workers ending together.
+    /// </summary>
+    public static IEnumerable<double> SplitTimes(double from, double to, double target, int workers)
+    {
+        if (workers <= 1) { foreach (var t in StepTimes(from, to, target)) yield return t; yield break; }
+        double dur = to - from;
+        target = Math.Max(Math.Min(target, dur / (3.0 * workers)), Math.Min(target, 10));
+        double[] pattern = [1.0, 0.7, 1.3, 0.85, 1.15];
+        double pos = from;
+        for (int i = 0; ; i++)
+        {
+            double remaining = to - pos;
+            double factor = pattern[i % pattern.Length];
+            if (remaining < target * workers * 1.5) factor = Math.Max(0.4, factor * 0.6);   // the tail: shorter segments
+            double step = target * factor;
+            if (remaining - step < step * 0.5) yield break;
+            pos += step;
+            yield return pos;
+        }
+    }
+
     private static IEnumerable<double> StepTimes(double from, double to, double step)
     {
         for (double t = from + step; to - t >= step * 0.3; t += step) yield return t;
@@ -283,12 +331,13 @@ public static class ChunkedEncoder
     /// Split points from keyframes found near each wanted time: [start, keyframes at least half a step apart, end].
     /// Fixed steps when the file gave none (intra-only, unreadable index…): still frame-exact thanks to trim=.
     /// </summary>
-    public static List<double> BoundsFromKeyframes(IReadOnlyList<double> keyframes, double start, double end, double target)
+    public static List<double> BoundsFromKeyframes(IReadOnlyList<double> keyframes, double start, double end, double target, int workers = 1)
     {
         var bounds = new List<double> { start };
+        double min = workers > 1 ? 0.25 : 0.5;   // varied lengths: the shortest wanted segment is about 0.4 × target
         foreach (var k in keyframes.Where(k => k > start + 0.5 && k < end - 0.5).Order())
-            if (k - bounds[^1] >= target * 0.5 && end - k >= target * 0.3) bounds.Add(k);
-        if (bounds.Count == 1) bounds.AddRange(StepTimes(start, end, target));
+            if (k - bounds[^1] >= target * min && end - k >= target * 0.2) bounds.Add(k);
+        if (bounds.Count == 1) bounds.AddRange(SplitTimes(start, end, target, workers));
         bounds.Add(end);
         return bounds;
     }

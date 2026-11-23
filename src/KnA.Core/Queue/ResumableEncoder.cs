@@ -104,7 +104,7 @@ public static class ResumableEncoder
             });
             if (compiled.HasErrors) throw new InvalidOperationException(compiled.Issues.First(x => x.IsError).Message);
             job.AppendLog("Command (resumable): " + compiled.Plan.CommandLine(ctx.Tools.Ffmpeg));
-            job.Stage = done > 0 ? L.T("Encoding (resumed at {0})", TimeSpan.FromSeconds(done).ToString(@"h\:mm\:ss", CultureInfo.InvariantCulture)) : L.T("Encoding");
+            job.BeginStage(done > 0 ? L.T("Encoding (resumed at {0})", TimeSpan.FromSeconds(done).ToString(@"h\:mm\:ss", CultureInfo.InvariantCulture)) : L.T("Encoding"));
             ctx.Changed(job);
 
             // Progress over the whole video, not only this run.

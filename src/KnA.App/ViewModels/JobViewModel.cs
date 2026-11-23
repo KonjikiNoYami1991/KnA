@@ -26,6 +26,8 @@ public sealed partial class JobViewModel(QueueJob job, MainViewModel owner) : Ob
     [ObservableProperty] private bool _isWarning;
     [ObservableProperty] private bool _isReady;
     [ObservableProperty] private bool _showProgress;
+    /// <summary>A step whose progress cannot be measured is running (the bar moves without a percentage).</summary>
+    [ObservableProperty] private bool _isIndeterminate;
     [ObservableProperty] private bool _canEdit = true;
 
     partial void OnIsSelectedChanged(bool value) => owner.OnSelectionChanged();
@@ -43,6 +45,7 @@ public sealed partial class JobViewModel(QueueJob job, MainViewModel owner) : Ob
         CanEdit = !(IsRunning || IsPaused);
         Percent = j.Percent;
         ShowProgress = IsRunning || IsPaused || j.Percent > 0;
+        IsIndeterminate = j.StageIndeterminate;
         Message = j.Message;
         Media = j.Media?.Summary ?? j.ProbeError ?? KnA.Core.Localization.L.T("Analysing…");
         Chips = BuildChips(j.Settings, j.Edit);
@@ -51,7 +54,7 @@ public sealed partial class JobViewModel(QueueJob job, MainViewModel owner) : Ob
         {
             var p = j.Progress;
             Stats = p is null
-                ? j.Stage ?? ""
+                ? (j.Stage ?? "") + (j.StagePercent is { } sp ? $"   {sp:0} %" : "")
                 : $"{j.Stage}   {Fmt(p.Position)} / {Fmt(p.Duration)}   {p.Fps:0} fps   {p.Speed:0.00}×   ETA {Fmt(p.Remaining)}   {Size(p.SizeBytes)}{(p.EstimatedFinalSize is { } e ? " → ~" + Size(e) : "")}";
         }
         else if (j.Elapsed is { } took)

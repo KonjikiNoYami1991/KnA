@@ -1343,5 +1343,6 @@ public static partial class L
         ["Which model answers?"] = "Quale modello risponde?",
         ["Which program runs the model?"] = "Quale programma esegue il modello?",
         ["{0} answers correctly."] = "{0} risponde correttamente.",
+        ["Checking the result"] = "Controllo del risultato",
     };
 }

@@ -39,7 +39,21 @@ public sealed class QueueJob
     public DateTimeOffset? StartedAt { get; internal set; }
     public DateTimeOffset? FinishedAt { get; internal set; }
 
-    public double Percent => Status == JobStatus.Done ? 100 : Progress?.Percent ?? 0;
+    /// <summary>Progress of the current step when it is not the video encode (OCR, downloads, joining…), 0–100; null = not measurable.</summary>
+    public double? StagePercent { get; internal set; }
+
+    public double Percent => Status == JobStatus.Done ? 100 : Progress?.Percent ?? StagePercent ?? 0;
+
+    /// <summary>A step is running whose progress cannot be measured: the bar moves without a percentage.</summary>
+    public bool StageIndeterminate => Status == JobStatus.Running && Stage is not null && Progress is null && StagePercent is null;
+
+    /// <summary>A new step of the job: its name, and progress starting from nothing (the bar follows each step).</summary>
+    internal void BeginStage(string name, double? percent = null)
+    {
+        Stage = name;
+        Progress = null;
+        StagePercent = percent;
+    }
 
     public TimeSpan? Elapsed => StartedAt is { } s ? (FinishedAt ?? DateTimeOffset.Now) - s : null;
 
@@ -60,6 +74,7 @@ public sealed class QueueJob
         Message = null;
         Stage = null;
         Progress = null;
+        StagePercent = null;
         OutputPath = null;
         CommandLine = null;
         StartedAt = FinishedAt = null;

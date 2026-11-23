@@ -184,7 +184,11 @@ function jobHtml(j) {
 
   const running = j.status === "Running" || j.status === "Paused";
   const showBar = running || j.percent > 0;
-  const stats = running ? `
+  // Every step of the job has its bar: the encode with its figures, the other steps with their name and percentage
+  // (or a moving bar when it cannot be measured).
+  const stats = running && !j.encoding ? `
+      <div class="stats"><span>${esc(j.stage ?? "")}</span>${j.stagePercent != null ? `<span><b>${Math.round(j.stagePercent)}%</b></span>` : ""}
+        <span>${esc(t("elapsed"))} <b>${fmtTime(j.elapsedSeconds)}</b></span></div>` : running ? `
       <div class="stats">
         <span>${esc(j.stage ?? "")}</span>
         <span><b>${fmtTime(j.positionSeconds)}</b> / ${fmtTime(j.durationSeconds)}</span>
@@ -218,7 +222,7 @@ function jobHtml(j) {
     </div>
     <div class="meta">${chips.join("")}</div>
     ${j.mediaSummary ? `<div class="media">${esc(j.mediaSummary)}${j.hdrSummary && j.hdrSummary !== "SDR" ? " · " + esc(j.hdrSummary) : ""}</div>` : j.probeError ? `<div class="media err">${esc(j.probeError)}</div>` : `<div class="media">${esc(t("Analysing…"))}</div>`}
-    ${showBar ? `<div class="progress"><div class="bar"><i style="width:${j.percent}%"></i></div>${stats}</div>` : stats ? `<div class="progress">${stats}</div>` : ""}
+    ${showBar ? `<div class="progress"><div class="bar ${j.indeterminate ? "indet" : ""}"><i style="width:${j.indeterminate ? 30 : j.percent}%"></i></div>${stats}</div>` : stats ? `<div class="progress">${stats}</div>` : ""}
     ${j.message ? `<div class="msg ${msgKind}">${esc(j.message)}</div>` : ""}`;
 }
 
