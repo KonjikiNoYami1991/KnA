@@ -159,12 +159,16 @@ public static class AudioPlanner
     /// <summary>The job settings with the track's own codec/bitrate choice (track list) applied.</summary>
     public static JobSettings ForTrack(TrackPlan t, JobSettings s)
     {
+        if (t.Filters is { } f) s = s with { AudioFilters = f };
         // A codec chosen for the track brings its own bitrate (none = KnA's value for that codec, never the job-wide one).
         if (t.Output is { Length: > 0 } o && Enum.TryParse<AudioCodec>(o, true, out var codec) && Enum.IsDefined(codec) && codec != AudioCodec.Auto)
             s = s with { AudioCodec = codec, AudioBitrate = t.Bitrate is > 0 ? t.Bitrate : null };
         else if (t.Bitrate is > 0 and var k) s = s with { AudioBitrate = k };
         return s;
     }
+
+    /// <summary>The audio filters of a track: its own, or the job's when it has none.</summary>
+    public static AudioFilterSettings FiltersFor(TrackPlan t, JobSettings s) => t.Filters ?? s.AudioFilters;
 
     /// <summary>The plan of one track of the track list: its own codec, bitrate and encoder applied.</summary>
     public static AudioTrackPlan PlanTrack(TrackPlan t, AudioStream a, JobSettings s, string container, AudioEncoderSet encoders)

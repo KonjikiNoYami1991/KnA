@@ -13,7 +13,7 @@ export async function openOcr(jobId, track, onUsed) {
   $("#ocr-sub").textContent = `#${track.stream} ${track.codec ?? ""} ${track.language ?? ""}`;
   $("#ocr-list").innerHTML = `<p class="muted small" style="padding:10px">${esc(t("Reading…"))}</p>`;
   $("#dlg-ocr").showModal();
-  const r = await api("POST", "/api/ocr/sessions", { jobId, file: track.file, stream: track.stream });
+  const r = await api("POST", "/api/ocr/sessions", { jobId, file: track.file, stream: track.stream, copy: track.copy ?? 0 });
   oc = { id: r.id, lines: [], cur: 0, sel: new Set(), onUsed };
   const o = r.options ?? {};
   $("#ocr-engine").value = o.engine ?? "tesseract";

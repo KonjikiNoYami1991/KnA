@@ -235,8 +235,9 @@ public sealed class JobEditorWindow : Window
     }
 
     /// <summary>
-    /// The tracks of one kind in the file and in the added files: tick to keep (untick to leave out any stream),
-    /// order, remove an added file. Video rows also carry their labels (video has no per-track pages).
+    /// The video tracks, the attachments (Output tab) and, for demux, the tracks to extract: tick to keep, order,
+    /// remove an added file. Video rows also carry their labels. Audio and subtitles of an output are tab views
+    /// (<see cref="TrackPages"/>).
     /// </summary>
     private Control TrackListCard(string kind)
     {
@@ -248,14 +249,13 @@ public sealed class JobEditorWindow : Window
         var add = kind == "attachment" ? Ui.Button(L.T("Add attachments…"), AddAttachmentsAsync) : Ui.Button(L.T("Add external files…"), AddExternalAsync);
         var head = new DockPanel { Children = { WithDock(add, Dock.Right), Ui.H2(title) } };
         var box = new StackPanel { Spacing = 6, Children = { head } };
-        if (kind == "audio" && !p.UsesAudio && !p.IsDemux) box.Children.Add(Ui.Note(L.T("This profile has no audio output.")));
         if (rows.Count == 0)
         {
             box.Children.Add(Ui.Muted(kind == "attachment" ? L.T("No attachments. Fonts, covers or any other file can be added.") : L.T("No tracks of this kind.")));
             return Ui.Card(box);
         }
         bool video = kind == "video";
-        var grid = new Grid { ColumnDefinitions = new ColumnDefinitions(video ? "Auto,*,64,170,96,170,Auto" : kind == "subtitle" && p.UsesVideoFilters ? "Auto,*,Auto,Auto" : "Auto,*,Auto"), ColumnSpacing = 8, RowSpacing = 6 };
+        var grid = new Grid { ColumnDefinitions = new ColumnDefinitions(video ? "Auto,*,64,170,96,170,Auto" : "Auto,*,Auto"), ColumnSpacing = 8, RowSpacing = 6 };
         int r = 0;
         if (video)
         {
@@ -295,20 +295,6 @@ public sealed class JobEditorWindow : Window
                     Put(Ui.Combo([(null, L.T("Encode (Video tab settings)")), ("copy", L.T("Copy (no re-encoding)"))], t.Output, v => UpdateTrack(idx, x => x with { Output = v }, rerender: true)), 5);
                 last = 6;
             }
-            else if (kind == "subtitle" && p.UsesVideoFilters)
-            {
-                var rb = new RadioButton { GroupName = "burn" + _job.Id, IsChecked = t.Burn, Content = L.T("Burn") };
-                rb.IsCheckedChanged += (_, _) =>
-                {
-                    if (rb.IsChecked != true || Tracks[idx].Burn) return;
-                    var l = Materialize();
-                    for (int j = 0; j < l.Count; j++) if (l[j].Kind == "subtitle") l[j] = l[j] with { Burn = j == idx, Include = j == idx ? false : l[j].Include };
-                    _trackSub["subtitle"] = idx;
-                    Save(true);
-                };
-                Put(rb, 2);
-                last = 3;
-            }
             var up = new Button { Content = "↑", Classes = { "ghost" } };
             var down = new Button { Content = "↓", Classes = { "ghost" } };
             up.Click += (_, _) => MoveTrack(idx, -1);
@@ -332,13 +318,6 @@ public sealed class JobEditorWindow : Window
             r++;
         }
         box.Children.Add(grid);
-        if (kind == "subtitle" && p.UsesVideoFilters && rows.Any(x => x.t.Burn))
-            box.Children.Add(Ui.Button(L.T("Don't burn any subtitle"), () =>
-            {
-                var l = Materialize();
-                for (int j = 0; j < l.Count; j++) l[j] = l[j] with { Burn = false };
-                Save(true);
-            }));
         if (kind == "attachment" && !p.IsDemux) box.Children.Add(Ui.Muted(L.T("Untick an attachment of the file to leave it out; added files can be removed with ✕. Attachments need MKV.")));
         if (p.IsDemux) box.Children.Add(Ui.Muted(L.T("Demux: the ticked tracks, attachments and chapters are extracted to separate files.")));
         return Ui.Card(box);
@@ -368,22 +347,136 @@ public sealed class JobEditorWindow : Window
         return g;
     }
 
-    /// <summary>One sub-tab per kept track of a kind; the last one shown is remembered.</summary>
+    /// <summary>
+    /// The Audio / Subtitles tab view: one tab per active track (shown as tabs even with a single track), "+" to add
+    /// a track of the file or of an added file, duplicate the current one or add external files; ✕ on a tab removes
+    /// it; ← → order the tracks (= order in the output file). The last tab shown is remembered.
+    /// </summary>
     private Control TrackPages(string kind, Func<int, TrackPlan, Control> page)
     {
-        var rows = Tracks.Select((t, i) => (t, i)).Where(x => x.t.Kind == kind && (x.t.Include || x.t.Burn)).ToList();
-        if (rows.Count == 0) return Ui.Muted(kind == "audio" ? L.T("No audio track kept: tick one above.") : L.T("No subtitle track kept or burned: tick one above."));
+        var list = Tracks;
+        var active = TrackTabs.Active(list, kind);
+        int current = active.Contains(_trackSub.GetValueOrDefault(kind, -1)) ? _trackSub[kind] : active.FirstOrDefault(-1);
+        var plus = PlusButton(kind, current);
+        if (active.Count == 0)
+            return new StackPanel
+            {
+                Spacing = 10,
+                Children =
+                {
+                    Ui.Muted(kind == "audio" ? L.T("No audio track in the output: add one with +.") : L.T("No subtitle track in the output: add one with +.")),
+                    plus,
+                },
+            };
         var tabs = new TabControl();
         int selected = 0;
-        foreach (var (t, i) in rows)
+        foreach (var i in active)
         {
-            var label = (t.Burn ? "🔥 " : "") + TrackName(t);
-            tabs.Items.Add(new TabItem { Header = label.Length > 34 ? label[..33] + "…" : label, Tag = i, FontSize = 13, Content = new Border { Padding = new Thickness(0, 12, 0, 0), Child = page(i, t) } });
-            if (_trackSub.GetValueOrDefault(kind, -1) == i) selected = tabs.Items.Count - 1;
+            var t = list[i];
+            int idx = i;
+            var close = new Button { Content = "✕", Classes = { "ghost" }, Padding = new Thickness(4, 0), FontSize = 11, Margin = new Thickness(6, 0, 0, 0) };
+            ToolTip.SetTip(close, t.Copy > 0 ? L.T("Delete this copy") : L.T("Remove from the output (it can be added again with +)"));
+            close.Click += (_, _) => RemoveTrack(kind, idx);
+            var header = new StackPanel
+            {
+                Orientation = Orientation.Horizontal,
+                Children = { new TextBlock { Text = (t.Burn ? "🔥 " : "") + TrackTabs.TabLabel(t, _job.SourcePath), VerticalAlignment = VerticalAlignment.Center }, close },
+            };
+            ToolTip.SetTip(header, t.File);
+            var content = new StackPanel { Spacing = 12, Children = { TrackToolbar(kind, idx, active), page(idx, t) } };
+            tabs.Items.Add(new TabItem { Header = header, Tag = idx, FontSize = 13, Content = new Border { Padding = new Thickness(0, 12, 0, 0), Child = content } });
+            if (i == current) selected = tabs.Items.Count - 1;
         }
+        // "+" right after the last tab: a header that is only a button (the tab itself is never selected).
+        tabs.Items.Add(new TabItem { Header = plus, Tag = -1, Padding = new Thickness(2, 0) });
         tabs.SelectedIndex = selected;
-        tabs.SelectionChanged += (_, e) => { if (e.Source == tabs && tabs.SelectedItem is TabItem { Tag: int ti }) _trackSub[kind] = ti; };
+        _trackSub[kind] = current;
+        tabs.SelectionChanged += (_, e) =>
+        {
+            if (e.Source != tabs) return;
+            if (tabs.SelectedItem is TabItem { Tag: int ti } && ti >= 0) { _trackSub[kind] = ti; selected = tabs.SelectedIndex; }
+            else tabs.SelectedIndex = selected;
+        };
         return tabs;
+    }
+
+    /// <summary>← → and "Duplicate" above a track's page.</summary>
+    private Control TrackToolbar(string kind, int idx, List<int> active)
+    {
+        int pos = active.IndexOf(idx);
+        var left = new Button { Content = "←", Classes = { "ghost" }, IsEnabled = pos > 0 };
+        var right = new Button { Content = "→", Classes = { "ghost" }, IsEnabled = pos < active.Count - 1 };
+        ToolTip.SetTip(left, L.T("Earlier in the output file"));
+        ToolTip.SetTip(right, L.T("Later in the output file"));
+        left.Click += (_, _) => MoveActive(kind, idx, -1);
+        right.Click += (_, _) => MoveActive(kind, idx, 1);
+        var dup = Ui.Button(L.T("Duplicate"), () => DuplicateTrack(kind, idx));
+        ToolTip.SetTip(dup, kind == "audio"
+            ? L.T("The same source track once more, with its own settings (e.g. in Opus and in Vorbis).")
+            : L.T("The same source track once more, with its own settings (e.g. as ASS and as SRT)."));
+        var t = Tracks[idx];
+        var where = Ui.Muted(L.T("Track {0} of {1} in the output", pos + 1, active.Count) + (t.Copy > 0 ? " · " + L.T("copy {0} of #{1}", t.Copy, t.Stream) : "")
+                             + " · " + TrackName(t) + " · " + Details(TrackPlanner.Lookup(t, AllMedia())), 11.5);
+        where.VerticalAlignment = VerticalAlignment.Center;
+        return Ui.Row(6, left, right, dup, where);
+    }
+
+    /// <summary>"+": the tracks not in the output yet (file and added files), duplicate the current track, add files.</summary>
+    private Button PlusButton(string kind, int current)
+    {
+        var list = Tracks;
+        var menu = new MenuFlyout();
+        foreach (var i in TrackTabs.Inactive(list, kind))
+        {
+            var t = list[i];
+            int idx = i;
+            var item = new MenuItem { Header = L.T("Add {0}", TrackName(t) + (t.Title is { Length: > 0 } ti ? " · " + ti : "") + " · " + Details(TrackPlanner.Lookup(t, AllMedia()))) };
+            item.Click += async (_, _) => await ActivateTrackAsync(kind, idx);
+            menu.Items.Add(item);
+        }
+        if (current >= 0)
+        {
+            if (menu.Items.Count > 0) menu.Items.Add(new Separator());
+            var dup = new MenuItem { Header = L.T("Duplicate the current track") };
+            dup.Click += (_, _) => DuplicateTrack(kind, current);
+            menu.Items.Add(dup);
+        }
+        if (menu.Items.Count > 0) menu.Items.Add(new Separator());
+        var ext = new MenuItem { Header = L.T("Add external files…") };
+        ext.Click += async (_, _) => await AddExternalAsync();
+        menu.Items.Add(ext);
+        var b = new Button { Content = "+", FontWeight = FontWeight.Bold, Padding = new Thickness(10, 2), Flyout = menu };
+        ToolTip.SetTip(b, kind == "audio" ? L.T("Add an audio track") : L.T("Add a subtitle track"));
+        return b;
+    }
+
+    private async Task ActivateTrackAsync(string kind, int idx)
+    {
+        _trackSub[kind] = TrackTabs.Activate(Materialize(), idx);
+        await MaterializeNowAsync();   // the profile fills codec/format of the track just added
+    }
+
+    private void DuplicateTrack(string kind, int idx)
+    {
+        _trackSub[kind] = TrackTabs.Duplicate(Materialize(), idx);
+        RenderTab(); Save(true);
+    }
+
+    private void RemoveTrack(string kind, int idx)
+    {
+        var l = Materialize();
+        var active = TrackTabs.Active(l, kind);
+        int pos = active.IndexOf(idx);
+        TrackTabs.Remove(l, idx);
+        var left = TrackTabs.Active(l, kind);
+        _trackSub[kind] = left.Count == 0 ? -1 : left[Math.Clamp(pos, 0, left.Count - 1)];
+        RenderTab(); Save(true);
+    }
+
+    private void MoveActive(string kind, int idx, int delta)
+    {
+        _trackSub[kind] = TrackTabs.Move(Materialize(), idx, delta);
+        RenderTab(); Save();
     }
 
     private async Task AddAttachmentsAsync()
@@ -618,10 +711,9 @@ public sealed class JobEditorWindow : Window
     private Control AudioTab()
     {
         var p = _settings.ProfileDefinition;
-        var root = new StackPanel { Spacing = 14, Children = { TrackListCard("audio") } };
-        if (p.UsesAudio) root.Children.Add(TrackPages("audio", AudioPage));
-        root.Children.Add(Ui.Muted(L.T("Volume, normalisation, downmix and sample rate of every track: Filters tab.")));
-        return root;
+        if (p.IsDemux) return TrackListCard("audio");   // demux: tick the tracks to extract
+        if (!p.UsesAudio) return Ui.Note(L.T("This profile has no audio output."));
+        return TrackPages("audio", AudioPage);
     }
 
     private Control AudioPage(int idx, TrackPlan t)
@@ -638,11 +730,13 @@ public sealed class JobEditorWindow : Window
         }
         var fields = new List<Control>
         {
-            Ui.Field("Codec", Ui.Combo(codecs, codec, v => UpdateTrack(idx, x => x with
+            Ui.Field("Codec", Ui.Combo(codecs, codec, v => UpdateTrack(idx, x => TrackTabs.Retitle(x, x with
             {
                 Output = v.ToString(), Encoder = v == AudioCodec.Copy ? null : encoders.Best(v), Arguments = null,
                 Bitrate = v == AudioCodec.Copy || IsLossless(v) ? null : x.Bitrate,
-            }, rerender: true))),
+                // A copied track is not filtered: its filters and channel count go away.
+                Filters = v == AudioCodec.Copy ? null : x.Filters, Channels = v == AudioCodec.Copy ? null : x.Channels,
+            }), rerender: true))),
         };
         if (!copy)
         {
@@ -654,20 +748,49 @@ public sealed class JobEditorWindow : Window
                 var kbps = Ui.Number(t.Bitrate ?? 0, 0, 1536, 16, v => UpdateTrack(idx, x => x with { Bitrate = v > 0 ? (int)v : null }), "0");
                 fields.Add(Ui.Field("Bitrate (kb/s)", kbps, L.T("Per stereo pair (scaled for more channels); 0 = KnA's value for the codec.")));
             }
-            var chans = new (int?, string)[] { (null, L.T("As the source")), (8, "7.1"), (6, "5.1"), (2, L.T("Stereo")), (1, L.T("Mono")) };
-            fields.Add(Ui.Field("Channels", Ui.Combo(chans, t.Channels, v => UpdateTrack(idx, x => x with { Channels = v }))));
         }
         box.Children.Add(Ui.Columns([.. fields]));
         if (copy) box.Children.Add(Ui.Muted(L.T("The track is copied as it is: no encoder, no audio filter.")));
-        else if (encoders.Available(codec).FirstOrDefault() is { } first)
+        else
         {
-            var enc = t.Encoder is { } te && encoders.Has(te) ? te : first;
-            box.Children.Add(Ui.H2(L.T("All {0} parameters", enc)));
-            box.Children.Add(new ParamPages(new CommandLineModel(t.Arguments, x => UpdateTrack(idx, y => y with { Arguments = x })),
-                ct => _queue.ParameterOptionsAsync(QueueService.ParameterTools.AudioEncoder + enc, _settings, ct), tabs: false,
-                example: enc is AudioEncoderSet.Fdkaac ? "--afterburner 1" : enc is AudioEncoderSet.Qaac ? "--quality 2" : "-aac_coder twoloop"));
+            box.Children.Add(AudioFilters(idx, t));
+            if (encoders.Available(codec).FirstOrDefault() is { } first)
+            {
+                var enc = t.Encoder is { } te && encoders.Has(te) ? te : first;
+                box.Children.Add(Ui.H2(L.T("All {0} parameters", enc)));
+                box.Children.Add(new ParamPages(new CommandLineModel(t.Arguments, x => UpdateTrack(idx, y => y with { Arguments = x })),
+                    ct => _queue.ParameterOptionsAsync(QueueService.ParameterTools.AudioEncoder + enc, _settings, ct), tabs: false,
+                    example: enc is AudioEncoderSet.Fdkaac ? "--afterburner 1" : enc is AudioEncoderSet.Qaac ? "--quality 2" : "-aac_coder twoloop"));
+            }
         }
         return box;
+    }
+
+    /// <summary>The track's own audio filters: volume, loudness normalisation, channels (downmix), sample rate, custom.</summary>
+    private Control AudioFilters(int idx, TrackPlan t)
+    {
+        var f = t.Filters ?? new AudioFilterSettings();
+        void Set(Func<AudioFilterSettings, AudioFilterSettings> g) =>
+            UpdateTrack(idx, x => { var n = g(x.Filters ?? new AudioFilterSettings()); return x with { Filters = n.IsActive ? n : null }; });
+        var gainText = new TextBlock { Text = $"{f.GainDb:0.0} dB", FontWeight = FontWeight.Bold };
+        var gain = new Slider { Minimum = -20, Maximum = 20, Value = f.GainDb, SmallChange = 0.5, LargeChange = 1, TickFrequency = 0.5, IsSnapToTickEnabled = true };
+        gain.ValueChanged += (_, e) => { gainText.Text = $"{e.NewValue:0.0} dB"; Set(x => x with { GainDb = e.NewValue }); };
+        var chans = new (int?, string)[] { (null, L.T("As the source")), (8, "7.1"), (6, "5.1"), (2, L.T("Stereo (downmix)")), (1, L.T("Mono")) };
+        var box = new StackPanel
+        {
+            Spacing = 10,
+            Children =
+            {
+                Ui.H2(L.T("Audio filters of this track")),
+                Ui.Columns(
+                    new StackPanel { Children = { Ui.Row(6, Ui.Label("Volume"), gainText), gain } },
+                    Ui.Field("Channels", Ui.Combo(chans, t.Channels, v => UpdateTrack(idx, x => x with { Channels = v }))),
+                    Ui.Field("Sample rate", Ui.Combo(new (int?, string)[] { (null, L.T("Keep original")), (44100, "44.1 kHz"), (48000, "48 kHz"), (96000, "96 kHz") }, f.SampleRate, x => Set(y => y with { SampleRate = x })))),
+                Ui.Toggle(L.T("Normalize loudness (EBU R128)"), f.Normalize, x => Set(y => y with { Normalize = x })),
+                Ui.Field("Custom audio filters (advanced)", Ui.Text(f.Custom, x => Set(y => y with { Custom = string.IsNullOrWhiteSpace(x) ? null : x }), "highpass=f=80", mono: true)),
+            },
+        };
+        return Ui.Card(box);
     }
 
     // ------------------------------------------------------------------ subtitles
@@ -675,9 +798,9 @@ public sealed class JobEditorWindow : Window
     private Control SubtitlesTab()
     {
         var p = _settings.ProfileDefinition;
-        var root = new StackPanel { Spacing = 14, Children = { TrackListCard("subtitle") } };
-        if (p.UsesTrackPlan) root.Children.Add(TrackPages("subtitle", SubtitlePage));
-        return root;
+        if (p.IsDemux) return TrackListCard("subtitle");
+        if (!p.UsesTrackPlan) return Ui.Note(L.T("This profile has no subtitle output."));
+        return TrackPages("subtitle", SubtitlePage);
     }
 
     private Control SubtitlePage(int idx, TrackPlan t)
@@ -703,7 +826,7 @@ public sealed class JobEditorWindow : Window
             if (KnA.Core.Ocr.SubtitleOcr.CanRead(st?.CodecName ?? t.Codec))
                 formats.Add((KnA.Core.Ocr.SubtitleOcr.OutputValue, L.T("Text (OCR, picture subtitles)"), true));
             var cur = t.Output ?? "copy";
-            box.Children.Add(Ui.Columns(Ui.Field("Format", Ui.Combo(formats, cur, v => UpdateTrack(idx, x => x with { Output = v, Arguments = null }, rerender: true)))));
+            box.Children.Add(Ui.Columns(Ui.Field("Format", Ui.Combo(formats, cur, v => UpdateTrack(idx, x => TrackTabs.Retitle(x, x with { Output = v, Arguments = null }), rerender: true)))));
             if (cur is not ("copy" or KnA.Core.Ocr.SubtitleOcr.OutputValue))
             {
                 var enc = cur == "srt" ? "srt" : cur;
@@ -725,7 +848,7 @@ public sealed class JobEditorWindow : Window
                 try
                 {
                     await SaveNowAsync(false);
-                    var session = await Task.Run(() => KnA.Core.Ocr.OcrSession.OpenAsync(_queue, _job, track.File, track.Stream));
+                    var session = await Task.Run(() => KnA.Core.Ocr.OcrSession.OpenAsync(_queue, _job, track.File, track.Stream, default, track.Copy));
                     var w = new OcrWindow(_queue, session) { Icon = Icon };
                     await w.ShowDialog(this);
                     if (w.UsedInJob)
@@ -742,9 +865,8 @@ public sealed class JobEditorWindow : Window
         if (p.UsesVideoFilters && !t.Burn)
             box.Children.Add(Ui.Button(L.T("Burn this track into the picture"), () =>
             {
-                var l = Materialize();
-                for (int j = 0; j < l.Count; j++) if (l[j].Kind == "subtitle") l[j] = l[j] with { Burn = j == idx, Include = j == idx ? false : l[j].Include };
-                Save(true);
+                TrackTabs.Burn(Materialize(), idx);
+                RenderTab(); Save(true);
             }));
         else if (t.Burn)
             box.Children.Add(Ui.Button(L.T("Keep it as a track instead"), async () =>
@@ -1104,12 +1226,11 @@ public sealed class JobEditorWindow : Window
     // ------------------------------------------------------------------ filters
 
     private void SetVideo(Func<VideoFilterSettings, VideoFilterSettings> f, bool rerender = false) { _settings = _settings with { VideoFilters = f(_settings.VideoFilters) }; Save(rerender); }
-    private void SetAudio(Func<AudioFilterSettings, AudioFilterSettings> f) { _settings = _settings with { AudioFilters = f(_settings.AudioFilters) }; Save(); }
     private void SetFs(Func<FrameserverSettings, FrameserverSettings> f, bool rerender) { _settings = _settings with { Frameserver = f(_settings.Frameserver) }; if (rerender) RenderTab(); Save(rerender); }
 
     private Control FiltersTab()
     {
-        var v = _settings.VideoFilters; var au = _settings.AudioFilters;
+        var v = _settings.VideoFilters;
         var p = _settings.ProfileDefinition;
         var rot = _a!.Source.PrimaryVideo?.Rotation ?? 0;
         var crop = v.Crop ?? new CropSettings();
@@ -1202,18 +1323,6 @@ public sealed class JobEditorWindow : Window
             right.Children.Add(Ui.Card(sec));
         }
 
-        var gainText = new TextBlock { Text = $"{au.GainDb:0.0} dB", FontWeight = FontWeight.Bold };
-        var gain = new Slider { Minimum = -20, Maximum = 20, Value = au.GainDb, SmallChange = 0.5, LargeChange = 1, TickFrequency = 0.5, IsSnapToTickEnabled = true };
-        gain.ValueChanged += (_, e) => { gainText.Text = $"{e.NewValue:0.0} dB"; SetAudio(f => f with { GainDb = e.NewValue }); };
-        var audio = new StackPanel { Spacing = 10, Children = { Ui.H2(L.T("Audio")) } };
-        if (!p.UsesAudio) audio.Children.Add(Ui.Note(L.T("This profile has no audio output.")));
-        audio.Children.Add(new StackPanel { Children = { Ui.Row(6, Ui.Label("Volume"), gainText), gain } });
-        audio.Children.Add(Ui.Toggle(L.T("Normalize loudness (EBU R128)"), au.Normalize, x => SetAudio(f => f with { Normalize = x })));
-        audio.Children.Add(Ui.Toggle(L.T("Downmix to stereo"), au.DownmixStereo, x => SetAudio(f => f with { DownmixStereo = x })));
-        audio.Children.Add(Ui.Field("Sample rate", Ui.Combo(new (int?, string)[] { (null, L.T("Keep original")), (44100, "44.1 kHz"), (48000, "48 kHz"), (96000, "96 kHz") }, au.SampleRate, x => SetAudio(f => f with { SampleRate = x }))));
-        audio.Children.Add(Ui.Field("Custom audio filters (advanced)", Ui.Text(au.Custom, x => SetAudio(f => f with { Custom = string.IsNullOrWhiteSpace(x) ? null : x }), "highpass=f=80", mono: true)));
-        audio.Children.Add(Ui.Muted(L.T("Audio filters force re-encoding of the affected tracks.")));
-        right.Children.Add(Ui.Card(audio));
 
         var aiAnalyse = Ui.Button(L.T("Analyse frames with AI"), async () =>
         {

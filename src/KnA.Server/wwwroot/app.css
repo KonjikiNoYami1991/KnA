@@ -391,6 +391,16 @@ details.upscale[open] > summary { color: color-mix(in srgb, var(--accent) 80%, v
 .params { display: grid; gap: 6px; }
 .tabs.subtabs { padding: 0; margin: 10px 0 0; }
 .tabs.subtabs button { font-size: 12.5px; padding: 8px 11px; }
+/* Audio / Subtitles tab view: ✕ on each tab, "+" right after the last one with its menu */
+.track-tabs { overflow: visible; flex-wrap: wrap; align-items: center; }
+.track-tabs .tab-x { margin-left: 8px; opacity: .55; font-size: 11px; padding: 1px 4px; border-radius: 4px; }
+.track-tabs .tab-x:hover { opacity: 1; background: var(--border); }
+.track-plus { position: relative; display: inline-block; margin-left: 6px; }
+.tabs.subtabs .track-plus > .btn { padding: 3px 11px; border: 1px solid var(--border); border-radius: 6px; background: var(--surface-2); color: var(--text); }
+.track-add { position: absolute; z-index: 30; top: calc(100% + 4px); left: 0; min-width: 280px; max-width: min(520px, 90vw); background: var(--surface); border: 1px solid var(--border); border-radius: 8px; box-shadow: var(--shadow); padding: 4px; }
+.track-add button { display: block; width: 100%; text-align: left; border: 0; background: transparent; color: var(--text); font: 13px var(--font); padding: 7px 10px; border-radius: 6px; cursor: pointer; white-space: normal; }
+.track-add button:hover { background: var(--border); }
+.track-add hr { border: 0; border-top: 1px solid var(--border); margin: 4px 0; }
 .pp-filter { width: 100%; margin: 6px 0; }
 .pp-rows { display: grid; gap: 4px; }
 .param-opt { display: grid; grid-template-columns: minmax(160px, 300px) 1fr; gap: 6px; align-items: center; padding: 3px 0; }

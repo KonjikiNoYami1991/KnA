@@ -17,4 +17,26 @@ public static class LanguageNames
         if (string.Equals(a, b, StringComparison.OrdinalIgnoreCase)) return true;
         return Groups.Any(g => g.Contains(a.ToLowerInvariant()) && g.Contains(b.ToLowerInvariant()));
     }
+
+    /// <summary>The two-letter code of a language code ("ita" → "it"), or the code itself when unknown.</summary>
+    public static string TwoLetter(string code)
+    {
+        var c = code.ToLowerInvariant();
+        return Groups.FirstOrDefault(g => g.Contains(c))?[0] ?? c;
+    }
+
+    /// <summary>Name of the language in the language itself, capitalised ("ita" → "Italiano"); null for none / "und".</summary>
+    public static string? NativeName(string? code)
+    {
+        if (string.IsNullOrWhiteSpace(code) || code.Equals("und", StringComparison.OrdinalIgnoreCase)) return null;
+        try
+        {
+            var name = System.Globalization.CultureInfo.GetCultureInfo(TwoLetter(code.Trim())).NativeName;
+            if (string.IsNullOrEmpty(name) || name.StartsWith("Unknown", StringComparison.OrdinalIgnoreCase)) return code;
+            int paren = name.IndexOf(" (", StringComparison.Ordinal);
+            if (paren > 0) name = name[..paren];
+            return char.ToUpper(name[0], System.Globalization.CultureInfo.InvariantCulture) + name[1..];
+        }
+        catch (System.Globalization.CultureNotFoundException) { return code; }
+    }
 }

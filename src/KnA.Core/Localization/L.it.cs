@@ -1344,5 +1344,26 @@ public static partial class L
         ["Which program runs the model?"] = "Quale programma esegue il modello?",
         ["{0} answers correctly."] = "{0} risponde correttamente.",
         ["Checking the result"] = "Controllo del risultato",
+
+        // ------------------------------------------------------------ editor: audio / subtitle tab views
+        ["burned"] = "impresso",
+        ["automatic"] = "automatico",
+        ["No audio track in the output: add one with +."] = "Nessuna traccia audio nell'output: aggiungine una con +.",
+        ["No subtitle track in the output: add one with +."] = "Nessuna traccia di sottotitoli nell'output: aggiungine una con +.",
+        ["Delete this copy"] = "Elimina questa copia",
+        ["Remove from the output (it can be added again with +)"] = "Togli dall'output (si può aggiungere di nuovo con +)",
+        ["Earlier in the output file"] = "Prima nel file di output",
+        ["Later in the output file"] = "Dopo nel file di output",
+        ["The same source track once more, with its own settings (e.g. in Opus and in Vorbis)."] = "La stessa traccia sorgente un'altra volta, con impostazioni proprie (es. in Opus e in Vorbis).",
+        ["The same source track once more, with its own settings (e.g. as ASS and as SRT)."] = "La stessa traccia sorgente un'altra volta, con impostazioni proprie (es. come ASS e come SRT).",
+        ["Track {0} of {1} in the output"] = "Traccia {0} di {1} nell'output",
+        ["copy {0} of #{1}"] = "copia {0} di #{1}",
+        ["Add {0}"] = "Aggiungi {0}",
+        ["Duplicate the current track"] = "Duplica la traccia attuale",
+        ["Add an audio track"] = "Aggiungi una traccia audio",
+        ["Add a subtitle track"] = "Aggiungi una traccia di sottotitoli",
+        ["This profile has no subtitle output."] = "Questo profilo non produce sottotitoli.",
+        ["Audio filters of this track"] = "Filtri audio di questa traccia",
+        ["Stereo (downmix)"] = "Stereo (downmix)",
     };
 }

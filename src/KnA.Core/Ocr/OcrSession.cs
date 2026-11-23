@@ -16,6 +16,8 @@ public sealed class OcrSession
     public required QueueJob Job { get; init; }
     public required string File { get; init; }
     public required int Stream { get; init; }
+    /// <summary>Which copy of the track the text replaces when used in the job (<see cref="Encoding.TrackPlan.Copy"/>).</summary>
+    public int Copy { get; init; }
     public string? Codec { get; init; }
     public string? Language { get; init; }
     public string? Title { get; init; }
@@ -27,7 +29,7 @@ public sealed class OcrSession
     /// <summary>Below this confidence a line is "to check" (shown in orange/red).</summary>
     public const double CheckBelow = 85;
 
-    public static async Task<OcrSession> OpenAsync(QueueService q, QueueJob job, string file, int stream, CancellationToken ct = default)
+    public static async Task<OcrSession> OpenAsync(QueueService q, QueueJob job, string file, int stream, CancellationToken ct = default, int copy = 0)
     {
         var tools = q.Tools ?? throw new InvalidOperationException(L.T("FFmpeg was not found. Configure it in Settings."));
         var media = file == job.SourcePath ? job.Media : job.ExternalMedia.GetValueOrDefault(file);
@@ -38,7 +40,7 @@ public sealed class OcrSession
             var images = await SubtitleOcr.LoadImagesAsync(tools.Ffmpeg, tools.Ffprobe, file, stream, st?.CodecName, work, ct);
             return new OcrSession
             {
-                Job = job, File = file, Stream = stream, Codec = st?.CodecName, Language = st?.Language, Title = st?.Title,
+                Job = job, File = file, Stream = stream, Copy = copy, Codec = st?.CodecName, Language = st?.Language, Title = st?.Title,
                 Lines = images.Select((img, i) => new OcrLine(i, img)).ToList(),
             };
         }
@@ -111,7 +113,7 @@ public sealed class OcrSession
         await SaveAsync(srtPath, ct);
         var a = await q.AnalyzeAsync(Job, ct);
         var tracks = (Job.Edit.Tracks ?? a.Tracks).ToList();
-        int at = tracks.FindIndex(t => t.Kind == "subtitle" && t.File == File && t.Stream == Stream);
+        int at = tracks.FindIndex(t => t.Kind == "subtitle" && t.File == File && t.Stream == Stream && t.Copy == Copy);
         var original = at >= 0 ? tracks[at] : null;
         var probe = await new MediaProber(q.Tools!.Ffprobe).ProbeAsync(srtPath, ct, requireVideo: false);
         var st = probe.Subtitles.FirstOrDefault() ?? throw new InvalidOperationException(L.T("The SRT file could not be read."));
@@ -121,7 +123,10 @@ public sealed class OcrSession
             Forced = original?.Forced ?? false, DelayMs = original?.DelayMs ?? 0, Output = null,
         };
         tracks.RemoveAll(t => t.File == srtPath);
-        if (original is not null) { tracks[at] = original with { Include = false, Burn = false, Output = null }; tracks.Insert(at + 1, text); }
+        at = original is null ? -1 : tracks.IndexOf(original);
+        // A duplicate of the picture track is replaced by the text; the track itself stays in the list, left out.
+        if (original is { Copy: > 0 }) tracks[at] = text;
+        else if (original is not null) { tracks[at] = original with { Include = false, Burn = false, Output = null }; tracks.Insert(at + 1, text); }
         else tracks.Add(text);
         var edit = Job.Edit with { ExternalFiles = [.. Job.Edit.ExternalFiles.Where(f => f != srtPath), srtPath], Tracks = tracks };
         return await q.SetEditAsync(Job.Id, edit, ct);

@@ -281,8 +281,15 @@ public static class JobRunner
         var options = ctx.Settings.Ocr ?? new Ocr.OcrOptions();
         var tesseract = Ocr.SubtitleOcr.LocateTesseract(ctx.Store.DataDirectory);
         var prober = new MediaProber(ctx.Tools.Ffprobe);
+        var done = new Dictionary<string, (string Srt, int Count)>();
         foreach (var (t, i) in wanted)
         {
+            // A copy of a track already read (the same subtitle in two formats) reuses its text.
+            if (done.TryGetValue(t.SourceKey, out var prev))
+            {
+                tracks[i] = t with { File = prev.Srt, Stream = media[prev.Srt].Subtitles.FirstOrDefault()?.Index ?? 0, Codec = "subrip", Output = null, Include = prev.Count > 0 };
+                continue;
+            }
             job.BeginStage(L.T("Subtitle OCR ({0})", t.Language ?? "und"));
             ctx.Changed(job);
             var srt = Path.Combine(workDir, $"ocr-{i}.srt");
@@ -293,6 +300,7 @@ public static class JobRunner
             if (r.Subtitles == 0) job.AppendLog(L.T("OCR: no text found in track #{0}: it is left out.", t.Stream));
             var m = await prober.ProbeAsync(srt, ct, requireVideo: false);
             media[srt] = m;
+            done[t.SourceKey] = (srt, r.Subtitles);
             tracks[i] = t with { File = srt, Stream = m.Subtitles.FirstOrDefault()?.Index ?? 0, Codec = "subrip", Output = null, Include = r.Subtitles > 0 };
         }
         job.Progress = null;
@@ -420,12 +428,12 @@ public static class JobRunner
             ctx.Changed(job);
             string input = t.File;
             int index = ast.Index;
-            if (Frameserver.IsVapourSynth(t.File) && cc.ScriptAudio.GetValueOrDefault($"{t.File}|{t.Stream}") is { } w64) { input = w64; index = 0; }
+            if (Frameserver.IsVapourSynth(t.File) && cc.ScriptAudio.GetValueOrDefault(t.SourceKey) is { } w64) { input = w64; index = 0; }
             var output = Path.Combine(workDir, $"{toolName}{n++}.m4a");
             var ff = new List<string> { "-hide_banner", "-nostdin", "-v", "error" };
             ff.AddRange(MediaProber.RobustInputArgs(input));
             ff.AddRange([.. KnA.Core.Media.Discs.DiscSource.InputArgs(input), "-map", $"0:{index}", "-vn", "-ac", plan.Channels.ToString(System.Globalization.CultureInfo.InvariantCulture)]);
-            if (FilterBuilder.Audio(cc.Settings.AudioFilters, "fdkaac", plan.Channels) is { } af) ff.AddRange(["-af", af]);
+            if (FilterBuilder.Audio(AudioPlanner.FiltersFor(t, cc.Settings), "fdkaac", plan.Channels) is { } af) ff.AddRange(["-af", af]);
             ff.AddRange(["-c:a", "pcm_s16le", "-f", "wav", "-"]);
             var args = useQaac ? AudioPlanner.QaacArgs(plan, output, ToolArguments.Combine(cc.Settings.Arguments.Qaac, t.Arguments)) : AudioPlanner.FdkaacArgs(plan, output, ToolArguments.Combine(cc.Settings.Arguments.Fdkaac, t.Arguments));
             job.AppendLog($"{toolName}: {Path.GetFileName(input)} #{index} → AAC{(plan.HeAac ? " HE" : "")} {plan.Kbps}k {plan.Channels}ch");
@@ -446,7 +454,7 @@ public static class JobRunner
                 await PipeAsync(ctx, ff, tool, AudioPlanner.FdkaacArgs(lc, output, ToolArguments.Combine(cc.Settings.Arguments.Fdkaac, t.Arguments)), ct);
             }
             if (!File.Exists(output) || new FileInfo(output).Length == 0) throw new InvalidOperationException(toolName + " produced no output.");
-            result[$"{t.File}|{t.Stream}"] = output;
+            result[t.Key] = output;   // every copy of a source track has its own encode
         }
         return result;
     }
@@ -771,6 +779,8 @@ public static class JobRunner
         var map = new Dictionary<string, string>();
         foreach (var t in tracks.Where(t => t.Include && t.Kind == "audio" && Frameserver.IsVapourSynth(t.File)))
         {
+            // Copies of the same script output read the same rendered file (each is then encoded on its own).
+            if (map.ContainsKey(t.SourceKey)) continue;
             if (ctx.Tools.VsPipe is null) throw new InvalidOperationException(L.T("vspipe was not found: install VapourSynth (or set KNA_VSPIPE)."));
             Directory.CreateDirectory(workDir);
             var file = Path.Combine(workDir, $"script-audio-{t.Stream}.w64");
@@ -779,7 +789,7 @@ public static class JobRunner
             var r = await ProcessRunner.RunAsync(ctx.Tools.VsPipe, ["-o", t.Stream.ToString(System.Globalization.CultureInfo.InvariantCulture), "-c", "w64", t.File, file],
                 workingDirectory: workDir, timeout: TimeSpan.FromHours(6), ct: ct);
             if (r.ExitCode != 0) throw new InvalidOperationException(L.T("The VapourSynth script failed: {0}", r.StdErr.Trim()));
-            map[$"{t.File}|{t.Stream}"] = file;
+            map[t.SourceKey] = file;
             job.AppendLog($"Script audio (output {t.Stream}) rendered.");
         }
         return map;

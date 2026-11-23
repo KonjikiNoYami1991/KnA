@@ -28,6 +28,8 @@ public static class EditorModel
         var encoders = JobRunner.AudioEncodersFor(q.Settings.Capabilities, q.Tools);
         var media = new Dictionary<string, MediaInfo>(a.External) { [job.SourcePath] = a.Source };
         var args = s.Arguments;
+        // Job-wide audio filters (from a preset, the wizard or the assistant) become each track's own.
+        var jobFilters = s.AudioFilters;
 
         var tracks = new List<TrackPlan>();
         foreach (var t0 in ScriptTracks(job, s, a.Tracks, e.Tracks is null))
@@ -35,6 +37,13 @@ public static class EditorModel
             var t = t0;
             if (t.Kind == "audio" && p.UsesAudio)
             {
+                if (jobFilters.IsActive)
+                {
+                    t = t with { Filters = TrackTabs.MergeFilters(t.Filters, jobFilters) with { DownmixStereo = jobFilters.DownmixStereo } };
+                    // A copied multichannel track can't be downmixed: the profile chooses an encoder again.
+                    if (jobFilters.DownmixStereo && string.Equals(t.Output, nameof(AudioCodec.Copy), StringComparison.OrdinalIgnoreCase)
+                        && TrackPlanner.Lookup(t, media) is AudioStream { Channels: > 2 }) t = t with { Output = null };
+                }
                 if (string.IsNullOrEmpty(t.Output) || string.Equals(t.Output, nameof(AudioCodec.Auto), StringComparison.OrdinalIgnoreCase))
                 {
                     if (TrackPlanner.Lookup(t, media) is AudioStream st)
@@ -64,6 +73,14 @@ public static class EditorModel
                     _ => args.AudioFfmpeg,
                 };
                 if (!string.IsNullOrWhiteSpace(global)) t = t with { Arguments = ToolArguments.Combine(global, t.Arguments) };
+                // "Downmix to stereo" is the track's channel count.
+                if (t.Filters is { DownmixStereo: true } df)
+                    t = t with
+                    {
+                        Filters = df with { DownmixStereo = false },
+                        Channels = string.Equals(t.Output, nameof(AudioCodec.Copy), StringComparison.OrdinalIgnoreCase) ? t.Channels : Math.Min(t.Channels ?? 2, 2),
+                    };
+                if (t.Filters is { IsActive: false }) t = t with { Filters = null };
             }
             else if (t.Kind == "subtitle" && p.UsesTrackPlan && !t.Burn && string.IsNullOrEmpty(t.Output))
             {
@@ -89,6 +106,7 @@ public static class EditorModel
         {
             Container = p.EncodesVideo || p.IsRemux ? container : s.Container,
             Arguments = args with { AudioFfmpeg = null, Fdkaac = null, Qaac = null, Subtitles = null },
+            AudioFilters = p.UsesAudio ? new AudioFilterSettings() : s.AudioFilters,
             Encoder = ExplicitRate(q, s, a.Source.PrimaryVideo, container),
         };
         var edit = e with { Tracks = tracks };
@@ -190,7 +208,11 @@ public static class EditorModel
         var settings = s.Merge(preset.Settings with { PresetName = preset.Name }, parts);
         if (parts.HasFlag(PresetParts.Video)) settings = settings with { Container = preset.Settings.Container };
         if (parts.HasFlag(PresetParts.Subtitles) || parts.HasFlag(PresetParts.Tracks)) return (settings, e with { Tracks = null });
-        return (settings, ResetOutputs(e, parts.HasFlag(PresetParts.Audio) || parts.HasFlag(PresetParts.Video), parts.HasFlag(PresetParts.Video)));
+        var edit = ResetOutputs(e, parts.HasFlag(PresetParts.Audio) || parts.HasFlag(PresetParts.Video), parts.HasFlag(PresetParts.Video));
+        // The preset's audio filters replace the tracks' own (MaterializeAsync puts them on every track).
+        if (parts.HasFlag(PresetParts.Audio) && edit.Tracks is { } l)
+            edit = edit with { Tracks = l.Select(t => t.Kind == "audio" ? t with { Filters = null } : t).ToList() };
+        return (settings, edit);
     }
 
     /// <summary>The tracks with the chosen kinds' outputs back to "the profile decides" (filled in again by <see cref="MaterializeAsync"/>).</summary>
@@ -218,6 +240,15 @@ public static class EditorModel
         var audio = tracks.Where(t => t.Include && t.Kind == "audio").ToList();
         var subs = tracks.Where(t => t.Kind == "subtitle").ToList();
         var r = s;
+        // The tracks' audio filters are the preset's when every kept track has the same (stereo = downmix).
+        if (audio.Count > 0 && audio.Select(t => t.Filters ?? new AudioFilterSettings()).Distinct().Count() == 1)
+            r = r with
+            {
+                AudioFilters = (audio[0].Filters ?? new AudioFilterSettings()) with
+                {
+                    DownmixStereo = audio.All(t => t.Channels == 2 && !string.Equals(t.Output, nameof(AudioCodec.Copy), StringComparison.OrdinalIgnoreCase)),
+                },
+            };
         if (audio.Count > 0 && audio.Select(t => t.Output ?? "").Distinct().Count() == 1
             && Enum.TryParse<AudioCodec>(audio[0].Output, true, out var codec))
         {

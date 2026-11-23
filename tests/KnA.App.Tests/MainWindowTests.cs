@@ -138,6 +138,24 @@ public class MainWindowTests
         }
         editor.Close();
 
+        // Audio as a tab view: a duplicated track gets its own tab, codec, title and filters
+        var job0 = vm.Jobs[0].Job;
+        var keep = job0.Edit;
+        var planned = (await queue.AnalyzeAsync(job0)).Tracks.ToList();
+        int ai = planned.FindIndex(t => t.Kind == "audio" && t.Include);
+        planned[ai] = planned[ai] with { Output = "Opus", Encoder = "libopus", Filters = new AudioFilterSettings { Normalize = true } };
+        int copy = TrackTabs.Duplicate(planned, ai);
+        planned[copy] = TrackTabs.Retitle(planned[copy], planned[copy] with { Output = "Aac", Encoder = "aac", Filters = null });
+        await queue.SetEditAsync(job0.Id, keep with { Tracks = planned });
+        var tabsEditor = new JobEditorWindow(queue, job0, "audio") { Width = 1280, Height = 860 };
+        tabsEditor.Show();
+        await Pump(() => false, 3000);
+        Shot(tabsEditor, "app-05-editor-audio-copies.png");
+        var audioTabs = tabsEditor.GetVisualDescendants().OfType<TabControl>().Last();
+        Assert.Equal(3, audioTabs.Items.Count);   // two tracks and "+"
+        tabsEditor.Close();
+        await queue.SetEditAsync(job0.Id, keep);
+
         // standalone trim on a small window: only the cut, and the frame fits the visible area
         var trim = new JobEditorWindow(queue, vm.Jobs[0].Job, JobEditorTabs.TrimOnly) { Width = 960, Height = 640 };
         trim.Show();

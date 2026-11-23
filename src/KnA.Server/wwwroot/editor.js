@@ -1,5 +1,5 @@
 // Per-file editor (the pencil): preset, visual trim, video (encoder, rate control, every parameter on sub-tabs),
-// audio and subtitles (one sub-tab per kept track), filters (picture, GPU, VapourSynth/AviSynth), output, preview.
+// audio and subtitles (a tab view: one tab per output track, with +, ✕, ← → and duplicates), filters (picture, GPU, VapourSynth/AviSynth), output, preview.
 // It works on explicit settings only: when it opens, the server writes the profile's automatic choices into the
 // fields (/materialize); a profile or preset can only be imported. Every change is saved and re-validated (debounced).
 // Mirrors KnA.App/Views/JobEditorWindow.cs.
@@ -101,8 +101,8 @@ const srcPath = () => ed.analysis.files[0].path;
 const trackName = tp => `${tp.stream >= 0 ? "#" + tp.stream + " " : ""}${tp.codec ?? streamInfo(tp)?.codec ?? ""}${tp.language ? " " + tp.language : ""}${tp.file !== srcPath() ? " · " + tp.file.split(/[\\/]/).pop() : ""}`;
 
 /**
- * The tracks of one kind in the file and in the added files: tick to keep (untick to leave out any stream), order,
- * remove an added file. Video rows also carry their labels (video has no per-track pages).
+ * The video tracks, the attachments (Output tab) and, for demux, the tracks to extract: tick to keep, order, remove
+ * an added file. Video rows also carry their labels. Audio and subtitles of an output are tab views (trackTabs).
  */
 function trackList(kind) {
   const list = tracks(), p = profileOf(ed.settings.profile);
@@ -111,14 +111,13 @@ function trackList(kind) {
   const add = kind === "attachment" ? `<button class="btn sm" data-a="add-att"><svg><use href="#i-plus"/></svg><span>${esc(t("Add attachments…"))}</span></button>`
     : `<button class="btn sm" data-a="add-ext"><svg><use href="#i-plus"/></svg><span>${esc(t("Add external files…"))}</span></button>
        <button class="btn sm" data-a="upload-ext"><svg><use href="#i-upload"/></svg><span>${esc(t("Upload from this device…"))}</span></button>`;
-  const video = kind === "video", burnCol = kind === "subtitle" && p.usesVideoFilters;
+  const video = kind === "video";
   const externals = ed.edit.externalFiles ?? [];
   return `<div class="section"><h3 class="row" style="justify-content:space-between;flex-wrap:wrap"><span class="kind ${kind}">${esc(title)}</span><span class="row">${add}</span></h3>
-    ${kind === "audio" && !p.usesAudio && !p.isDemux ? `<p class="issue warn">${esc(t("This profile has no audio output."))}</p>` : ""}
     ${!rows.length ? `<p class="muted small">${esc(kind === "attachment" ? t("No attachments. Fonts, covers or any other file can be added.") : t("No tracks of this kind."))}</p>` : `
     <table class="tracks"><thead><tr><th>${esc(t("Use"))}</th><th>${esc(t("Stream"))}</th>
       ${video ? `<th>${esc(t("Language"))}</th><th class="hide-sm">${esc(t("Title"))}</th><th>${esc(t("Delay (ms)"))}</th>${p.encodesVideo || p.isRemux ? `<th>${esc(t("Output"))}</th>` : ""}` : ""}
-      ${burnCol ? `<th>${esc(t("Burn"))}</th>` : ""}<th></th></tr></thead><tbody>
+<th></th></tr></thead><tbody>
     ${rows.map(({ tp, i }) => {
       const si = streamInfo(tp), standalone = kind === "attachment" && tp.stream < 0;
       const removable = standalone || (tp.file !== srcPath() && externals.includes(tp.file));
@@ -129,13 +128,11 @@ function trackList(kind) {
           <td class="hide-sm"><input data-f="title" value="${esc(tp.title ?? "")}"></td>
           <td><input class="delay" type="number" step="10" data-f="delayMs" value="${tp.delayMs || 0}"></td>
           ${p.encodesVideo || p.isRemux ? `<td><select data-f="output"><option value="" ${tp.output ? "" : "selected"}>${esc(t("Encode (Video tab settings)"))}</option><option value="copy" ${(tp.output ?? "").toLowerCase() === "copy" ? "selected" : ""}>${esc(t("Copy (no re-encoding)"))}</option></select></td>` : ""}` : ""}
-        ${burnCol ? `<td><input type="radio" name="burn" data-f="burn" ${tp.burn ? "checked" : ""}></td>` : ""}
         <td class="row"><button class="btn icon ghost sm" data-a="up" title="${esc(t("Move up"))}"><svg><use href="#i-up"/></svg></button>
           <button class="btn icon ghost sm" data-a="down" title="${esc(t("Move down"))}"><svg><use href="#i-down"/></svg></button>
           ${removable ? `<button class="btn icon ghost sm" data-a="rm-track" title="${esc(standalone ? t("Remove") : t("Remove the added file ({0})", tp.file.split(/[\\/]/).pop()))}"><svg><use href="#i-x"/></svg></button>` : ""}</td>
       </tr>`;
     }).join("")}</tbody></table>`}
-    ${burnCol && rows.some(r => r.tp.burn) ? `<button class="btn sm ghost" data-a="no-burn">${esc(t("Don't burn any subtitle"))}</button>` : ""}
     ${kind === "attachment" && !p.isDemux && rows.length ? `<p class="muted small">${esc(t("Untick an attachment of the file to leave it out; added files can be removed with ✕. Attachments need MKV."))}</p>` : ""}
     ${p.isDemux ? `<p class="muted small">${esc(t("Demux: the ticked tracks, attachments and chapters are extracted to separate files."))}</p>` : ""}
   </div>`;
@@ -155,7 +152,6 @@ function trackListChange(e) {
   if (!tr || !f || !(e.target.type === "checkbox" || e.target.type === "radio" || e.target.tagName === "SELECT")) return false;
   const l = materialize(), tp = l[+tr.dataset.i];
   if (e.target.tagName === "SELECT") tp[f] = e.target.value || null;
-  else if (f === "burn") { l.forEach(x => { if (x.kind === "subtitle") { x.burn = x === tp; if (x === tp) x.include = false; } }); ed.trackSub.subtitle = +tr.dataset.i; }
   else { tp[f] = e.target.checked; if (f === "include" && tp.include) tp.burn = false; }
   saveAndRender();
   return true;
@@ -165,7 +161,6 @@ async function trackListClick(b) {
   if (a === "add-ext") { pickExternal(); return true; }
   if (a === "add-att") { pickAttachments(); return true; }
   if (a === "upload-ext") { await saveNow(); pickFiles(null, ed.id); return true; }
-  if (a === "no-burn") { materialize().forEach(x => { x.burn = false; }); saveAndRender(); return true; }
   const tr = b.closest("tr[data-i]"); if (!tr) return false;
   const l = materialize(), i = +tr.dataset.i, k = l[i].kind;
   if (a === "rm-track") {
@@ -207,14 +202,93 @@ function trackFieldChange(e, i, rerenderOn = []) {
   return true;
 }
 
-/** Sub-tabs, one per kept track of a kind; the last one shown is remembered. */
+// ---------------------------------------------------------------- track tab views (mirror of KnA.Core/Queue/TrackTabs.cs)
+const isActive = tp => tp.include || tp.burn;
+const activeOf = (l, kind) => l.map((tp, i) => ({ tp, i })).filter(x => x.tp.kind === kind && isActive(x.tp)).map(x => x.i);
+const inactiveOf = (l, kind) => l.map((tp, i) => ({ tp, i })).filter(x => x.tp.kind === kind && !isActive(x.tp) && !x.tp.copy).map(x => x.i);
+const audioShort = { Copy: "copy", Aac: "AAC", HeAac: "HE-AAC", Ac3: "AC-3", Eac3: "E-AC-3", Flac: "FLAC", Alac: "ALAC", TrueHd: "TrueHD", Dts: "DTS", Mp3: "MP3", Pcm16: "PCM 16", Pcm24: "PCM 24", Pcm32Float: "PCM 32f" };
+function outputLabel(tp) {
+  if (tp.kind === "subtitle") {
+    if (tp.burn) return t("burned");
+    const o = (tp.output ?? "copy").toLowerCase();
+    return { copy: t("copy"), srt: "SRT", ass: "ASS", webvtt: "WebVTT", mov_text: "mov_text", ocr: "OCR" }[o] ?? o;
+  }
+  if (tp.kind !== "audio") return tp.output ?? "";
+  const c = Object.keys(audioShort).concat(["Opus", "Vorbis", "WavPack"]).find(x => x.toLowerCase() === (tp.output ?? "").toLowerCase());
+  if (!c) return t("automatic");
+  return c === "Copy" ? t("copy") : audioShort[c] ?? c;
+}
+function tabLabel(tp) {
+  let s = (tp.stream >= 0 ? "#" + tp.stream : "") + (tp.language ? " " + tp.language : "");
+  if (tp.file !== srcPath()) s += " · " + tp.file.split(/[\\/]/).pop();
+  s = s.trim() + " → " + outputLabel(tp);
+  return s.length > 40 ? s.slice(0, 39) + "…" : s;
+}
+const langGroups = [["it", "ita"], ["en", "eng"], ["ja", "jpn"], ["fr", "fre", "fra"], ["de", "ger", "deu"], ["es", "spa"], ["pt", "por"], ["ru", "rus"], ["zh", "chi", "zho"],
+  ["ko", "kor"], ["nl", "dut", "nld"], ["pl", "pol"], ["sv", "swe"], ["no", "nor", "nob", "nno"], ["da", "dan"], ["fi", "fin"], ["cs", "cze", "ces"], ["el", "gre", "ell"],
+  ["tr", "tur"], ["ar", "ara"], ["he", "heb"], ["hu", "hun"], ["ro", "rum", "ron"], ["uk", "ukr"], ["hi", "hin"], ["th", "tha"], ["vi", "vie"], ["id", "ind"]];
+function nativeName(code) {
+  if (!code || code.toLowerCase() === "und") return null;
+  const two = langGroups.find(g => g.includes(code.toLowerCase()))?.[0] ?? code.toLowerCase();
+  try { const n = new Intl.DisplayNames([two], { type: "language" }).of(two); return n ? n[0].toLocaleUpperCase(two) + n.slice(1) : code; } catch { return code; }
+}
+function copyTitle(tp) {
+  const name = nativeName(tp.language) ?? (tp.title || null), codec = outputLabel(tp);
+  return name ? `${name} (${codec})` : codec;
+}
+/** A codec/format change on a copy: a title still written by KnA follows the new codec. */
+function retitle(before, tp) {
+  if (tp.copy > 0 && outputLabel(before) !== outputLabel(tp) && (!before.title || before.title === copyTitle(before))) tp.title = copyTitle(tp);
+}
+function duplicateTrack(l, i) {
+  const tp = l[i];
+  const copy = Math.max(...l.filter(x => x.file === tp.file && x.stream === tp.stream && x.kind === tp.kind).map(x => x.copy ?? 0)) + 1;
+  const dup = { ...cloneSettings(tp), copy, include: true, burn: false, default: false };
+  dup.title = copyTitle(dup);
+  l.splice(i + 1, 0, dup);
+  return i + 1;
+}
+function removeTrack(l, i) {
+  if (l[i].copy > 0) l.splice(i, 1); else { l[i].include = false; l[i].burn = false; }
+}
+function activateTrack(l, i) {
+  const [tp] = l.splice(i, 1);
+  tp.include = true; tp.burn = false;
+  const act = activeOf(l, tp.kind), at = act.length ? act[act.length - 1] + 1 : Math.min(i, l.length);
+  l.splice(at, 0, tp);
+  return at;
+}
+function moveTrack(l, i, delta) {
+  const act = activeOf(l, l[i].kind), target = act[act.indexOf(i) + delta];
+  if (target == null) return i;
+  [l[i], l[target]] = [l[target], l[i]];
+  return target;
+}
+const burnTrack = (l, i) => l.forEach((x, j) => { if (x.kind === "subtitle") { x.burn = j === i; if (j === i) x.include = false; } });
+
+/**
+ * The Audio / Subtitles tab view: one tab per active track (tabs even with a single track), "+" to add a track of
+ * the file or of an added file, duplicate the current one or add external files; ✕ on a tab removes it; ← → order
+ * the tracks (= order in the output file).
+ */
 function trackTabs(kind) {
-  const rows = tracks().map((tp, i) => ({ tp, i })).filter(x => x.tp.kind === kind && (x.tp.include || x.tp.burn));
-  if (!rows.length) return { rows, html: `<p class="muted small">${esc(kind === "audio" ? t("No audio track kept: tick one above.") : t("No subtitle track kept or burned: tick one above."))}</p>`, current: null };
-  let current = rows.find(r => r.i === ed.trackSub[kind]) ?? rows[0];
-  ed.trackSub[kind] = current.i;
-  const nav = `<nav class="tabs subtabs" data-subtabs="${kind}">${rows.map(r => `<button type="button" data-st="${r.i}" class="${r.i === current.i ? "on" : ""}">${r.tp.burn ? "🔥 " : ""}${esc(trackName(r.tp))}</button>`).join("")}</nav>`;
-  return { rows, html: nav, current };
+  const l = tracks(), act = activeOf(l, kind), inact = inactiveOf(l, kind);
+  const current = act.includes(ed.trackSub[kind]) ? ed.trackSub[kind] : act[0] ?? null;
+  ed.trackSub[kind] = current;
+  const menu = `<div class="track-add" hidden>${inact.map(i => { const tp = l[i]; return `<button type="button" data-a="tab-add" data-i="${i}">${esc(t("Add {0}", trackName(tp) + (tp.title ? " · " + tp.title : "") + (streamInfo(tp)?.details ? " · " + streamInfo(tp).details : "")))}</button>`; }).join("")}
+    ${current != null ? `${inact.length ? "<hr>" : ""}<button type="button" data-a="tab-dup">${esc(t("Duplicate the current track"))}</button>` : ""}
+    <hr><button type="button" data-a="add-ext">${esc(t("Add external files…"))}</button><button type="button" data-a="upload-ext">${esc(t("Upload from this device…"))}</button></div>`;
+  const plus = `<span class="track-plus"><button type="button" class="btn sm" data-a="tab-plus" title="${esc(kind === "audio" ? t("Add an audio track") : t("Add a subtitle track"))}"><b>+</b></button>${menu}</span>`;
+  if (current == null)
+    return { html: `<p class="muted small">${esc(kind === "audio" ? t("No audio track in the output: add one with +.") : t("No subtitle track in the output: add one with +."))}</p>${plus}`, current: null };
+  const nav = `<nav class="tabs subtabs track-tabs" data-subtabs="${kind}">${act.map(i => { const tp = l[i]; return `<button type="button" data-st="${i}" class="${i === current ? "on" : ""}" title="${esc(tp.file)}">${tp.burn ? "🔥 " : ""}${esc(tabLabel(tp))}<span class="tab-x" data-a="tab-rm" data-i="${i}" title="${esc(tp.copy > 0 ? t("Delete this copy") : t("Remove from the output (it can be added again with +)"))}">✕</span></button>`; }).join("")}${plus}</nav>`;
+  const tp = l[current], pos = act.indexOf(current);
+  const bar = `<div class="row track-bar" style="flex-wrap:wrap;margin-top:10px">
+    <button class="btn sm ghost" data-a="tab-left" ${pos > 0 ? "" : "disabled"} title="${esc(t("Earlier in the output file"))}">←</button>
+    <button class="btn sm ghost" data-a="tab-right" ${pos < act.length - 1 ? "" : "disabled"} title="${esc(t("Later in the output file"))}">→</button>
+    <button class="btn sm" data-a="tab-dup" title="${esc(kind === "audio" ? t("The same source track once more, with its own settings (e.g. in Opus and in Vorbis).") : t("The same source track once more, with its own settings (e.g. as ASS and as SRT)."))}">${esc(t("Duplicate"))}</button>
+    <span class="muted small">${esc(t("Track {0} of {1} in the output", pos + 1, act.length) + (tp.copy > 0 ? " · " + t("copy {0} of #{1}", tp.copy, tp.stream) : "") + " · " + trackName(tp) + (streamInfo(tp)?.details ? " · " + streamInfo(tp).details : ""))}</span></div>`;
+  return { html: nav + bar, current: { tp, i: current } };
 }
 
 function pickAttachments() {
@@ -690,40 +764,79 @@ let audioEncoders = null;
 
 async function renderStreams(body, kind) {
   const p = profileOf(ed.settings.profile);
+  // Demux: the tracks to extract are ticked in a list.
+  if (p.isDemux) {
+    body.innerHTML = trackList(kind);
+    body.oninput = e => trackListInput(e);
+    body.onchange = e => trackListChange(e);
+    body.onclick = guard(async e => { const b = e.target.closest("[data-a]"); if (b) await trackListClick(b); });
+    return;
+  }
+  if (kind === "audio" ? !p.usesAudio : !(p.encodesVideo || p.isRemux || p.isImages)) {
+    body.innerHTML = `<p class="issue warn">${esc(kind === "audio" ? t("This profile has no audio output.") : t("This profile has no subtitle output."))}</p>`;
+    return;
+  }
   if (kind === "audio" && !audioEncoders) { try { audioEncoders = await api("GET", "/api/audio/encoders"); } catch { audioEncoders = {}; } }
-  const tabs = (kind === "audio" ? p.usesAudio : p.encodesVideo || p.isRemux || p.isImages) ? trackTabs(kind) : { html: "", current: null };
+  const tabs = trackTabs(kind);
   const cur = tabs.current;
-  body.innerHTML = `${trackList(kind)}${tabs.html}<div id="track-page" style="margin-top:12px">${cur ? (kind === "audio" ? audioPage(cur.tp) : subtitlePage(cur.tp)) : ""}</div>
-    ${kind === "audio" ? `<p class="muted small">${esc(t("Volume, normalisation, downmix and sample rate of every track: Filters tab."))}</p>` : ""}`;
+  body.innerHTML = `${tabs.html}<div id="track-page" style="margin-top:12px">${cur ? (kind === "audio" ? audioPage(cur.tp) : subtitlePage(cur.tp)) : ""}</div>`;
   const paramsEl = $("[data-track-params]", body);
   if (cur && paramsEl) mountFlat(paramsEl, paramsEl.dataset.trackParams, cmdModel(() => tracks()[cur.i].arguments, v => { materialize()[cur.i].arguments = v; save(); }), paramsEl.dataset.example);
+  const setFilter = (k, v) => {
+    const tp = materialize()[cur.i], f = { gainDb: 0, normalize: false, downmixStereo: false, sampleRate: null, custom: null, ...(tp.filters ?? {}), [k]: v };
+    const on = Math.abs(f.gainDb || 0) > 0.01 || f.normalize || f.downmixStereo || f.sampleRate > 0 || (f.custom ?? "").trim();
+    tp.filters = on ? f : null;
+    save();
+  };
   body.oninput = e => {
-    if (trackListInput(e)) return;
-    if (cur && e.target.dataset.tf && e.target.type !== "checkbox" && e.target.tagName !== "SELECT" && !["bitrate"].includes(e.target.dataset.tf)) trackFieldChange(e, cur.i);
+    if (!cur) return;
+    const af = e.target.dataset.af;
+    if (af === "gainDb") { const v = Number(e.target.value); $("#gain-val", body).textContent = v.toFixed(1) + " dB"; return setFilter(af, v); }
+    if (af === "custom") return setFilter(af, e.target.value.trim() ? e.target.value : null);
+    if (e.target.dataset.tf && e.target.type !== "checkbox" && e.target.tagName !== "SELECT" && !["bitrate"].includes(e.target.dataset.tf)) trackFieldChange(e, cur.i);
   };
   body.onchange = e => {
-    if (trackListChange(e)) return;
     if (!cur) return;
+    const af = e.target.dataset.af;
+    if (af === "normalize") return setFilter(af, e.target.checked);
+    if (af === "sampleRate") return setFilter(af, e.target.value === "" ? null : Number(e.target.value));
+    if (af) return;
     const f = e.target.dataset.tf;
     if (f === "codec") {
-      const tp = materialize()[cur.i], v = e.target.value;
+      const tp = materialize()[cur.i], before = { ...tp }, v = e.target.value;
       tp.output = v; tp.encoder = v === "Copy" ? null : audioEncoders?.[v]?.[0]?.value ?? null; tp.arguments = null;
       if (v === "Copy" || lossless(v)) tp.bitrate = null;
+      if (v === "Copy") { tp.filters = null; tp.channels = null; }   // a copied track is not filtered
+      retitle(before, tp);
       return saveAndRender();
     }
     if (f === "encoder") { const tp = materialize()[cur.i]; tp.encoder = e.target.value; tp.arguments = null; return saveAndRender(); }
-    if (f === "format") { const tp = materialize()[cur.i]; tp.output = e.target.value; tp.arguments = null; return saveAndRender(); }
+    if (f === "format") { const tp = materialize()[cur.i], before = { ...tp }; tp.output = e.target.value; tp.arguments = null; retitle(before, tp); return saveAndRender(); }
     if (f && (e.target.type === "checkbox" || e.target.tagName === "SELECT" || f === "bitrate")) trackFieldChange(e, cur.i, ["channels"]);
   };
   body.onclick = guard(async e => {
+    const b = e.target.closest("[data-a]");
     const st = e.target.closest("[data-st]");
-    if (st) { ed.trackSub[kind] = +st.dataset.st; return renderStreams(body, kind); }
-    const b = e.target.closest("[data-a]"); if (!b) return;
-    if (await trackListClick(b)) return;
+    if (st && !b) { ed.trackSub[kind] = +st.dataset.st; return renderStreams(body, kind); }
+    if (!b) { $$(".track-add", body).forEach(m => { m.hidden = true; }); return; }
     const a = b.dataset.a;
-    if (a === "burn-this" && cur) { materialize().forEach((x, j) => { if (x.kind === "subtitle") { x.burn = j === cur.i; if (j === cur.i) x.include = false; } }); return saveAndRender(); }
-    if (a === "keep-track" && cur) { const tp = materialize()[cur.i]; tp.burn = false; tp.include = true; tp.output = null; return materializeNow(); }
-    if (a === "ocr" && cur) {
+    if (a === "tab-plus") { const m = $(".track-add", body); m.hidden = !m.hidden; return; }
+    if (a === "add-ext") { pickExternal(); return; }
+    if (a === "upload-ext") { await saveNow(); pickFiles(null, ed.id); return; }
+    if (a === "tab-add") { ed.trackSub[kind] = activateTrack(materialize(), +b.dataset.i); return materializeNow(); }
+    if (a === "tab-rm") {
+      const l = materialize(), i = +b.dataset.i, pos = activeOf(l, kind).indexOf(i);
+      removeTrack(l, i);
+      const left = activeOf(l, kind);
+      ed.trackSub[kind] = left.length ? left[Math.min(pos, left.length - 1)] : null;
+      return saveAndRender();
+    }
+    if (!cur) return;
+    if (a === "tab-dup") { ed.trackSub[kind] = duplicateTrack(materialize(), cur.i); return saveAndRender(); }
+    if (a === "tab-left" || a === "tab-right") { ed.trackSub[kind] = moveTrack(materialize(), cur.i, a === "tab-left" ? -1 : 1); renderTab(); return save(); }
+    if (a === "burn-this") { burnTrack(materialize(), cur.i); return saveAndRender(); }
+    if (a === "keep-track") { const tp = materialize()[cur.i]; tp.burn = false; tp.include = true; tp.output = null; return materializeNow(); }
+    if (a === "ocr") {
       await saveNow();
       const tp = tracks()[cur.i];
       await openOcr(ed.id, { ...tp, codec: tp.codec ?? streamInfo(tp)?.codec }, async () => {
@@ -746,11 +859,24 @@ function audioPage(tp) {
       <label class="field"><span>${esc(t("Codec"))}</span><select data-tf="codec">${codecs.map(c => opt(c.value, c.label + (c.value === "Copy" || audioEncoders?.[c.value]?.length ? "" : " — " + t("no encoder here")), codec, c.value !== "Copy" && !audioEncoders?.[c.value]?.length)).join("")}</select></label>
       ${copy ? "" : `<label class="field"><span>${esc(t("Encoder"))}</span><select data-tf="encoder">${available.map(x => opt(x.value, x.label, enc)).join("")}</select></label>
       ${lossless(codec) ? "" : `<label class="field"><span>${esc(t("Bitrate (kb/s)"))}</span><input type="number" min="0" max="1536" step="16" data-tf="bitrate" value="${tp.bitrate ?? ""}" placeholder="${esc(t("auto"))}">
-        <small class="muted">${esc(t("Per stereo pair (scaled for more channels); 0 = KnA's value for the codec."))}</small></label>`}
-      <label class="field"><span>${esc(t("Channels"))}</span><select data-tf="channels">${[["", t("As the source")], ["8", "7.1"], ["6", "5.1"], ["2", t("Stereo")], ["1", t("Mono")]].map(([v, l]) => opt(v, l, tp.channels ?? "")).join("")}</select></label>`}
+        <small class="muted">${esc(t("Per stereo pair (scaled for more channels); 0 = KnA's value for the codec."))}</small></label>`}`}
     </div>
-    ${copy ? `<p class="muted small">${esc(t("The track is copied as it is: no encoder, no audio filter."))}</p>`
-      : enc ? `<h3>${esc(t("All {0} parameters", enc))}</h3><div data-track-params="audio:${esc(enc)}" data-example="${esc(enc === "fdkaac" ? "--afterburner 1" : enc === "qaac" ? "--quality 2" : "-aac_coder twoloop")}"></div>` : ""}`;
+    ${copy ? `<p class="muted small">${esc(t("The track is copied as it is: no encoder, no audio filter."))}</p>` : audioFiltersHtml(tp, opt)}
+    ${copy ? "" : enc ? `<h3>${esc(t("All {0} parameters", enc))}</h3><div data-track-params="audio:${esc(enc)}" data-example="${esc(enc === "fdkaac" ? "--afterburner 1" : enc === "qaac" ? "--quality 2" : "-aac_coder twoloop")}"></div>` : ""}`;
+}
+
+/** The track's own audio filters: volume, loudness normalisation, channels (downmix), sample rate, custom. */
+function audioFiltersHtml(tp, opt) {
+  const f = tp.filters ?? {};
+  return `<div class="section"><h3>${esc(t("Audio filters of this track"))}</h3>
+    <div class="grid3">
+      <label class="field"><span>${esc(t("Volume"))}: <b id="gain-val">${(f.gainDb ?? 0).toFixed(1)} dB</b></span><input type="range" min="-20" max="20" step="0.5" data-af="gainDb" value="${f.gainDb ?? 0}"></label>
+      <label class="field"><span>${esc(t("Channels"))}</span><select data-tf="channels">${[["", t("As the source")], ["8", "7.1"], ["6", "5.1"], ["2", t("Stereo (downmix)")], ["1", t("Mono")]].map(([v, l]) => opt(v, l, tp.channels ?? "")).join("")}</select></label>
+      <label class="field"><span>${esc(t("Sample rate"))}</span><select data-af="sampleRate">${[["", t("Keep original")], ["44100", "44.1 kHz"], ["48000", "48 kHz"], ["96000", "96 kHz"]].map(([v, l]) => opt(v, l, f.sampleRate ?? "")).join("")}</select></label>
+    </div>
+    <label class="toggle"><input type="checkbox" data-af="normalize" ${f.normalize ? "checked" : ""}><span class="switch"></span><span>${esc(t("Normalize loudness (EBU R128)"))}</span></label>
+    <label class="field"><span>${esc(t("Custom audio filters (advanced)"))}</span><input class="mono" data-af="custom" value="${esc(f.custom ?? "")}" placeholder="highpass=f=80"></label>
+  </div>`;
 }
 
 function subtitlePage(tp) {
@@ -786,7 +912,7 @@ function subtitlePage(tp) {
 let catalog = null;
 
 function renderFilters(body) {
-  const v = ed.settings.videoFilters, a = ed.settings.audioFilters, o = state.options;
+  const v = ed.settings.videoFilters, o = state.options;
   const crop = v.crop ?? { left: 0, top: 0, right: 0, bottom: 0 };
   const rot = ed.analysis.rotation || 0;
   const p = profileOf(ed.settings.profile);
@@ -825,17 +951,6 @@ function renderFilters(body) {
           <label class="field"><span>${esc(t("Frame rate"))}</span><input type="number" step="0.001" min="1" data-v="fps" value="${v.fps ?? ""}" placeholder="${esc(t("Keep original"))}"></label>
           <label class="field"><span>${esc(t("Custom video filters (advanced)"))}</span><input class="mono" data-v="custom" value="${esc(v.custom ?? "")}" placeholder="eq=saturation=1.1"></label>` : ""}
         </div>
-        <div class="section"><h3>${esc(t("Audio"))}</h3>
-          ${!p.usesAudio ? `<p class="issue warn">${esc(t("This profile has no audio output."))}</p>` : ""}
-          <label class="field"><span>${esc(t("Volume"))}: <b id="gain-val">${(a.gainDb ?? 0).toFixed(1)} dB</b></span><input type="range" min="-20" max="20" step="0.5" data-a2="gainDb" value="${a.gainDb ?? 0}"></label>
-          <label class="toggle"><input type="checkbox" data-a2="normalize" ${a.normalize ? "checked" : ""}><span class="switch"></span><span>${esc(t("Normalize loudness (EBU R128)"))}</span></label>
-          <label class="toggle"><input type="checkbox" data-a2="downmixStereo" ${a.downmixStereo ? "checked" : ""}><span class="switch"></span><span>${esc(t("Downmix to stereo"))}</span></label>
-          <label class="field"><span>${esc(t("Sample rate"))}</span><select data-a2="sampleRate">
-            ${[["", t("Keep original")], ["44100", "44.1 kHz"], ["48000", "48 kHz"], ["96000", "96 kHz"]].map(([vv, l]) => `<option value="${vv}" ${String(a.sampleRate ?? "") === vv ? "selected" : ""}>${esc(l)}</option>`).join("")}
-          </select></label>
-          <label class="field"><span>${esc(t("Custom audio filters (advanced)"))}</span><input class="mono" data-a2="custom" value="${esc(a.custom ?? "")}" placeholder="highpass=f=80"></label>
-          <p class="muted small">${esc(t("Audio filters force re-encoding of the affected tracks."))}</p>
-        </div>
       </div>
       <div>
         ${p.usesVideoFilters && p.encodesVideo && !p.isImages ? `<div class="section"><h3>${esc(t("GPU filters"))}</h3>
@@ -872,11 +987,6 @@ function renderFilters(body) {
     } else if (el.dataset.c) {
       const c = { ...(ed.settings.videoFilters.crop ?? { left: 0, top: 0, right: 0, bottom: 0 }), [el.dataset.c]: Number(el.value) || 0 };
       ed.settings.videoFilters = { ...ed.settings.videoFilters, crop: c };
-    } else if (el.dataset.a2) {
-      let val = el.type === "checkbox" ? el.checked : el.value;
-      if (el.dataset.a2 === "gainDb") { val = Number(val); $("#gain-val").textContent = val.toFixed(1) + " dB"; }
-      if (el.dataset.a2 === "sampleRate") val = val === "" ? null : Number(val);
-      ed.settings.audioFilters = { ...ed.settings.audioFilters, [el.dataset.a2]: val };
     } else return;
     save();
   };

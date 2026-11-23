@@ -68,7 +68,7 @@ All points below are confirmed by the user (required, not optional).
 - **Proxy SSO**: accept an auth header from a trusted proxy (Authelia/Authentik style) as the logged-in user.
 - **Migration**: existing `KNA_PASSWORD` installs migrate smoothly (Docker, Linux, Windows service).
 
-## 7. Editor: Audio and Subtitles as tab views (confirmed by the user)
+## 7. ✅ Editor: Audio and Subtitles as tab views (confirmed by the user)
 
 Do this before item 8. Desktop and web.
 

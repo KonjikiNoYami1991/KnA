@@ -396,7 +396,7 @@ app.MapPost("/api/ocr/sessions", async (OcrOpenRequest req, CancellationToken ct
 {
     var j = queue.Find(req.JobId) ?? throw new KeyNotFoundException();
     if (!browser.IsAllowed(req.File)) return Results.Problem(L.T("Outside the allowed media roots: {0}", req.File), statusCode: 403);
-    var s = await KnA.Core.Ocr.OcrSession.OpenAsync(queue, j, req.File, req.Stream, ct);
+    var s = await KnA.Core.Ocr.OcrSession.OpenAsync(queue, j, req.File, req.Stream, ct, req.Copy);
     queue.OcrSessions[s.Id] = s;
     return Results.Ok(new { s.Id, count = s.Lines.Count, s.Language, s.Codec, options = queue.Settings.Ocr });
 });

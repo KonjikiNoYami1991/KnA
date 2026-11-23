@@ -359,6 +359,29 @@ public class EditorMaterializeTests(FeatureFixture fx) : IClassFixture<FeatureFi
         Assert.Equal("Ac3", e3.Tracks!.Single(t => t.Kind == "audio" && t.Include).Output);
         Assert.Contains("-c:a:0 ac3", a3.CommandLine);
     }
+
+    [Fact]
+    public async Task Job_wide_audio_filters_move_onto_the_tracks()
+    {
+        if (fx.Tools is null) return;
+        using var q = new QueueService(new SettingsStore(Path.Combine(fx.Dir, "data-editor-filters")), restoreQueue: false);
+        var job = Assert.Single(q.AddPaths([fx.Black], new JobSettings
+        {
+            Profile = ProfileKind.UniversalMkv, Codec = VideoCodec.H264, Resolution = 0, Subtitles = SubtitleMode.None,
+            AudioFilters = new AudioFilterSettings { Normalize = true, DownmixStereo = true, GainDb = -2 },
+        }));
+        var (s, e, a) = await EditorModel.MaterializeAsync(q, job.Id, job.Settings, job.Edit);
+        var audio = e.Tracks!.Single(t => t.Kind == "audio" && t.Include);
+        Assert.False(s.AudioFilters.IsActive);                         // nothing job-wide is left behind the fields
+        Assert.True(audio.Filters!.Normalize);
+        Assert.Equal(-2, audio.Filters.GainDb);
+        Assert.False(audio.Filters.DownmixStereo);
+        Assert.NotEqual("Copy", audio.Output);                          // filtered: encoded
+        Assert.True(audio.Channels is null or <= 2);
+        Assert.Contains("loudnorm", a.CommandLine);
+        // And back: the preset made from the editor applies the same filters to other files.
+        Assert.True(EditorModel.ForPreset(s, e).AudioFilters.Normalize);
+    }
 }
 
 public class AiSetupTests

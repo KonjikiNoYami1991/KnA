@@ -435,6 +435,22 @@ public sealed record TrackPlan
     /// syntax; applied after the job-wide ones in <see cref="ToolArguments"/>.
     /// </summary>
     public string? Arguments { get; init; }
+    /// <summary>
+    /// Audio filters of this track (volume, loudness, sample rate, custom); null = the job's
+    /// <see cref="JobSettings.AudioFilters"/> (presets, automatic plans). The editor always sets them per track.
+    /// </summary>
+    public AudioFilterSettings? Filters { get; init; }
+    /// <summary>
+    /// 0 = the source stream itself, 1, 2… = duplicates of the same stream with their own settings (e.g. the same
+    /// audio in Opus and in Vorbis). Together with <see cref="File"/> and <see cref="Stream"/> it identifies the track.
+    /// </summary>
+    public int Copy { get; init; }
+
+    /// <summary>Identity of the output track: the same source stream can be used several times (<see cref="Copy"/>).</summary>
+    [JsonIgnore] public string Key => Copy == 0 ? $"{File}|{Stream}" : $"{File}|{Stream}|{Copy}";
+
+    /// <summary>The source stream (shared by all its copies).</summary>
+    [JsonIgnore] public string SourceKey => $"{File}|{Stream}";
 
     [JsonIgnore] public bool CopyVideo => Kind == "video" && string.Equals(Output, "copy", StringComparison.OrdinalIgnoreCase);
 

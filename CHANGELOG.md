@@ -26,9 +26,16 @@
   encoders (x264/x265/SVT-AV1, NVENC, QSV, AMF, VA-API, Vulkan, VideoToolbox) and rigaya's NVEncC / QSVEncC / VCEEncC
   — read from its own help, each with its value field and description. Options KnA sets itself are not listed twice.
 - **GPU encoders only when the GPU is there** (the hardware test must have passed on it; on the server, its own GPUs).
-- **Audio**: one sub-tab per kept track: codec, the exact encoder (qaac, libfdk_aac, AudioToolbox, fdkaac, FFmpeg's
-  aac, libopus…), bitrate, channels and every parameter of that encoder. **Subtitles**: the same, with format, burning
-  and the OCR editor.
+- **Audio and Subtitles are tab views**: one tab per track of the output file (also with a single track), labelled with
+  what it becomes ("#1 ita → Opus"); no track lists left. Each audio tab holds everything about its track: language,
+  title, delay, default/forced, codec, the exact encoder (qaac, libfdk_aac, AudioToolbox, fdkaac, FFmpeg's aac,
+  libopus…), bitrate, every parameter of that encoder only, and **its own audio filters** (volume, loudness
+  normalisation, channels/downmix, sample rate, custom) — no longer job-wide in the Filters tab. **+** next to the tabs
+  adds a track of the file or of an added file, duplicates the current one or adds external files; **✕** on a tab
+  removes it; **← →** set the order in the output file. **Duplicate track**: the same source track twice with
+  independent settings (e.g. Italian in Opus and in Vorbis, a subtitle as ASS and as SRT), the copy titled with its
+  codec ("Italiano (Vorbis)"); fdkaac/qaac, VapourSynth script audio and OCR handle every copy. Subtitles: the same
+  structure, with format, burning and the OCR editor in each tab. Desktop and web.
 - **Filters**: the real **GPU filters** of the encoder — FFmpeg's (scale_cuda, vpp_qsv, denoise_vaapi, libplacebo…,
   frames uploaded to the GPU right before the encoder) or rigaya's --vpp-* — and a **VapourSynth / AviSynth+ filter
   list** like StaxRip's (QTGMC, Bwdif, IVTC, KNLMeansCL, DFTTest, SMDegrain, neo_f3kdb, CAS, LSFmod, AWarpSharp2,
@@ -143,9 +150,17 @@
   rigaya — letti dal suo help, ognuno con il suo campo e la sua descrizione. Le opzioni che KnA imposta da sé non
   compaiono due volte.
 - **Encoder GPU solo se la GPU c'è** (deve aver superato il test hardware; sul server, le GPU del server).
-- **Audio**: una sotto-scheda per ogni traccia tenuta: codec, encoder esatto (qaac, libfdk_aac, AudioToolbox, fdkaac,
-  aac di FFmpeg, libopus…), bitrate, canali e tutti i parametri di quell'encoder. **Sottotitoli**: lo stesso, con
-  formato, hardsub ed editor OCR.
+- **Audio e Sottotitoli a schede**: una scheda per ogni traccia del file di output (anche con una sola traccia), con
+  ciò che diventa ("#1 ita → Opus"); niente più elenchi di tracce. Ogni scheda audio contiene tutto della sua traccia:
+  lingua, titolo, ritardo, predefinita/forzata, codec, encoder esatto (qaac, libfdk_aac, AudioToolbox, fdkaac, aac di
+  FFmpeg, libopus…), bitrate, tutti i parametri solo di quell'encoder e **i suoi filtri audio** (volume,
+  normalizzazione del volume, canali/downmix, frequenza di campionamento, personalizzati) — non più per tutto il lavoro
+  nella scheda Filtri. **+** accanto alle schede aggiunge una traccia del file o di un file aggiunto, duplica quella
+  attuale o aggiunge file esterni; **✕** su una scheda la toglie; **← →** decidono l'ordine nel file di output.
+  **Duplica traccia**: la stessa traccia sorgente due volte con impostazioni indipendenti (es. italiano in Opus e in
+  Vorbis, un sottotitolo come ASS e come SRT), la copia intitolata con il suo codec ("Italiano (Vorbis)"); fdkaac/qaac,
+  l'audio degli script VapourSynth e l'OCR gestiscono ogni copia. Sottotitoli: la stessa struttura, con formato,
+  hardsub ed editor OCR in ogni scheda. Desktop e web.
 - **Filtri**: i veri **filtri GPU** dell'encoder — quelli di FFmpeg (scale_cuda, vpp_qsv, denoise_vaapi, libplacebo…,
   fotogrammi caricati sulla GPU subito prima dell'encoder) o i --vpp-* di rigaya — e un **elenco di filtri
   VapourSynth / AviSynth+** come quello di StaxRip (QTGMC, Bwdif, IVTC, KNLMeansCL, DFTTest, SMDegrain, neo_f3kdb, CAS,

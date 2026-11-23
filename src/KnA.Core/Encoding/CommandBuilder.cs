@@ -449,7 +449,7 @@ public static class CommandBuilder
             if (a is not null && TrackPlanner.Lookup(a, media) is AudioStream ast)
             {
                 body.AddRange(["-map", AudioInput(a, ast, inputs, ctx), "-c:a:0", "aac", "-ac:a:0", "2", "-b:a:0", "160k"]);
-                if (FilterBuilder.Audio(s.AudioFilters, "aac", 2) is { } af) body.AddRange(["-filter:a:0", af]);
+                if (FilterBuilder.Audio(AudioPlanner.FiltersFor(a, s), "aac", 2) is { } af) body.AddRange(["-filter:a:0", af]);
             }
         }
         else if (preview is null && chunk is null && !p.IsImages)
@@ -463,7 +463,7 @@ public static class CommandBuilder
                 }
                 var aplan = AudioPlanner.PlanTrack(t, ast, s, container, ctx.Options.AudioEncoders);   // the final container decides, also for the intermediate file
                 if (aplan.Issue is { } ai) issues.Add(ai);
-                if (ctx.PreEncodedAudio.GetValueOrDefault($"{t.File}|{t.Stream}") is { } pre)
+                if (ctx.PreEncodedAudio.GetValueOrDefault(t.Key) is { } pre)
                 {
                     // Already encoded (fdkaac) with filters applied: copy it with the track's delay.
                     body.AddRange(["-map", $"{inputs.Get(pre, t.DelaySeconds)}:0", $"-c:a:{audioOut.ToString(CultureInfo.InvariantCulture)}", "copy"]);
@@ -471,7 +471,7 @@ public static class CommandBuilder
                 else
                 {
                     body.AddRange(["-map", AudioInput(t, ast, inputs, ctx)]);
-                    body.AddRange(AudioPlanner.BuildArgs(aplan, audioOut, s.AudioFilters, ToolArguments.Combine(s.Arguments.AudioFfmpeg, t.Arguments)));
+                    body.AddRange(AudioPlanner.BuildArgs(aplan, audioOut, AudioPlanner.FiltersFor(t, s), ToolArguments.Combine(s.Arguments.AudioFfmpeg, t.Arguments)));
                 }
                 if (container == "mxf" && !aplan.IsCopy) body.AddRange([$"-ar:a:{audioOut.ToString(CultureInfo.InvariantCulture)}", "48000"]); // MXF: 48 kHz only
                 body.AddRange(StreamMetadata(outIndex, t));
@@ -738,7 +738,7 @@ public static class CommandBuilder
     {
         if (Frameserver.IsVapourSynth(t.File))
         {
-            var file = ctx.ScriptAudio.GetValueOrDefault($"{t.File}|{t.Stream}") ?? Path.ChangeExtension(t.File, $".audio{t.Stream}.w64");
+            var file = ctx.ScriptAudio.GetValueOrDefault(t.SourceKey) ?? Path.ChangeExtension(t.File, $".audio{t.Stream}.w64");
             return $"{inputs.Get(file, t.DelaySeconds)}:0";
         }
         return $"{inputs.Get(t.File, t.DelaySeconds)}:{ast.Index}";

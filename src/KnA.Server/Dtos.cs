@@ -153,7 +153,7 @@ public sealed record UpdateJobsRequest(List<Guid> Ids, JobSettings Settings);
 public sealed record ParameterOptionsRequest(string Tool, JobSettings Settings);
 public sealed record SizeRequest(JobSettings Settings, JobEdit? Edit);
 public sealed record OcrRequest(string File, int Stream, string? Language);
-public sealed record OcrOpenRequest(Guid JobId, string File, int Stream);
+public sealed record OcrOpenRequest(Guid JobId, string File, int Stream, int Copy = 0);
 public sealed record OcrRunRequest(KnA.Core.Ocr.OcrOptions? Options, List<int>? Only);
 public sealed record OcrEditRequest(string? Text, bool? Italic, double? Start, double? End);
 public sealed record OcrReplaceRequest(string Find, string? Replace, bool Regex);
