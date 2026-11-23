@@ -25,6 +25,12 @@ lack. Releases are made only when the user asks (tag `v*` → draft release, pub
 - UI text goes through `L.T(...)` with the Italian translation in `src/KnA.Core/Localization/L.it.cs`.
 - Desktop (Avalonia, `src/KnA.App`) and web (`src/KnA.Server/wwwroot`) must offer the same features.
 
+## Decisions
+
+- **Blu-ray profiles (Blu-ray AAC / AC-3)**: keep KnA's values (H.264 High@4.1, `-maxrate 40000k -bufsize 30000k`,
+  `-bluray-compat 1` with x264, see `VideoEncoders.AddProfileConstraints`), not the old TnA ones (50000k / 70000k).
+  Confirmed by the user.
+
 ## Pending work
 
 The user's open requests are in `docs/TODO.md`; `/master` resumes them.
