@@ -113,6 +113,8 @@ public sealed record EncoderInfoDto(string? QualityLabel, double? QualityMin, do
 public sealed record ToolsDto(string? Ffmpeg, string? Ffprobe, string? Scxvid, string? DoviTool, string? Hdr10PlusTool, string Instructions, string? VsPipe = null, string? Fdkaac = null)
 {
     public string? Qaac { get; init; }
+    /// <summary>mkvmerge (Dolby Vision configuration record).</summary>
+    public string? Mkvmerge { get; init; }
     /// <summary>The AI upscaler's Python + PyTorch is installed (not in the packages: offered with one click).</summary>
     public bool AiRuntime { get; init; }
     /// <summary>PaddleOCR engine and models installed (not in the packages: offered with one click).</summary>
@@ -225,6 +227,7 @@ public static class Mapping
         : L.T("Install FFmpeg from Settings → Components, or with your package manager."), q.Tools?.VsPipe, q.Tools?.Fdkaac)
     {
         Qaac = q.Tools?.Qaac,
+        Mkvmerge = q.Tools?.Mkvmerge,
         AiRuntime = File.Exists(KnA.Core.Tools.ComponentManager.VenvPython(q.Store.DataDirectory)),
         PaddleOcr = KnA.Core.Ocr.PaddleOcr.Locate(q.Store.DataDirectory) is not null && KnA.Core.Ocr.PaddleOcr.ModelsInstalled(q.Store.DataDirectory),
         Rigaya = KnA.Core.Queue.JobRunner.RigayaFor(q.Tools).Keys.Select(k => k.ToString()).ToList(),

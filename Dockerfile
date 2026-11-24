@@ -102,7 +102,7 @@ RUN apt-get update \
       aspnetcore-runtime-10.0 ca-certificates tzdata fontconfig fonts-dejavu-core fonts-noto-cjk \
       mesa-va-drivers vainfo libvulkan1 mesa-vulkan-drivers \
       python3 python3-venv python3-pip \
-      tesseract-ocr tesseract-ocr-ita \
+      tesseract-ocr tesseract-ocr-ita mkvtoolnix \
  && if [ "$FFMPEG" = "distro" ]; then apt-get install -y --no-install-recommends ffmpeg; fi \
  && if [ "$TARGETARCH" = "amd64" ] || [ -z "$TARGETARCH" ]; then \
       apt-get install -y --no-install-recommends intel-media-va-driver-non-free libvpl2 libmfx-gen1.2 ; \

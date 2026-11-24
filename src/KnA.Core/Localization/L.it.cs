@@ -1540,5 +1540,13 @@ public static partial class L
         ["qaac could not be installed ({0}): fdkaac is used."] = "qaac non è stato installato ({0}): si usa fdkaac.",
         ["qaac: Apple's CoreAudioToolbox is extracted on this computer from Apple's iTunes installer (first AAC encode)."] = "qaac: il CoreAudioToolbox di Apple viene estratto su questo computer dall'installer di iTunes di Apple (prima codifica AAC).",
         ["the GPU, its driver or the encoder programs changed"] = "sono cambiati la GPU, il suo driver o i programmi di codifica",
+        ["Dolby Vision configuration record written with mkvmerge when the encoder leaves it out (TVs and players need it)."] = "Record di configurazione Dolby Vision scritto con mkvmerge quando l'encoder non lo mette (serve a TV e lettori).",
+        ["MKVToolNix comes with KnA's package here; otherwise install it with Homebrew or the package manager (mkvtoolnix): KnA finds mkvmerge by itself."] = "Qui MKVToolNix arriva con il pacchetto di KnA; altrimenti installalo con Homebrew o con il gestore di pacchetti (mkvtoolnix): KnA trova mkvmerge da solo.",
+        ["Writes the Dolby Vision configuration record when Dolby Vision is kept (TVs and players need it to see Dolby Vision)."] = "Scrive il record di configurazione Dolby Vision quando il Dolby Vision viene mantenuto (serve a TV e lettori per riconoscerlo).",
+        ["mkvmerge is missing: Dolby Vision / HDR10+ could not be added after encoding, static HDR is kept."] = "mkvmerge manca: Dolby Vision / HDR10+ non sono stati aggiunti dopo la codifica, resta l'HDR statico.",
+        ["mkvmerge is missing: Dolby Vision can't be added to {0} after encoding, static HDR is kept."] = "mkvmerge manca: Dolby Vision non può essere aggiunto a {0} dopo la codifica, resta l'HDR statico.",
+        ["mkvmerge is missing: HDR10+ can't be added to {0} after encoding, static HDR10 is kept."] = "mkvmerge manca: HDR10+ non può essere aggiunto a {0} dopo la codifica, resta l'HDR10 statico.",
+        ["mkvmerge is missing: the file carries the Dolby Vision RPU without the configuration record (some TVs and players won't see Dolby Vision)."] = "mkvmerge manca: il file ha l'RPU Dolby Vision ma non il record di configurazione (alcuni TV e lettori non vedranno il Dolby Vision).",
+        ["mkvmerge is missing: the file will carry the Dolby Vision RPU without the configuration record (some TVs and players won't see Dolby Vision)."] = "mkvmerge manca: il file avrà l'RPU Dolby Vision senza il record di configurazione (alcuni TV e lettori non vedranno il Dolby Vision).",
     };
 }

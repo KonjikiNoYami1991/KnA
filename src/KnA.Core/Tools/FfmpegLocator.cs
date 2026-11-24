@@ -10,14 +10,17 @@ public sealed record FfmpegTools(string Ffmpeg, string Ffprobe, string? Scxvid, 
     public string? NvencC { get; init; }
     public string? QsvencC { get; init; }
     public string? VceencC { get; init; }
+    /// <summary>MKVToolNix's mkvmerge: writes the Dolby Vision configuration record FFmpeg can't (see Queue.HdrMetadata).</summary>
+    public string? Mkvmerge { get; init; }
 }
 
 /// <summary>Tool ids accepted in <see cref="Settings.AppSettings.ToolPaths"/>.</summary>
 public static class ToolIds
 {
     public const string Ffprobe = "ffprobe", Fdkaac = "fdkaac", DoviTool = "dovi_tool", Hdr10PlusTool = "hdr10plus_tool",
-        VsPipe = "vspipe", Scxvid = "scxvid", Python = "python", Qaac = "qaac", NvencC = "nvencc", QsvencC = "qsvencc", VceencC = "vceencc";
-    public static readonly string[] All = [Ffprobe, Fdkaac, DoviTool, Hdr10PlusTool, VsPipe, Scxvid, Python, Qaac, NvencC, QsvencC, VceencC];
+        VsPipe = "vspipe", Scxvid = "scxvid", Python = "python", Qaac = "qaac", NvencC = "nvencc", QsvencC = "qsvencc", VceencC = "vceencc",
+        Mkvmerge = "mkvmerge";
+    public static readonly string[] All = [Ffprobe, Fdkaac, DoviTool, Hdr10PlusTool, VsPipe, Scxvid, Python, Qaac, NvencC, QsvencC, VceencC, Mkvmerge];
 }
 
 /// <summary>
@@ -71,9 +74,21 @@ public static class FfmpegLocator
                     NvencC = Custom(ToolIds.NvencC) ?? LocateTool(["NVEncC64", "nvencc"], dataDirectory, Path.Combine(KnA.Core.Settings.AppPaths.Tools(dataDirectory), "nvencc")),
                     QsvencC = Custom(ToolIds.QsvencC) ?? LocateTool(["QSVEncC64", "qsvencc"], dataDirectory, Path.Combine(KnA.Core.Settings.AppPaths.Tools(dataDirectory), "qsvencc")),
                     VceencC = Custom(ToolIds.VceencC) ?? LocateTool(["VCEEncC64", "vceencc"], dataDirectory, Path.Combine(KnA.Core.Settings.AppPaths.Tools(dataDirectory), "vceencc")),
+                    Mkvmerge = Custom(ToolIds.Mkvmerge) ?? LocateMkvmerge(dataDirectory),
                 };
         }
         return null;
+    }
+
+    /// <summary>
+    /// mkvmerge: KnA's copy (tools/mkvtoolnix in the data folder, then the one shipped with the program — on Linux a
+    /// small launcher script next to its libraries), Homebrew, PATH (the Docker image's package).
+    /// </summary>
+    public static string? LocateMkvmerge(string dataDirectory)
+    {
+        foreach (var dir in new[] { ManagedDir(dataDirectory, "mkvtoolnix"), Path.Combine(AppContext.BaseDirectory, "tools", "mkvtoolnix") })
+            if (File.Exists(Path.Combine(dir, ExeName("mkvmerge")))) return Path.Combine(dir, ExeName("mkvmerge"));
+        return LocateTool(["mkvmerge"], dataDirectory);
     }
 
     /// <summary>fdkaac: $KNA_FDKAAC, component folder, "tools" next to the app (release bundles), next to FFmpeg, PATH.</summary>

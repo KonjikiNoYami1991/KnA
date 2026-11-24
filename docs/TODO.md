@@ -4,22 +4,7 @@ Work through it in order, on `master`; ask before releasing. Every point is conf
 all of them: CLAUDE.md, "it is an *auto*encoder" — the user is never forced to do anything for an encode to come out
 right; optional controls are fine, a required manual step or a silent loss is a bug.
 
-## 1. mkvmerge in the packages: Dolby Vision recognised by players
-
-Approved by the user. FFmpeg writes only the RPU NAL units of a re-encoded Dolby Vision video (x265's
-`dolby-vision-rpu`, `dovi_tool inject-rpu` after encoding), never the container's Dolby Vision configuration record
-(Matroska BlockAdditionMapping `dvcC`/`dvvC`, MP4 `dvcC`): TVs and players may not see Dolby Vision.
-
-- Add **mkvmerge** (MKVToolNix) to every package (CLAUDE.md standalone rule: Windows x64/ARM64 portable, Linux
-  static/AppImage build, macOS inside `KnA.app`), as a component like dovi_tool, with its licence (GPLv2).
-- When Dolby Vision is kept (`HdrCarry.Encoder` / `Inject`) in MKV, the final mux of the video (or a remux of the
-  finished file) goes through mkvmerge, which reads the RPU and writes the configuration record by itself; audio,
-  subtitles, attachments, chapters, languages, flags and delays must stay exactly as FFmpeg made them. MP4: check
-  FFmpeg with `-strict unofficial` and the profile's side data, otherwise MP4Box or say clearly that MP4 keeps only the
-  RPU.
-- Verify with ffprobe / MediaInfo that the output shows the Dolby Vision profile, and on a real TV (point 5).
-
-## 2. Web server: separate user accounts
+## 1. Web server: separate user accounts
 
 - **Accounts instead of the single shared password**: at first start KnA asks to create an **admin** account; the
   admin creates, edits, disables and removes the other accounts.
@@ -33,7 +18,7 @@ Approved by the user. FFmpeg writes only the RPU NAL units of a re-encoded Dolby
 - **Proxy SSO**: accept an auth header from a trusted proxy (Authelia/Authentik style) as the logged-in user.
 - **Migration**: existing `KNA_PASSWORD` installs migrate smoothly (Docker, Linux, Windows service).
 
-## 3. Filter presets and before/after preview
+## 2. Filter presets and before/after preview
 
 - Every VapourSynth/AviSynth catalogue filter and every GPU filter (`--vpp-*`) gets **many sensible presets**: quality
   levels (light / medium / strong…) **and** content types (clean anime, grainy film, old VHS, noisy phone video…).
@@ -41,7 +26,7 @@ Approved by the user. FFmpeg writes only the RPU NAL units of a re-encoded Dolby
   numbers stay editable under "Advanced".
 - **Before/after preview** of a frame right in the filter's box, to choose by looking.
 
-## 4. Quick use first, "Pro" for the rest
+## 3. Quick use first, "Pro" for the rest
 
 Users often just want something fast ("compress this for WhatsApp, done"), but KnA must also have a Pro side that can
 one day match StaxRip (which doesn't exist for Linux/macOS; there the reference is Hybrid).
@@ -53,7 +38,7 @@ one day match StaxRip (which doesn't exist for Linux/macOS; there the reference 
 - Optional (Pro): **quality check** (VMAF/SSIM on a few sample seconds) to compare presets and filters with a number.
 - To evaluate, not a priority: importing Hybrid/StaxRip presets.
 
-## 5. Checks on real hardware and runners
+## 4. Checks on real hardware and runners
 
 Not verifiable in the development container; do them when a test release (workflow input `test_package`) or the
 user's machines are available.
@@ -71,16 +56,22 @@ user's machines are available.
   hevc_nvenc and NVEncC): RPU / JSON extraction, the editor's frame ranges, `inject-rpu` / `inject` and the remux;
   NVEncC's `--dolby-vision-rpu <file>` together with `--trim` (KnA gives the uncut RPU to the encoder's own reader,
   because rigaya numbers the frames from the start of the source — verify); players / TVs recognising Dolby Vision in
-  the output: FFmpeg writes no Dolby Vision configuration record (dvcC) for x265's or injected RPUs, only the RPU NAL
-  units — mkvmerge in the packages is point 1.
+  the output (configuration record written by mkvmerge).
+- mkvmerge in the packages: Windows from MKVToolNix's portable 7z (download URL and folder layout not verifiable from
+  the development container: check the bundle log), Linux from Ubuntu's package with its libraries (needs glibc ≥ the
+  runner's: check on older distributions), macOS from Homebrew with dylibbundler (Qt frameworks), the in-app install
+  on Linux x64 from the AppImage; package sizes.
 
-## 6. Theme: Golden Darkness (last of the queue)
+## 5. Theme: Golden Darkness (last of the queue)
 
 A UI theme dedicated to Golden Darkness (Yami) from *To LOVE-Ru*: colours from the character (black, gold, deep red),
 suitable backgrounds, desktop and web, next to the current light/dark themes. Mind the artwork's rights: use images
 the user provides or that may be redistributed; nothing scraped.
 
 ## Done (details in CHANGELOG)
+
+- mkvmerge in every package and the Docker image: the Dolby Vision configuration record is written when the encoder
+  leaves it out; injected metadata is remuxed by mkvmerge (FFmpeg can't time a raw HEVC stream).
 
 - Autoencoder review: GPU first by default ("Automatic" encoder program), hardware detection that follows the machine
   (fingerprint), picture subtitles read with OCR instead of being lost, telecine detection (idet → IVTC / Bwdif /

@@ -245,10 +245,10 @@ public sealed class SettingsWindow : Window
         var tools = Ui.Muted(t is null
             ? L.T("FFmpeg not found.") + " " + L.T("Install FFmpeg from Settings → Components, or with your package manager.")
             : $"FFmpeg: {t.Ffmpeg}\nFFprobe: {t.Ffprobe}\nSCXviD: {t.Scxvid ?? L.T("not found (keyframes use FFmpeg scene detection)")}\n" +
-              $"dovi_tool: {t.DoviTool ?? "—"}\nhdr10plus_tool: {t.Hdr10PlusTool ?? "—"}\nvspipe (VapourSynth): {t.VsPipe ?? "—"}");
+              $"dovi_tool: {t.DoviTool ?? "—"}\nhdr10plus_tool: {t.Hdr10PlusTool ?? "—"}\nmkvmerge: {t.Mkvmerge ?? "—"}\nvspipe (VapourSynth): {t.VsPipe ?? "—"}");
         tools.FontFamily = Ui.Mono;
         var toolGrid = new List<Control>();
-        foreach (var id in new[] { ToolIds.Ffprobe, ToolIds.Fdkaac, ToolIds.DoviTool, ToolIds.Hdr10PlusTool, ToolIds.VsPipe, ToolIds.Scxvid })
+        foreach (var id in new[] { ToolIds.Ffprobe, ToolIds.Fdkaac, ToolIds.DoviTool, ToolIds.Hdr10PlusTool, ToolIds.Mkvmerge, ToolIds.VsPipe, ToolIds.Scxvid })
         {
             var box = Ui.Text(_toolPaths.GetValueOrDefault(id), v => { if (string.IsNullOrWhiteSpace(v)) _toolPaths.Remove(id); else _toolPaths[id] = v.Trim(); }, L.T("auto"), mono: true);
             toolGrid.Add(Ui.Field(id, WithBrowse(box, false)));

@@ -96,7 +96,7 @@ redistributable on its own: bundled with KnA's packages and the Docker image, in
 ffmpeg → WAV → fdkaac) → FFmpeg's own AAC. **HE-AAC** goes the same way.
 
 **Custom FFmpeg builds**: *Settings → Advanced* takes extra builds (e.g. one compiled with libfdk_aac, or a nightly with Vulkan encoders)
-and paths for ffprobe, fdkaac, dovi_tool, hdr10plus_tool, vspipe and scxvid. The detection tests every build; each job runs on the one that has
+and paths for ffprobe, fdkaac, dovi_tool, hdr10plus_tool, mkvmerge, vspipe and scxvid. The detection tests every build; each job runs on the one that has
 its encoder (custom builds first, the one with libfdk_aac preferred). The component manager downloads the **BtbN build of the newest release branch**
 (e.g. 9.0) or, on request, master.
 
@@ -169,7 +169,9 @@ duplicates, unsupported files and huge folders are shown before anything happens
   in BT.709 (libplacebo when available, otherwise zscale). The **tone-mapping curve** is a choice (Spline by default, BT.2390, BT.2446a,
   Hable, Mobius) and the brightness follows the mastering metadata, stable across the film; scene-by-scene peak detection is optional.
   The SDR file carries no HDR metadata (mastering display, MaxCLL/MaxFALL, HDR10+). **Dolby Vision** (RPU via `dovi_tool`) and **HDR10+**
-  (via `hdr10plus_tool`) are carried over when re-encoding HEVC with x265; KnA explains when that is not possible (trim, crop, frame-rate change, GPU encoders).
+  (via `hdr10plus_tool`) are carried by themselves through every path: x265, NVEncC/QSVEncC/VCEEncC, scripts, trims (only the kept
+  frames), crops (RPU active area), FFmpeg's GPU encoders and chunked encodes (injected into the finished HEVC); `mkvmerge` writes the
+  Dolby Vision configuration record TVs need. Only a frame-count change (frame rate, IVTC) keeps static HDR, and KnA says so.
 - **Containers**: MKV, MP4, MOV, WebM, AVI, TS, with a compatibility check for the chosen codecs
   (an AVI cannot hold HEVC, attachments need Matroska, and so on).
 
@@ -259,7 +261,7 @@ each kind of thing in its own subfolder:
 KnA\
   KnA.exe            one executable (+ the native libraries of the UI)
   portable.txt
-  tools\ffmpeg\      FFmpeg + FFprobe (BtbN GPL build) · tools\fdkaac\ · tools\dovi_tool\ · tools\hdr10plus_tool\ · tools\shaders\
+  tools\ffmpeg\      FFmpeg + FFprobe (BtbN GPL build) · tools\fdkaac\ · tools\dovi_tool\ · tools\hdr10plus_tool\ · tools\mkvtoolnix\ · tools\shaders\
   tools\nvencc\ tools\qsvencc\ tools\vceencc\   rigaya's GPU encoders (Windows / Linux x64)
   tools\qaac\       qaac (Windows; Apple's files are extracted on your PC: Components → qaac → Install)
   tools\vapoursynth\ VapourSynth R82 + portable Python 3.13 + vsjetpack + the filter catalogue's plugins (every package)

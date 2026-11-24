@@ -49,6 +49,10 @@
   can't follow: static HDR is kept and the reason is said.
 - **HDR → SDR** of a script's video: the tone mapping knows the frames are PQ/HLG BT.2020 (FFmpeg `setparams`,
   explicit `--vpp-colorspace` input colours on the GPU); no HDR parameter reaches the encoder.
+- **Dolby Vision recognised by TVs and players**: mkvmerge (MKVToolNix, now in every package and in the Docker image)
+  writes the container's Dolby Vision configuration record that FFmpeg leaves out (x265, injected RPUs); the video is
+  remuxed with every frame's original time, language, name and static HDR10 metadata, MP4 gets the record through
+  FFmpeg. Injected metadata is remuxed by mkvmerge too: FFmpeg can't time a raw HEVC stream (that remux failed).
 - The editor and the log list which HDR metadata is kept and how.
 
 **Customization editor (the pencil), rebuilt**
@@ -245,6 +249,11 @@
   uno script che cambia il numero) i metadati dinamici non possono seguire: resta l'HDR statico e viene detto perché.
 - **HDR → SDR** del video di uno script: il tone mapping sa che i fotogrammi sono PQ/HLG BT.2020 (`setparams` di FFmpeg,
   colori di ingresso espliciti in `--vpp-colorspace` sulla GPU); nessun parametro HDR arriva all'encoder.
+- **Dolby Vision riconosciuto da TV e lettori**: mkvmerge (MKVToolNix, ora in ogni pacchetto e nell'immagine Docker)
+  scrive il record di configurazione Dolby Vision del contenitore che FFmpeg non mette (x265, RPU iniettati); il video
+  viene rimuxato con i tempi originali di ogni fotogramma, lingua, nome e metadati HDR10 statici, l'MP4 riceve il
+  record tramite FFmpeg. Anche i metadati iniettati vengono rimuxati con mkvmerge: FFmpeg non sa dare i tempi a un
+  flusso HEVC grezzo (quel rimux falliva).
 - L'editor e il log dicono quali metadati HDR vengono mantenuti e come.
 
 **Editor di personalizzazione (la matita), rifatto**

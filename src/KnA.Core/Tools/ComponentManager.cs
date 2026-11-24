@@ -139,6 +139,7 @@ public sealed partial class ComponentManager(string dataDirectory)
             list.Add(new ComponentStatus(id, name, desc, inst, path,
                 path?.StartsWith(dataDirectory, StringComparison.OrdinalIgnoreCase) ?? false, latest, update, QuietvoidTarget() is not null, note));
         }
+        list.Add(await CheckMkvtoolnixAsync(tools, online, ct));
         list.AddRange(await CheckExternalAsync(tools, online, ct));
         list.AddRange(await CheckOcrAsync(ct));
         list.AddRange(await CheckModelsAsync(ct));
@@ -157,6 +158,7 @@ public sealed partial class ComponentManager(string dataDirectory)
             else if (id == "fsrcnnx") await InstallFsrcnnxAsync(progress, log, ct);
             else if (id == "ai-runtime") await InstallAiRuntimeAsync(temp, progress, log, ct);
             else if (id is "dovi_tool" or "hdr10plus_tool") await InstallQuietvoidAsync(id, temp, progress, log, ct);
+            else if (id == "mkvtoolnix") await InstallMkvtoolnixAsync(temp, progress, log, ct);
             else if (id is "nvencc" or "qsvencc" or "vceencc") await InstallRigayaAsync(id, temp, progress, log, ct);
             else if (id == "qaac") await InstallQaacAsync(temp, progress, log, ct);
             else if (id == "vapoursynth") await InstallVapourSynthAsync(temp, progress, log, ct);

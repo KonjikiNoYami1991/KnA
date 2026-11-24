@@ -157,7 +157,7 @@ jobs:
       #   KnA(.exe) + native libs · portable.txt · tools/ffmpeg (BtbN GPL build) · tools/fdkaac · tools/nvencc,qsvencc,vceencc
       #   (rigaya) · tools/qaac (without Apple's files: extracted from iTunes on the user's machine) · tools/vapoursynth
       #   (portable Python 3.13 + VapourSynth + vsjetpack + the catalogue's plugins, every platform) · tools/dovi_tool,
-      #   hdr10plus_tool · tools/shaders · ai/models
+      #   hdr10plus_tool · tools/mkvtoolnix (mkvmerge: Dolby Vision configuration record) · tools/shaders · ai/models
       #   (Real-ESRGAN) · data/ (settings, queue, logs, temp). PyTorch is not included: its build depends on the GPU
       #   (CUDA / ROCm / XPU / CPU) and weighs several GB, Settings → Components installs the right one.
       - name: Tesseract (static build)
@@ -211,11 +211,11 @@ jobs:
           # VapourSynth everywhere: portable Python 3.13 + VapourSynth + vsjetpack + the filter catalogue's plugins (wheels),
           # checked by loading every plugin (the install fails otherwise).
           case "${{ matrix.rid }}" in
-            win-x64)     ids="nvencc,qsvencc,vceencc,qaac,vapoursynth,dovi_tool,hdr10plus_tool,tesseract,$common" ;;
+            win-x64)     ids="nvencc,qsvencc,vceencc,qaac,vapoursynth,dovi_tool,hdr10plus_tool,tesseract,$common,mkvtoolnix" ;;
             linux-x64)   ids="nvencc,qsvencc,vceencc,vapoursynth,dovi_tool,hdr10plus_tool,$common" ;;
             linux-arm64) ids="vapoursynth,dovi_tool,hdr10plus_tool,$common" ;;
             # built on an x64 runner: x64 programs, which Windows on Arm runs through its x64 emulation
-            win-arm64)   ids="vapoursynth,dovi_tool,hdr10plus_tool,tesseract,$common" ;;
+            win-arm64)   ids="vapoursynth,dovi_tool,hdr10plus_tool,tesseract,$common,mkvtoolnix" ;;
             *)           ids="vapoursynth,dovi_tool,hdr10plus_tool,$common" ;;   # macOS (FFmpeg and Tesseract from the next step)
           esac
           # Absolute path: "dotnet run" starts in the project folder (pwd -W = Windows form under Git Bash).
@@ -223,18 +223,39 @@ jobs:
           dotnet run --project src/KnA.Server -c Release -- --bundle "$abs" "$ids" || echo "::warning::Some components could not be bundled for ${{ matrix.rid }} (see the log)"
           # VapourSynth is required in every package (CLAUDE.md): stop here rather than publish a package without it.
           find "$b/tools/vapoursynth" -name 'vspipe*' -type f | grep -q . || { echo "::error::VapourSynth missing from the ${{ matrix.rid }} package"; exit 1; }
+          # mkvmerge (Dolby Vision configuration record): Windows from MKVToolNix's portable build here, Linux and macOS below.
+          if [ "$RUNNER_OS" = Windows ]; then
+            find "$b/tools/mkvtoolnix" -name 'mkvmerge.exe' -type f | grep -q . || { echo "::error::mkvmerge missing from the ${{ matrix.rid }} package"; exit 1; }
+          fi
           rm -rf "$b/data/temp"
           du -sh "$b"/tools/* "$b"/ai 2>/dev/null || true
-      # macOS: FFmpeg and Tesseract from Homebrew, made relocatable (every library they load copied next to them and
+      # Linux: mkvmerge (Dolby Vision configuration record) from the distribution's package, with the libraries it loads
+      # copied next to it and a small launcher that points the loader at them (no system package needed).
+      - name: mkvmerge (Linux, with its libraries)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update && sudo apt-get install -y --no-install-recommends mkvtoolnix
+          d=bundle/tools/mkvtoolnix
+          mkdir -p "$d/lib"
+          cp "$(command -v mkvmerge)" "$d/mkvmerge.bin"
+          ldd "$d/mkvmerge.bin" | awk '/=> \//{print $3}' | grep -vE '/(libc|libm|libdl|libpthread|librt|ld-linux[^/]*)\.so' | xargs -I{} cp -L {} "$d/lib/"
+          printf '%s\n' '#!/bin/sh' 'd=$(dirname "$(readlink -f "$0")")' \
+            'LD_LIBRARY_PATH="$d/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" exec "$d/mkvmerge.bin" "$@"' > "$d/mkvmerge"
+          chmod 755 "$d/mkvmerge" "$d/mkvmerge.bin"
+          cp /usr/share/doc/mkvtoolnix/copyright "$d/COPYING.txt" 2>/dev/null || true
+          printf '%s\n' "mkvmerge $(dpkg-query -W -f='${Version}' mkvtoolnix) from Ubuntu (https://mkvtoolnix.download), GPLv2, with its libraries." \
+            "KnA runs it as a separate program to write the Dolby Vision configuration record." > "$d/SOURCE.txt"
+          env -i "$d/mkvmerge" --version
+      # macOS: FFmpeg, Tesseract and mkvmerge from Homebrew, made relocatable (every library they load copied next to them and
       # their load paths rewritten), so KnA.app works on a Mac without Homebrew.
-      - name: FFmpeg and Tesseract (macOS, relocatable)
+      - name: FFmpeg, Tesseract and mkvmerge (macOS, relocatable)
         if: runner.os == 'macOS'
         run: |
-          brew install ffmpeg tesseract dylibbundler
-          for tool in ffmpeg tesseract; do
+          brew install ffmpeg tesseract mkvtoolnix dylibbundler
+          for tool in ffmpeg tesseract mkvtoolnix; do
             d=bundle/tools/$tool
             mkdir -p "$d/libs"
-            if [ $tool = ffmpeg ]; then exes="ffmpeg ffprobe"; else exes="tesseract"; fi
+            case $tool in ffmpeg) exes="ffmpeg ffprobe" ;; mkvtoolnix) exes="mkvmerge" ;; *) exes="tesseract" ;; esac
             args=()
             for e in $exes; do cp "$(brew --prefix)/bin/$e" "$d/$e"; chmod 755 "$d/$e"; args+=(-x "$d/$e"); done
             dylibbundler -od -b "${args[@]}" -d "$d/libs" -p @executable_path/libs/
@@ -242,6 +263,8 @@ jobs:
           printf '%s\n' "FFmpeg $(brew list --versions ffmpeg | cut -d' ' -f2) from Homebrew (https://formulae.brew.sh/formula/ffmpeg), libraries bundled with dylibbundler." \
             "GPL licensed (https://ffmpeg.org/legal.html). KnA runs it as a separate program." > bundle/tools/ffmpeg/SOURCE.txt
           printf '%s\n' "Tesseract $(brew list --versions tesseract | cut -d' ' -f2) from Homebrew, Apache-2.0 (https://github.com/tesseract-ocr/tesseract)." > bundle/tools/tesseract/SOURCE.txt
+          printf '%s\n' "mkvmerge $(brew list --versions mkvtoolnix | cut -d' ' -f2) from Homebrew (https://mkvtoolnix.download), GPLv2, libraries bundled with dylibbundler." > bundle/tools/mkvtoolnix/SOURCE.txt
+          bundle/tools/mkvtoolnix/mkvmerge --version | head -1
           bundle/tools/ffmpeg/ffmpeg -hide_banner -version | head -1
           bundle/tools/tesseract/tesseract --version | head -1
       - name: Portable layout

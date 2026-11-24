@@ -90,88 +90,166 @@ public static partial class HdrMetadata
         total - remove.Sum(r => { var p = r.Split('-'); return long.Parse(p[1], CultureInfo.InvariantCulture) - long.Parse(p[0], CultureInfo.InvariantCulture) + 1; });
 
     /// <summary>
-    /// Injects the edited RPU / HDR10+ JSON into the video of the finished file (HEVC) and remuxes it in place, for the
-    /// encoders that can't take them (FFmpeg's GPU encoders, chunked or multi-part encodes, HDR10+ with rigaya's
-    /// encoders). When the frame counts don't match, nothing is injected and the log says so (static HDR stays).
+    /// Finishes the HDR of an encoded file (HEVC): injects the edited RPU / HDR10+ JSON the encoder couldn't take
+    /// (FFmpeg's GPU encoders, chunked or multi-part encodes, HDR10+ with rigaya's encoders) and gives a Dolby Vision
+    /// video the container's configuration record FFmpeg never writes. The video is remuxed by mkvmerge with the
+    /// timestamps of every frame read from the encoded file (FFmpeg can't time a raw HEVC stream), then MP4/MOV/TS get it
+    /// back from FFmpeg (-strict unofficial keeps the record). Frame counts are checked first: on a mismatch nothing is
+    /// injected and the log says so (static HDR stays).
     /// </summary>
-    public static async Task<List<string>> InjectAsync(QueueJob job, CompiledJob final, HdrSideFiles files, string workDir, RunnerContext ctx, CancellationToken ct)
+    public static async Task<List<string>> FinishAsync(QueueJob job, CompiledJob final, HdrSideFiles files, string workDir, RunnerContext ctx, CancellationToken ct)
     {
         var warnings = new List<string>();
         var hdr = final.Hdr;
         string output = final.Plan.OutputPath;
+        string container = final.Container;
         string? rpu = hdr.DolbyVision == HdrCarry.Inject && ctx.Tools.DoviTool is not null ? files.DolbyVisionRpu : null;
         string? json = hdr.Hdr10Plus == HdrCarry.Inject && ctx.Tools.Hdr10PlusTool is not null ? files.Hdr10PlusJson : null;
-        if (rpu is null && json is null) return warnings;
+        bool dv = hdr.DolbyVision != HdrCarry.None && container is "mkv" or "mp4" or "mov";
+        if (rpu is null && json is null && !dv) return warnings;
+
+        var info = await ProbeVideoAsync(ctx, output, ct);
+        // Already there (NVEncC/QSVEncC/VCEEncC write it themselves): nothing to do for Dolby Vision.
+        if (rpu is null && json is null && info.HasDoviRecord) return warnings;
+        if (ctx.Tools.Mkvmerge is not { } mkvmerge)
+        {
+            warnings.Add(rpu is not null || json is not null
+                ? L.T("mkvmerge is missing: Dolby Vision / HDR10+ could not be added after encoding, static HDR is kept.")
+                : L.T("mkvmerge is missing: the file carries the Dolby Vision RPU without the configuration record (some TVs and players won't see Dolby Vision)."));
+            return warnings;
+        }
 
         job.BeginStage(L.T("Adding HDR metadata"));
         ctx.Changed(job);
-        var info = await ProbeVideoAsync(ctx, output, ct);
-        if (info.Frames <= 0)
+        if (info.Timestamps.Count == 0)
         {
             warnings.Add(L.T("The encoded video could not be counted: Dolby Vision / HDR10+ were not added, static HDR is kept."));
             return warnings;
         }
+        long frames = info.Timestamps.Count;
         // Match the metadata to the encoded frames: a frame or two of rounding at a trim is fixed, more is a real mismatch.
         if (rpu is not null)
         {
             long n = await RpuCountAsync(ctx, ctx.Tools.DoviTool!, rpu, ct);
-            rpu = await FitAsync(ctx, ctx.Tools.DoviTool!, rpu, n, info.Frames, workDir, "rpu", true, ct);
-            if (rpu is null) warnings.Add(L.T("Dolby Vision: the RPU has {0} frames, the video {1}: not added, static HDR is kept.", n, info.Frames));
+            rpu = await FitAsync(ctx, ctx.Tools.DoviTool!, rpu, n, frames, workDir, "rpu", true, ct);
+            if (rpu is null) warnings.Add(L.T("Dolby Vision: the RPU has {0} frames, the video {1}: not added, static HDR is kept.", n, frames));
         }
         if (json is not null)
         {
             long n = JsonCount(json);
-            json = await FitAsync(ctx, ctx.Tools.Hdr10PlusTool!, json, n, info.Frames, workDir, "hdr10plus", false, ct);
-            if (json is null) warnings.Add(L.T("HDR10+: the metadata has {0} frames, the video {1}: not added, static HDR10 is kept.", n, info.Frames));
+            json = await FitAsync(ctx, ctx.Tools.Hdr10PlusTool!, json, n, frames, workDir, "hdr10plus", false, ct);
+            if (json is null) warnings.Add(L.T("HDR10+: the metadata has {0} frames, the video {1}: not added, static HDR10 is kept.", n, frames));
         }
-        if (rpu is null && json is null) return warnings;
+        // The record only when the stream really carries an RPU (injected now, or given to the encoder).
+        bool record = dv && !info.HasDoviRecord && (rpu is not null || (hdr.DolbyVision == HdrCarry.Encoder && files.DolbyVisionRpu is not null));
+        if (rpu is null && json is null && !record) return warnings;
 
-        var stream = Path.Combine(workDir, "inject.hevc");
-        var ffArgs = new List<string> { "-hide_banner", "-nostdin", "-v", "error", "-i", output, "-map", "0:v:0", "-c:v", "copy", "-bsf:v", "hevc_mp4toannexb", "-f", "hevc", "-y", stream };
-        await RunOrThrowAsync(ctx, ctx.Tools.Ffmpeg, ffArgs, ct);
-        if (json is not null)
-        {
-            var next = Path.Combine(workDir, "inject.h10.hevc");
-            await RunOrThrowAsync(ctx, ctx.Tools.Hdr10PlusTool!, ["inject", "-i", stream, "-j", json, "-o", next], ct);
-            TryDelete(stream);
-            stream = next;
-            job.AppendLog("HDR10+ metadata injected into the video.");
-        }
-        if (rpu is not null)
-        {
-            var next = Path.Combine(workDir, "inject.dv.hevc");
-            await RunOrThrowAsync(ctx, ctx.Tools.DoviTool!, ["inject-rpu", "-i", stream, "--rpu-in", rpu, "-o", next], ct);
-            TryDelete(stream);
-            stream = next;
-            job.AppendLog($"Dolby Vision RPU injected into the video (profile {hdr.DolbyVisionProfile}).");
-        }
-
-        // The raw stream has no timestamps: the frame rate and the video's start come from the encoded file.
-        var tmp = Path.Combine(Path.GetDirectoryName(output)!, "." + Path.GetFileNameWithoutExtension(output) + ".kna-hdr" + Path.GetExtension(output));
-        var mux = new List<string> { "-hide_banner", "-nostdin", "-y", "-fflags", "+genpts", "-r", info.Rate };
-        if (Math.Abs(info.Start) >= 0.0005) mux.AddRange(["-itsoffset", CommandBuilder.Sec(info.Start)]);
-        mux.AddRange(["-f", "hevc", "-i", stream, "-i", output, "-map", "0:v:0", "-map", "1", "-map", "-1:v:0", "-c", "copy",
-            "-map_metadata", "1", "-map_chapters", "1"]);
-        mux.AddRange(hdr.ColorArgs);
-        switch (final.Container)
-        {
-            case "mp4" or "mov": mux.AddRange(["-tag:v", "hvc1", "-movflags", "+faststart", "-strict", "unofficial"]); break;
-            case "ts": mux.AddRange(["-f", "mpegts"]); break;
-            case "mkv": mux.AddRange(["-f", "matroska"]); break;
-        }
-        mux.Add(tmp);
-        job.AppendLog("Remux with the HDR metadata: " + new EncodePlan(mux, tmp).CommandLine(ctx.Tools.Ffmpeg));
+        var stream = Path.Combine(workDir, "finish.hevc");
+        await RunOrThrowAsync(ctx, ctx.Tools.Ffmpeg, ["-hide_banner", "-nostdin", "-v", "error", "-i", output, "-map", "0:v:0", "-c:v", "copy",
+            "-bsf:v", "hevc_mp4toannexb", "-f", "hevc", "-y", stream], ct);
         try
         {
-            await RunOrThrowAsync(ctx, ctx.Tools.Ffmpeg, mux, ct);
+            if (json is not null)
+            {
+                var next = Path.Combine(workDir, "finish.h10.hevc");
+                await RunOrThrowAsync(ctx, ctx.Tools.Hdr10PlusTool!, ["inject", "-i", stream, "-j", json, "-o", next], ct);
+                TryDelete(stream);
+                stream = next;
+                job.AppendLog("HDR10+ metadata injected into the video.");
+            }
+            if (rpu is not null)
+            {
+                var next = Path.Combine(workDir, "finish.dv.hevc");
+                await RunOrThrowAsync(ctx, ctx.Tools.DoviTool!, ["inject-rpu", "-i", stream, "--rpu-in", rpu, "-o", next], ct);
+                TryDelete(stream);
+                stream = next;
+                job.AppendLog($"Dolby Vision RPU injected into the video (profile {hdr.DolbyVisionProfile}).");
+            }
+            var ts = Path.Combine(workDir, "finish.timestamps.txt");
+            await File.WriteAllTextAsync(ts, TimestampsV2(info.Timestamps), ct);
+            await RemuxAsync(job, ctx, mkvmerge, output, stream, ts, container, hdr, info, workDir, ct);
+            if (dv) job.AppendLog("Dolby Vision configuration record written (mkvmerge).");
+        }
+        finally { TryDelete(stream); }
+        return warnings;
+    }
+
+    /// <summary>
+    /// mkvmerge's timestamp file (format v2): one line per frame in display order, milliseconds — the encoded file's own
+    /// times, so the start offset, a variable frame rate and the sync with audio stay exactly as they were.
+    /// </summary>
+    public static string TimestampsV2(IReadOnlyList<double> seconds) =>
+        "# timestamp format v2\n" + string.Concat(seconds.Order().Select(t => (t * 1000).ToString("0.######", CultureInfo.InvariantCulture) + "\n"));
+
+    /// <summary>
+    /// The new video (raw HEVC + timestamps) in place of the old one: MKV in one mkvmerge pass that keeps every other
+    /// track, tag, chapter and attachment of the file; MP4/MOV/TS through a Matroska video then FFmpeg (stream copy).
+    /// </summary>
+    private static async Task RemuxAsync(QueueJob job, RunnerContext ctx, string mkvmerge, string output, string stream, string timestamps,
+        string container, HdrPlan hdr, VideoCount info, string workDir, CancellationToken ct)
+    {
+        var tmp = Path.Combine(Path.GetDirectoryName(output)!, "." + Path.GetFileNameWithoutExtension(output) + ".kna-hdr" + Path.GetExtension(output));
+        var video = MkvmergeVideoArgs(hdr, info, timestamps);
+        try
+        {
+            if (container == "mkv")
+            {
+                var args = new List<string> { "-q", "-o", tmp };
+                args.AddRange(video);
+                args.AddRange([stream, "--no-video", output]);
+                job.AppendLog("Remux (mkvmerge): " + new EncodePlan(args, tmp).CommandLine(mkvmerge));
+                await RunMkvmergeAsync(mkvmerge, args, ct);
+            }
+            else
+            {
+                var mkv = Path.Combine(workDir, "finish.video.mkv");
+                var args = new List<string> { "-q", "-o", mkv };
+                args.AddRange(video);
+                args.Add(stream);
+                job.AppendLog("Video (mkvmerge): " + new EncodePlan(args, mkv).CommandLine(mkvmerge));
+                await RunMkvmergeAsync(mkvmerge, args, ct);
+                // -copyts: the encoded file's own times (a start offset, the audio sync) stay exactly as they were.
+                var mux = new List<string> { "-hide_banner", "-nostdin", "-v", "error", "-y", "-copyts", "-i", mkv, "-i", output,
+                    "-map", "0:v:0", "-map", "1", "-map", "-1:v:0", "-c", "copy", "-map_metadata", "1", "-map_chapters", "1" };
+                switch (container)
+                {
+                    case "mp4" or "mov": mux.AddRange(["-tag:v", "hvc1", "-movflags", "+faststart", "-strict", "unofficial"]); break;
+                    case "ts": mux.AddRange(["-f", "mpegts"]); break;
+                }
+                mux.Add(tmp);
+                job.AppendLog("Remux (FFmpeg): " + new EncodePlan(mux, tmp).CommandLine(ctx.Tools.Ffmpeg));
+                try { await RunOrThrowAsync(ctx, ctx.Tools.Ffmpeg, mux, ct); }
+                finally { TryDelete(mkv); }
+            }
             File.Move(tmp, output, overwrite: true);
         }
-        finally
+        finally { TryDelete(tmp); }
+    }
+
+    /// <summary>mkvmerge options of the video track: its times, language, name and the static HDR10 metadata of the container.</summary>
+    internal static List<string> MkvmergeVideoArgs(HdrPlan hdr, VideoCount info, string timestamps)
+    {
+        static string N(double v) => v.ToString("0.#####", CultureInfo.InvariantCulture);
+        var a = new List<string> { "--timestamps", "0:" + timestamps };
+        if (info.Language is { Length: > 0 } lang && lang != "und") a.AddRange(["--language", "0:" + lang]);
+        if (info.Title is { Length: > 0 } title) a.AddRange(["--track-name", "0:" + title]);
+        if (hdr.MaxCll is > 0 and var cll) a.AddRange(["--max-content-light", "0:" + cll.ToString(CultureInfo.InvariantCulture)]);
+        if (hdr.MaxFall is > 0 and var fall) a.AddRange(["--max-frame-light", "0:" + fall.ToString(CultureInfo.InvariantCulture)]);
+        if (hdr.Mastering is { } md)
         {
-            TryDelete(tmp);
-            TryDelete(stream);
+            a.AddRange(["--chromaticity-coordinates", $"0:{N(md.RedX)},{N(md.RedY)},{N(md.GreenX)},{N(md.GreenY)},{N(md.BlueX)},{N(md.BlueY)}"]);
+            a.AddRange(["--white-colour-coordinates", $"0:{N(md.WhiteX)},{N(md.WhiteY)}"]);
+            a.AddRange(["--max-luminance", "0:" + N(md.MaxLuminance), "--min-luminance", "0:" + N(md.MinLuminance)]);
         }
-        return warnings;
+        return a;
+    }
+
+    /// <summary>mkvmerge exits with 1 for warnings (the file is fine), 2 for errors.</summary>
+    private static async Task RunMkvmergeAsync(string mkvmerge, IReadOnlyList<string> args, CancellationToken ct)
+    {
+        var r = await ProcessRunner.RunAsync(mkvmerge, args, timeout: TimeSpan.FromHours(4), ct: ct);
+        if (r.ExitCode is not (0 or 1))
+            throw new InvalidOperationException(L.T("{0} failed: {1}", "mkvmerge", (r.StdOut + r.StdErr).Trim()));
     }
 
     /// <summary>
@@ -235,26 +313,39 @@ public static partial class HdrMetadata
         catch (Exception ex) when (ex is IOException or JsonException or UnauthorizedAccessException) { return 0; }
     }
 
-    private sealed record VideoCount(long Frames, string Rate, double Start);
+    /// <summary>The encoded video: every frame's time, its language and name, and whether it has a Dolby Vision record.</summary>
+    internal sealed record VideoCount(IReadOnlyList<double> Timestamps, string? Language, string? Title, bool HasDoviRecord);
 
     private static async Task<VideoCount> ProbeVideoAsync(RunnerContext ctx, string file, CancellationToken ct)
     {
-        var r = await ProcessRunner.RunAsync(ctx.Tools.Ffprobe, ["-v", "error", "-select_streams", "v:0", "-count_packets",
-            "-show_entries", "stream=nb_read_packets,r_frame_rate,avg_frame_rate,start_time", "-of", "json", file], timeout: TimeSpan.FromHours(1), ct: ct);
+        var r = await ProcessRunner.RunAsync(ctx.Tools.Ffprobe, ["-v", "error", "-select_streams", "v:0",
+            "-show_entries", "stream_tags=language,title:stream_side_data=side_data_type", "-of", "json", file], timeout: TimeSpan.FromMinutes(2), ct: ct);
+        string? lang = null, title = null;
+        bool record = false;
         try
         {
             using var doc = JsonDocument.Parse(r.StdOut);
-            var st = doc.RootElement.GetProperty("streams")[0];
-            string S(string n) => st.TryGetProperty(n, out var e) ? e.GetString() ?? "" : "";
-            long.TryParse(S("nb_read_packets"), NumberStyles.Integer, CultureInfo.InvariantCulture, out var frames);
-            double.TryParse(S("start_time"), NumberStyles.Float, CultureInfo.InvariantCulture, out var start);
-            var rate = S("avg_frame_rate") is { Length: > 0 } a && a != "0/0" ? a : S("r_frame_rate");
-            return new VideoCount(frames, rate is { Length: > 0 } && rate != "0/0" ? rate : "25", start);
+            if (doc.RootElement.TryGetProperty("streams", out var ss) && ss.GetArrayLength() > 0)
+            {
+                var st = ss[0];
+                if (st.TryGetProperty("tags", out var tags))
+                {
+                    if (tags.TryGetProperty("language", out var l)) lang = l.GetString();
+                    if (tags.TryGetProperty("title", out var t)) title = t.GetString();
+                }
+                if (st.TryGetProperty("side_data_list", out var sd))
+                    record = sd.EnumerateArray().Any(x => x.TryGetProperty("side_data_type", out var ty) && ty.GetString()?.Contains("DOVI configuration", StringComparison.OrdinalIgnoreCase) == true);
+            }
         }
-        catch (Exception ex) when (ex is JsonException or KeyNotFoundException or IndexOutOfRangeException or InvalidOperationException)
-        {
-            return new VideoCount(0, "25", 0);
-        }
+        catch (JsonException) { }
+        if (!record) record = r.StdOut.Contains("DOVI configuration record", StringComparison.OrdinalIgnoreCase);
+        // Every frame's presentation time (demuxing only: fast even for a whole film).
+        var p = await ProcessRunner.RunAsync(ctx.Tools.Ffprobe, ["-v", "error", "-select_streams", "v:0", "-show_entries", "packet=pts_time",
+            "-of", "csv=p=0", file], timeout: TimeSpan.FromHours(1), ct: ct);
+        var times = new List<double>();
+        foreach (var line in p.StdOut.Split('\n'))
+            if (double.TryParse(line.Trim().TrimEnd(','), NumberStyles.Float, CultureInfo.InvariantCulture, out var t)) times.Add(t);
+        return new VideoCount(times, lang, title, record);
     }
 
     private static void TryDelete(string path)

@@ -41,6 +41,10 @@ public sealed record HdrPlan
     public IReadOnlyList<(double Start, double End)>? KeptSeconds { get; init; }
     /// <summary>Frame rate used to turn <see cref="KeptSeconds"/> into frame numbers.</summary>
     public double FrameRate { get; init; }
+    /// <summary>Static HDR10 metadata of the output (written again in the container when the video is remuxed).</summary>
+    public MasteringDisplay? Mastering { get; init; }
+    public int? MaxCll { get; init; }
+    public int? MaxFall { get; init; }
     /// <summary>The RPU is extracted with dovi_tool (passed to the encoder or injected).</summary>
     public bool UseDolbyVisionRpu => DolbyVision is HdrCarry.Encoder or HdrCarry.Inject;
     /// <summary>The HDR10+ JSON is extracted with hdr10plus_tool (passed to the encoder or injected).</summary>
@@ -57,6 +61,8 @@ public sealed record HdrPlan
 
 public sealed record HdrEnvironment(bool HasZscale, bool HasLibplacebo, bool HasDoviTool, bool HasHdr10PlusTool)
 {
+    /// <summary>mkvmerge is there: injected metadata can be remuxed (FFmpeg can't time a raw HEVC stream).</summary>
+    public bool HasMkvmerge { get; init; } = true;
     public static readonly HdrEnvironment Unknown = new(true, false, false, false);
 }
 
@@ -149,7 +155,9 @@ public static class HdrPlanner
             else if (route.FrameCountChanged)
                 issues.Add(Containers.Warning("Dolby Vision is dropped because {0} (its metadata no longer matches frame by frame): static HDR is kept.", why));
             else if (x265Single || rigayaOne) dv = HdrCarry.Encoder;
-            else if (codec == VideoCodec.HEVC && !p5 && !route.VariableFrameRate) dv = HdrCarry.Inject;
+            else if (codec == VideoCodec.HEVC && !p5 && !route.VariableFrameRate && env.HasMkvmerge) dv = HdrCarry.Inject;
+            else if (codec == VideoCodec.HEVC && !p5 && !env.HasMkvmerge)
+                issues.Add(Containers.Warning("mkvmerge is missing: Dolby Vision can't be added to {0} after encoding, static HDR is kept.", encoderName));
             else issues.Add(Containers.Warning("Dolby Vision can't be added to {0} after encoding (dovi_tool works on HEVC): static HDR is kept.",
                 codec == VideoCodec.HEVC ? encoderName : codec.Display()));
             if (dv != HdrCarry.None)
@@ -178,7 +186,9 @@ public static class HdrPlanner
             }
             else if (!env.HasHdr10PlusTool) issues.Add(Containers.Warning("hdr10plus_tool is missing: HDR10+ dynamic metadata is dropped, static HDR10 is kept."));
             else if (x265Single) h10 = HdrCarry.Encoder;
-            else if (codec == VideoCodec.HEVC && !route.VariableFrameRate) h10 = HdrCarry.Inject;
+            else if (codec == VideoCodec.HEVC && !route.VariableFrameRate && env.HasMkvmerge) h10 = HdrCarry.Inject;
+            else if (codec == VideoCodec.HEVC && !env.HasMkvmerge)
+                issues.Add(Containers.Warning("mkvmerge is missing: HDR10+ can't be added to {0} after encoding, static HDR10 is kept.", encoderName));
             else issues.Add(Containers.Warning("HDR10+ can only be added to HEVC (hdr10plus_tool): {0} keeps static HDR10.", encoderName));
         }
 
@@ -214,6 +224,10 @@ public static class HdrPlanner
                 edits.Length > 0 ? " (" + edits + ")" : "",
                 route.Cropped ? " " + L.T("with the active area of the crop") : "",
                 dv == HdrCarry.Encoder ? L.T("given to {0}", encoderName) : L.T("injected into the finished HEVC")));
+        if (dv != HdrCarry.None)
+            details.Add(env.HasMkvmerge
+                ? L.T("Dolby Vision configuration record written with mkvmerge when the encoder leaves it out (TVs and players need it).")
+                : L.T("mkvmerge is missing: the file will carry the Dolby Vision RPU without the configuration record (some TVs and players won't see Dolby Vision)."));
         if (h10 == HdrCarry.Copy) details.Add(L.T("HDR10+: copied by {0} from the source.", encoderName));
         else if (h10 != HdrCarry.None)
             details.Add(L.T("HDR10+: JSON extracted with hdr10plus_tool{0}, {1}.", edits.Length > 0 ? " (" + edits + ")" : "",
@@ -228,6 +242,7 @@ public static class HdrPlanner
             Action = HdrAction.Preserve, ColorArgs = color, X265Params = x265,
             DolbyVision = dv, Hdr10Plus = h10, DolbyVisionProfile = dvProfile, RpuCrop = route.Cropped,
             KeptSeconds = route.KeptSeconds, FrameRate = v.FrameRate,
+            Mastering = hlg || p5Out ? null : hdr.Mastering, MaxCll = hlg || p5Out ? null : hdr.MaxCll, MaxFall = hlg || p5Out ? null : hdr.MaxFall,
             Issues = issues, Details = details,
             Summary = L.T("{0} → {1} kept", hdr.Description, kept),
         };

@@ -398,7 +398,7 @@ $("#s-tabs").onclick = e => {
 function renderToolsBox(info) {
   const tl = state.tools;
   $("#tools-box").innerHTML = tl.ffmpeg
-    ? `<b>FFmpeg</b> ${esc(tl.ffmpeg)}<br><b>FFprobe</b> ${esc(tl.ffprobe)}<br><b>SCXviD</b> ${esc(tl.scxvid ?? t("not found (keyframes use FFmpeg scene detection)"))}<br><b>dovi_tool</b> ${esc(tl.doviTool ?? "–")}<br><b>hdr10plus_tool</b> ${esc(tl.hdr10PlusTool ?? "–")}`
+    ? `<b>FFmpeg</b> ${esc(tl.ffmpeg)}<br><b>FFprobe</b> ${esc(tl.ffprobe)}<br><b>SCXviD</b> ${esc(tl.scxvid ?? t("not found (keyframes use FFmpeg scene detection)"))}<br><b>dovi_tool</b> ${esc(tl.doviTool ?? "–")}<br><b>hdr10plus_tool</b> ${esc(tl.hdr10PlusTool ?? "–")}<br><b>mkvmerge</b> ${esc(tl.mkvmerge ?? "–")}`
     : `<b style="color:var(--err)">${esc(t("FFmpeg not found."))}</b> ${esc(tl.instructions)}`;
   if (info) $("#about-box").innerHTML = `<b>KnA ${esc(info.version)}</b> · ${esc(info.platform)}<br>${esc(t("Data folder"))}: ${esc(info.dataDirectory)}<br>${esc(t("Media roots"))}: ${esc(info.roots.join(", "))}`;
 }
@@ -444,7 +444,7 @@ $("#btn-settings").onclick = guard(async () => {
   // FFmpeg channel, custom builds, companion programs
   fillSelect($("#s-channel"), [{ value: "release", label: t("Newest release branch") }, { value: "master", label: "master (nightly)" }], s.ffmpegChannel ?? "release");
   $("#s-builds").value = (s.customFfmpegBuilds ?? []).join("\n");
-  $("#s-toolpaths").innerHTML = ["ffprobe", "fdkaac", "dovi_tool", "hdr10plus_tool", "vspipe", "scxvid"].map(id =>
+  $("#s-toolpaths").innerHTML = ["ffprobe", "fdkaac", "dovi_tool", "hdr10plus_tool", "mkvmerge", "vspipe", "scxvid"].map(id =>
     `<label class="field"><span>${esc(id)}</span><input class="mono" data-tool="${id}" value="${esc(s.toolPaths?.[id] ?? "")}" placeholder="${esc(t("auto"))}" ${info.advancedAllowed ? "" : "disabled"}></label>`).join("");
   $("#s-builds").disabled = !info.advancedAllowed;
   // AI

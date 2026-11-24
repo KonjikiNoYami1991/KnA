@@ -168,11 +168,12 @@ public static class JobRunner
                 return;
             }
 
-            // Dolby Vision / HDR10+ the encoder couldn't take: injected into the finished HEVC.
+            // Dolby Vision / HDR10+ the encoder couldn't take: injected into the finished HEVC; Dolby Vision's
+            // configuration record written with mkvmerge when the encoder left it out.
             var hdrWarnings = new List<string>();
-            if (compiled.Hdr.NeedsInjection && sideFiles is not null && File.Exists(job.OutputPath))
+            if ((compiled.Hdr.NeedsInjection || compiled.Hdr.DolbyVision != HdrCarry.None) && File.Exists(job.OutputPath))
             {
-                hdrWarnings = await HdrMetadata.InjectAsync(job, compiled, sideFiles, workDir, ctx, ct);
+                hdrWarnings = await HdrMetadata.FinishAsync(job, compiled, sideFiles ?? new HdrSideFiles(null, null), workDir, ctx, ct);
                 foreach (var w in hdrWarnings) job.AppendLog("Warning: " + w);
             }
 
@@ -396,7 +397,10 @@ public static class JobRunner
                 RigayaEncoders = RigayaFor(tools),
                 CpuLevel = CpuFeatures.X86Level,
             },
-            Hdr = new HdrEnvironment(caps?.HasZscale ?? true, caps?.HasLibplacebo ?? false, tools?.DoviTool is not null, tools?.Hdr10PlusTool is not null),
+            Hdr = new HdrEnvironment(caps?.HasZscale ?? true, caps?.HasLibplacebo ?? false, tools?.DoviTool is not null, tools?.Hdr10PlusTool is not null)
+            {
+                HasMkvmerge = tools?.Mkvmerge is not null,
+            },
             Upscale = dataDirectory is null ? null : UpscaleEnvironmentFor(job.Settings, settings, tools, dataDirectory),
             ChaptersFile = WriteChaptersFile(job, dataDirectory),
         };

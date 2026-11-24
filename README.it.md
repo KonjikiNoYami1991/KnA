@@ -96,7 +96,7 @@ Se il backend scelto non ha un encoder per quel codec, o l'encoder non ha supera
 KnA lo usa come processo separato, ffmpeg → WAV → fdkaac) → l'AAC interno di FFmpeg. Anche l'**HE-AAC** passa da qui.
 
 **FFmpeg personalizzati**: in *Impostazioni → Avanzate* puoi elencare altre build (es. una compilata con libfdk_aac, o una nightly con gli encoder Vulkan)
-e i percorsi di ffprobe, fdkaac, dovi_tool, hdr10plus_tool, vspipe, scxvid. Il rilevamento prova tutte le build; ogni lavoro usa quella che ha
+e i percorsi di ffprobe, fdkaac, dovi_tool, hdr10plus_tool, mkvmerge, vspipe, scxvid. Il rilevamento prova tutte le build; ogni lavoro usa quella che ha
 il suo encoder (prima le personalizzate, preferendo quella con libfdk_aac). Il component manager scarica la **build BtbN del ramo di release più recente**
 (es. 9.0) o, se lo scegli, master.
 
@@ -170,7 +170,9 @@ duplicati, file non supportati e cartelle enormi vengono mostrati prima di proce
   in BT.709 (libplacebo se disponibile, altrimenti zscale). La **curva di tone mapping** si sceglie (Spline di default, BT.2390, BT.2446a,
   Hable, Mobius) e la luminosità segue i metadati di mastering, stabile per tutto il film; il rilevamento del picco scena per scena è facoltativo.
   Il file SDR non porta metadati HDR (mastering display, MaxCLL/MaxFALL, HDR10+). **Dolby Vision** (RPU tramite `dovi_tool`) e **HDR10+**
-  (tramite `hdr10plus_tool`) vengono conservati ricodificando in HEVC con x265; KnA spiega quando non è possibile (taglio, ritaglio, cambio di frame rate, encoder GPU).
+  (tramite `hdr10plus_tool`) vengono conservati da soli in ogni percorso: x265, NVEncC/QSVEncC/VCEEncC, script, tagli (solo i fotogrammi
+  tenuti), ritagli (area attiva dell'RPU), encoder GPU di FFmpeg e codifica a segmenti (iniettati nell'HEVC finito); `mkvmerge` scrive il
+  record di configurazione Dolby Vision che serve ai TV. Solo un cambio del numero di fotogrammi (frame rate, IVTC) lascia l'HDR statico, e KnA lo dice.
 - **Contenitori**: MKV, MP4, MOV, WebM, AVI, TS, con controllo di compatibilità con i codec scelti
   (un AVI non può contenere HEVC, gli allegati richiedono Matroska, e così via).
 
@@ -260,7 +262,7 @@ ogni cosa nella sua sottocartella:
 KnA\
   KnA.exe            un solo eseguibile (+ le librerie native dell'interfaccia)
   portable.txt
-  tools\ffmpeg\      FFmpeg + FFprobe (build GPL di BtbN) · tools\fdkaac\ · tools\dovi_tool\ · tools\hdr10plus_tool\ · tools\shaders\
+  tools\ffmpeg\      FFmpeg + FFprobe (build GPL di BtbN) · tools\fdkaac\ · tools\dovi_tool\ · tools\hdr10plus_tool\ · tools\mkvtoolnix\ · tools\shaders\
   tools\nvencc\ tools\qsvencc\ tools\vceencc\   encoder GPU di rigaya (Windows / Linux x64)
   tools\qaac\       qaac (Windows; i file di Apple si estraggono sul tuo PC: Componenti → qaac → Installa)
   tools\vapoursynth\ VapourSynth R82 + Python 3.13 portable + vsjetpack + i plugin del catalogo dei filtri (ogni pacchetto)
