@@ -142,6 +142,10 @@ one day match StaxRip (which doesn't exist for Linux/macOS; there the reference 
 
 ## 11. HDR kept when the video comes from a script (confirmed by the user)
 
+**Fully automatic** (CLAUDE.md, "it is an *auto*encoder"): no option, no button, no extraction step for the user. KnA
+detects the HDR of the source, extracts and edits RPU / HDR10+ by itself and passes everything to the encoder; StaxRip
+is the reference for the logic only, not for its interface or workflow.
+
 Today a VapourSynth/AviSynth script (catalogue chain or hand-written) is probed without HDR data, so `HdrPlanner`
 treats it as SDR: HDR10 / HDR10+ / Dolby Vision metadata are lost silently with NVEncC/QSVEncC/VCEEncC (`--vpy`/`--avs`
 or the y4m pipe) and with FFmpeg/x265. rigaya's encoders accept every piece explicitly; `copy`/`auto` only work with

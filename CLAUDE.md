@@ -26,6 +26,15 @@ lack. Releases are made only when the user asks (tag `v*` → draft release, pub
 - UI text goes through `L.T(...)` with the Italian translation in `src/KnA.Core/Localization/L.it.cs`.
 - Desktop (Avalonia, `src/KnA.App`) and web (`src/KnA.Server/wwwroot`) must offer the same features.
 
+## Principle: it is an *auto*encoder
+
+The user is never forced to do anything for an encode to come out right. KnA finds out by itself what the source has
+(HDR10 / HDR10+ / Dolby Vision, colours, interlacing, tracks…) and carries it through every path (GPU, CPU, scripts)
+without losses; extra tools run by themselves when needed. Study other programs (StaxRip, Hybrid) for their *logic*,
+not their interface or workflow (no manual demux / indexing / extraction steps). Optional controls are fine; a
+required manual step, or a silent loss the user would have to notice and fix, is a bug. When something really can't
+be done automatically, KnA says so plainly and does the best safe thing. Confirmed by the user.
+
 ## Decisions
 
 - **Blu-ray profiles (Blu-ray AAC / AC-3)**: keep KnA's values (H.264 High@4.1, `-maxrate 40000k -bufsize 30000k`,
