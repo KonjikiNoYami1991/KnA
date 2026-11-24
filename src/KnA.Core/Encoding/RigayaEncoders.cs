@@ -8,6 +8,11 @@ namespace KnA.Core.Encoding;
 /// <summary>Which program encodes the video of a GPU job.</summary>
 public enum EncoderProgram
 {
+    /// <summary>
+    /// GPU first: rigaya's encoder of the chosen GPU when it is installed and makes the codec (AV1 only with hardware
+    /// AV1), FFmpeg's GPU encoder otherwise.
+    /// </summary>
+    Auto,
     /// <summary>FFmpeg's own encoders (h264_nvenc, hevc_qsv, av1_amf…).</summary>
     FFmpeg,
     /// <summary>rigaya's standalone encoders: NVEncC (NVIDIA), QSVEncC (Intel), VCEEncC (AMD).</summary>
@@ -59,10 +64,32 @@ public static class RigayaEncoders
     public static bool Supports(VideoCodec codec, EncoderBackend b) =>
         ToolId(b) is not null && codec is VideoCodec.H264 or VideoCodec.HEVC or VideoCodec.AV1;
 
-    /// <summary>The job asked for a rigaya encoder and it can make this codec.</summary>
-    public static bool Wanted(JobSettings s) =>
-        s.Encoder.Program == EncoderProgram.Rigaya && s.ProfileDefinition.EncodesVideo && !s.ProfileDefinition.IsImages
-        && s.ProfileDefinition.AllowsHardware && Supports(s.EffectiveCodec, s.Backend);
+    /// <summary>rigaya encoders installed on this machine (set when the tools are found): what "Auto" picks from.</summary>
+    public static IReadOnlyCollection<EncoderBackend> Installed { get; set; } = [];
+    /// <summary>The hardware test of this machine (AV1 in hardware), for "Auto".</summary>
+    public static Tools.FfmpegCapabilities? HostCapabilities { get; set; }
+
+    /// <summary>
+    /// The job encodes with a rigaya encoder that can make this codec: chosen explicitly, or "Auto" (the default, GPU
+    /// first) with the encoder of the chosen GPU installed — AV1 only where the hardware test found hardware AV1.
+    /// </summary>
+    public static bool Wanted(JobSettings s, IReadOnlyCollection<EncoderBackend>? installed = null, Tools.FfmpegCapabilities? caps = null)
+    {
+        if (!s.ProfileDefinition.EncodesVideo || s.ProfileDefinition.IsImages || !s.ProfileDefinition.AllowsHardware
+            || !Supports(s.EffectiveCodec, s.Backend)) return false;
+        return s.Encoder.Program switch
+        {
+            EncoderProgram.Rigaya => true,
+            EncoderProgram.Auto => (installed ?? Installed).Contains(s.Backend)
+                                   && (s.EffectiveCodec != VideoCodec.AV1 || (caps ?? HostCapabilities) is not { IsCurrent: true } c
+                                       || RigayaProfiles.Av1InHardware(s.Backend, c)),
+            _ => false,
+        };
+    }
+
+    /// <summary>The program that really encodes ("Auto" resolved), for the explicit fields of the editor.</summary>
+    public static EncoderProgram Resolve(JobSettings s, IReadOnlyCollection<EncoderBackend>? installed = null, Tools.FfmpegCapabilities? caps = null) =>
+        s.Encoder.Program != EncoderProgram.Auto ? s.Encoder.Program : Wanted(s, installed, caps) ? EncoderProgram.Rigaya : EncoderProgram.FFmpeg;
 
     /// <summary>Pseudo encoder name used by the advanced settings ("nvencc"…).</summary>
     public static bool IsName(string? encoder) => encoder is "nvencc" or "qsvencc" or "vceencc";

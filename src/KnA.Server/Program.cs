@@ -673,9 +673,9 @@ app.Lifetime.ApplicationStarted.Register(async () =>
     log.LogInformation("FFmpeg: {Ffmpeg}", queue.Tools?.Ffmpeg ?? "NOT FOUND");
     if (string.IsNullOrEmpty(password) && browser.Roots.Any(r => r == Path.GetPathRoot(r)))
         log.LogWarning("The whole file system is reachable from the browser and no password is set: set KNA_PASSWORD or KNA_MEDIA_ROOTS.");
-    if (queue.Tools is not null && queue.Settings.Capabilities is not { IsCurrent: true })
+    if (queue.HardwareTestNeeded() is { } why)
     {
-        log.LogInformation("First start: detecting hardware encoders…");
+        log.LogInformation("Detecting hardware encoders ({Why})…", why);
         try { await queue.DetectHardwareAsync(new Progress<string>(l => log.LogInformation("{Line}", l))); }
         catch (Exception ex) { log.LogWarning(ex, "Hardware detection failed"); }
     }

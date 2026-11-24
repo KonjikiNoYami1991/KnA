@@ -96,6 +96,9 @@ public sealed class QueueService : IDisposable
     public FfmpegTools? RefreshTools()
     {
         Tools = FfmpegLocator.Locate(Settings.FfmpegPath, Store.DataDirectory, Settings.ToolPaths);
+        // GPU first: what "Auto" can pick.
+        RigayaEncoders.Installed = JobRunner.RigayaFor(Tools).Keys.ToList();
+        RigayaEncoders.HostCapabilities = Settings.Capabilities;
         // Which catalogue filters the VapourSynth here can run (editors), read in the background.
         var vspipe = Tools?.VsPipe;
         _ = Task.Run(() => VapourSynthRuntime.ProbeAsync(vspipe, Store.TempDirectory));
@@ -228,10 +231,26 @@ public sealed class QueueService : IDisposable
         if (RefreshTools() is not { } tools) return null;
         var caps = await HardwareDetector.DetectAsync(tools.Ffmpeg, Settings.CustomFfmpegBuilds.Select(ResolveFfmpegExe).ToList(),
             Settings.VaapiDevice, log, ct);
+        caps = caps with { Fingerprint = CurrentFingerprint(tools) };
         Settings.Capabilities = caps;
+        RigayaEncoders.HostCapabilities = caps;
         SaveSettings();
         RefreshTools();
         return caps;
+    }
+
+    private string CurrentFingerprint(FfmpegTools? tools) =>
+        MachineFingerprint.Compute(tools, Settings.CustomFfmpegBuilds.Select(ResolveFfmpegExe));
+
+    /// <summary>
+    /// Why the hardware test must run again by itself (never run, an older format, or the GPUs, their drivers or the
+    /// encoder programs changed since it ran), or null when the stored result still describes this machine.
+    /// </summary>
+    public string? HardwareTestNeeded()
+    {
+        if (Tools is null) return null;
+        if (Settings.Capabilities is not { IsCurrent: true } caps) return L.T("first start");
+        return caps.Fingerprint != CurrentFingerprint(Tools) ? L.T("the GPU, its driver or the encoder programs changed") : null;
     }
 
     /// <summary>A custom build may be given as the folder that contains ffmpeg.</summary>
@@ -323,7 +342,12 @@ public sealed class QueueService : IDisposable
         await _probeGate.WaitAsync();
         try
         {
-            job.Media = await MediaProber.For(tools).ProbeAsync(job.SourcePath);
+            var media = await MediaProber.For(tools).ProbeAsync(job.SourcePath);
+            // Interlaced, telecined or progressive: a few seconds analysed, so "Deinterlace: automatic" does the right thing.
+            await ScanDetector.ApplyAsync(tools.Ffmpeg, media);
+            // Black bars over the whole film (keyframes at many points): cut by themselves, shown in Filters → Crop.
+            await CropDetector.ApplyAsync(tools.Ffmpeg, media);
+            job.Media = media;
             job.ProbeError = null;
         }
         catch (Exception ex)

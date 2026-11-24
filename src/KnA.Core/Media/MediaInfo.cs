@@ -41,7 +41,11 @@ public sealed class MediaInfo
                 parts.Add($"{v.Width}×{v.Height}");
                 parts.Add(v.CodecName.ToUpperInvariant() + (v.BitDepth > 8 ? $" {v.BitDepth}-bit" : ""));
                 if (v.FrameRate > 0) parts.Add(v.FrameRate.ToString("0.###", CultureInfo.InvariantCulture) + " fps");
-                if (v.IsInterlaced) parts.Add("interlaced");
+                switch (v.EffectiveScan)
+                {
+                    case ScanType.Interlaced: parts.Add("interlaced"); break;
+                    case ScanType.Telecine: parts.Add("telecine"); break;
+                }
                 if (v.Rotation != 0) parts.Add($"↻{v.Rotation}°");
                 if (v.Hdr.IsHdr) parts.Add(v.Hdr.Description);
             }
@@ -104,6 +108,12 @@ public sealed class VideoStream : StreamBase
     public int Rotation { get; init; }
 
     public bool IsInterlaced => FieldOrder is "tt" or "bb" or "tb" or "bt";
+    /// <summary>Black bars found over the whole film (<see cref="CropDetector"/>): empty = none, null = not analysed.</summary>
+    public Encoding.CropSettings? DetectedCrop { get; set; }
+    /// <summary>What the analysis of a few seconds found (<see cref="ScanDetector"/>), null = not analysed.</summary>
+    public ScanType? Scan { get; set; }
+    /// <summary>The analysis when there is one, otherwise the field-order flag.</summary>
+    public ScanType EffectiveScan => Scan ?? (IsInterlaced ? ScanType.Interlaced : ScanType.Progressive);
 
     /// <summary>
     /// This stream (a script's video, which carries no colour data) with the colours and HDR metadata of
@@ -167,6 +177,12 @@ public sealed class AttachmentStream : StreamBase
 }
 
 public enum HdrFormat { Sdr, Hdr10, Hdr10Plus, Hlg, DolbyVision }
+
+/// <summary>
+/// How the frames are made: progressive, interlaced, or telecine (3:2 pulldown burned into 29.97 interlaced frames:
+/// film to be recovered with inverse telecine).
+/// </summary>
+public enum ScanType { Progressive, Interlaced, Telecine }
 
 /// <summary>Static mastering display metadata (SMPTE ST 2086), chromaticities 0..1, luminance in cd/m².</summary>
 public sealed record MasteringDisplay(

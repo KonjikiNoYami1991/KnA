@@ -4,7 +4,12 @@ using KnA.Core.Media;
 
 namespace KnA.Core.Encoding;
 
-public enum DeinterlaceMode { Auto, Off, Force }
+/// <summary>
+/// Auto: what the analysis of the source found (interlaced → Bwdif, telecined film → inverse telecine, progressive →
+/// nothing; the field-order flag only when it could not be analysed). Force: deinterlace every frame. Ivtc: inverse
+/// telecine (field matching + decimation back to 23.976).
+/// </summary>
+public enum DeinterlaceMode { Auto, Off, Force, Ivtc }
 public enum FilterStrength { Off, Light, Medium, Strong }
 public enum HdrMode
 {
@@ -26,7 +31,13 @@ public sealed record CropSettings(int Left = 0, int Top = 0, int Right = 0, int 
 public sealed record VideoFilterSettings
 {
     public DeinterlaceMode Deinterlace { get; init; } = DeinterlaceMode.Auto;
+    /// <summary>Pixels cut from each side; null = automatic (<see cref="AutoCrop"/>), an empty crop = none.</summary>
     public CropSettings? Crop { get; init; }
+    /// <summary>
+    /// Black bars found by themselves (<see cref="Media.CropDetector"/>) are cut when <see cref="Crop"/> is not set:
+    /// the editor shows them in Filters → Crop, where they can be changed or switched off.
+    /// </summary>
+    public bool AutoCrop { get; init; } = true;
     public FilterStrength Denoise { get; init; }
     public FilterStrength Deband { get; init; }
     public FilterStrength Sharpen { get; init; }
@@ -132,7 +143,7 @@ public enum RateControl
 /// <summary>Encoder parameters set by hand; empty fields keep KnA's choice for the quality level.</summary>
 public sealed record EncoderOverrides
 {
-    /// <summary>FFmpeg's encoders, or rigaya's NVEncC / QSVEncC / VCEEncC for the GPU backends.</summary>
+    /// <summary>Auto (GPU first: rigaya's encoder when installed), FFmpeg's encoders, or rigaya's NVEncC / QSVEncC / VCEEncC.</summary>
     public EncoderProgram Program { get; init; }
     public RateControl RateControl { get; init; }
     /// <summary>CRF / CQ / QP value (lower = better).</summary>
@@ -155,7 +166,7 @@ public sealed record EncoderOverrides
     public string? GpuFilters { get; init; }
 
     [JsonIgnore]
-    public bool IsEmpty => Program == EncoderProgram.FFmpeg && RateControl == RateControl.Auto && Speed is null && Tune is null && KeyframeSeconds is null
+    public bool IsEmpty => Program == EncoderProgram.Auto && RateControl == RateControl.Auto && Speed is null && Tune is null && KeyframeSeconds is null
                            && BFrames is null && Lookahead is null && string.IsNullOrWhiteSpace(Extra) && string.IsNullOrWhiteSpace(GpuFilters);
 }
 

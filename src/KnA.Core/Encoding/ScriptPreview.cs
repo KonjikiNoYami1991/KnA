@@ -50,8 +50,11 @@ public static class ScriptPreview
             var cuts = parts.Select(p => $"clip[{(long)Math.Round(p.Start * video.FrameRate)}:{(p.End >= 1e9 ? "" : ((long)Math.Round(p.End * video.FrameRate)).ToString(CultureInfo.InvariantCulture))}]");
             Step(L.T("Trim") + " — " + Where("--trim", "FFmpeg"), "clip = " + string.Join(" + ", cuts));
         }
-        if (f.Deinterlace == DeinterlaceMode.Force || (f.Deinterlace == DeinterlaceMode.Auto && video.IsInterlaced))
+        var deint = FilterBuilder.Deinterlacing(video, f);
+        if (deint is DeinterlaceMode.Force or DeinterlaceMode.Auto)
             Step(L.T("Deinterlace (Bwdif)") + " — " + Where("--vpp-bwdif", "FFmpeg bwdif"), "clip = core.bwdif.Bwdif(clip, field=1)");
+        else if (deint == DeinterlaceMode.Ivtc)
+            Step(L.T("Inverse telecine") + " — " + Where("--vpp-ivtc", "FFmpeg fieldmatch + decimate"), "clip = core.vivtc.VFM(clip, order=1)\nclip = core.vivtc.VDecimate(clip)");
         if (f.Crop is { IsEmpty: false } c)
             Step(L.T("Crop") + " — " + Where("--crop", "FFmpeg crop"),
                 $"clip = core.std.Crop(clip, left={c.Left & ~1}, right={c.Right & ~1}, top={c.Top & ~1}, bottom={c.Bottom & ~1})");

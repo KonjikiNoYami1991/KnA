@@ -650,9 +650,9 @@ async function formChanged(s) {
     ed.settings = cloneSettings(prev);
     return guard(() => materializeNow({ profile: kind }))();
   }
-  if (prev && (s.codec !== prev.codec || s.backend !== prev.backend || (s.encoder?.program ?? "FFmpeg") !== (prev.encoder?.program ?? "FFmpeg"))) {
+  if (prev && (s.codec !== prev.codec || s.backend !== prev.backend || (s.encoder?.program ?? "Auto") !== (prev.encoder?.program ?? "Auto"))) {
     const e = { ...s.encoder, speed: null, tune: null, extra: null };
-    if ((s.encoder?.program ?? "FFmpeg") !== (prev.encoder?.program ?? "FFmpeg") || s.backend !== prev.backend) e.gpuFilters = null;
+    if ((s.encoder?.program ?? "Auto") !== (prev.encoder?.program ?? "Auto") || s.backend !== prev.backend) e.gpuFilters = null;
     if (["Quality", "Auto"].includes(e.rateControl ?? "Auto")) { e.rateControl = "Auto"; e.qualityValue = null; }
     s.encoder = e;
     try { s.encoder = await api("POST", `/api/jobs/${ed.id}/rate`, { settings: s }); } catch { /* keep the cleared values */ }
@@ -727,7 +727,7 @@ async function renderVideo(body) {
     const list = options.filter(o => o.category === cat);
     page.innerHTML = `<small class="muted">${esc(t("{0} parameters of {1}, read from its help. Applied last: they win over KnA's values.", options.length, program))}</small><div></div>`;
     mountPage(page.lastElementChild, list, cmdModel(() => ed.settings.encoder?.extra, v => { ed.settings.encoder = { ...ed.settings.encoder, extra: v }; save(); }), cat === "Other",
-      ed.settings.encoder?.program === "Rigaya" ? "--aq-temporal --bref-mode each" : "-x265-params psy-rd=2:aq-strength=0.8");
+      usesRigaya(ed.settings, ed.settings.codec) ? "--aq-temporal --bref-mode each" : "-x265-params psy-rd=2:aq-strength=0.8");
   };
   if (!encodes) ed.videoSub = "general";
   show();
@@ -920,7 +920,7 @@ function renderFilters(body) {
   const rot = ed.analysis.rotation || 0;
   const p = profileOf(ed.settings.profile);
   const rig = state.options.rigayaEncoders?.[`${ed.settings.codec}|${ed.settings.backend ?? "Software"}`];
-  const useRig = !!rig && ed.settings.encoder?.program === "Rigaya";
+  const useRig = usesRigaya(ed.settings, ed.settings.codec);
   const backend = ed.settings.backend ?? "Software";
   const gpuSuffix = { Nvenc: true, Qsv: true, Vaapi: true, Vulkan: true, VideoToolbox: true }[backend];
   const backendLabel = label(o.backends, backend);
@@ -945,6 +945,7 @@ function renderFilters(body) {
               ${["left", "top", "right", "bottom"].map(k => `<input type="number" min="0" step="2" data-c="${k}" value="${crop[k] || 0}" title="${esc(t(k[0].toUpperCase() + k.slice(1)))}" placeholder="${esc(t(k[0].toUpperCase() + k.slice(1)))}">`).join("")}
             </div>
             <div class="row" style="margin-top:6px"><button class="btn sm" data-a="autocrop">${esc(t("Detect black borders"))}</button><span class="muted small">${esc(t("left · top · right · bottom"))}</span></div>
+            <label class="check"><input type="checkbox" data-v="autoCrop" ${v.autoCrop !== false ? "checked" : ""}>${esc(t("Automatic crop of black bars (only bars present over the whole film)"))}</label>
           </div>
           <div class="grid3">
             <label class="field"><span>${esc(t("Denoise"))}</span><select data-v="denoise"></select></label>
@@ -988,6 +989,11 @@ function renderFilters(body) {
       if (el.dataset.v === "orientation") val = val === "" ? null : Number(val);
       if (el.dataset.v === "fps") val = val === "" ? null : Number(val);
       ed.settings.videoFilters = { ...ed.settings.videoFilters, [el.dataset.v]: val };
+      if (el.dataset.v === "autoCrop") {
+        // On: the bars found over the film fill the fields; off: no crop at all.
+        ed.settings.videoFilters.crop = val ? (ed.analysis.detectedCrop ?? null) : null;
+        renderFilters(body);
+      }
     } else if (el.dataset.c) {
       const c = { ...(ed.settings.videoFilters.crop ?? { left: 0, top: 0, right: 0, bottom: 0 }), [el.dataset.c]: Number(el.value) || 0 };
       ed.settings.videoFilters = { ...ed.settings.videoFilters, crop: c };

@@ -177,6 +177,12 @@ public static class CommandBuilder
         var videoTrack = tracks.FirstOrDefault(t => t.Include && t.Kind == "video");
         if (videoTrack is null || TrackPlanner.Lookup(videoTrack, media) is not VideoStream video)
             return Fail(Containers.Error("No video track selected."), tracks, container);
+        // Black bars found over the whole film are cut by themselves (shown and editable in Filters → Crop).
+        if (AutoCrop(s, video, videoTrack.File == ctx.Source.Path) is { } auto)
+        {
+            s = s with { VideoFilters = s.VideoFilters with { Crop = auto } };
+            ctx = ctx with { Settings = s };
+        }
 
         bool copyVideo = preview is null && chunk is null && (concat is not null || p.Kind == ProfileKind.RemuxMkv
                          || (p.Kind == ProfileKind.RemuxMp4 && Containers.AcceptsVideo("mp4", video.CodecName))
@@ -196,7 +202,8 @@ public static class CommandBuilder
         // The chosen GPU must really have this encoder (detected with a test encode), otherwise stop here
         // instead of failing halfway through the job.
         string? encoderName = null;
-        bool rigaya = !copyVideo && p.EncodesVideo && preview is null && concat is null && !ctx.RestOnly && RigayaEncoders.Wanted(s);
+        bool rigaya = !copyVideo && p.EncodesVideo && preview is null && concat is null && !ctx.RestOnly
+                      && RigayaEncoders.Wanted(s, ctx.Options.RigayaEncoders.Keys.ToList(), ctx.Options.Capabilities);
         if (rigaya && !ctx.Options.RigayaEncoders.ContainsKey(s.Backend))
             issues.Add(Containers.Error("{0} is not installed: add it in Settings → Components, or choose FFmpeg as the encoder program.",
                 RigayaEncoders.DisplayName(s.Backend)));
@@ -492,9 +499,15 @@ public static class CommandBuilder
             foreach (var t in tracks.Where(t => t.Include && t.Kind == "subtitle"))
             {
                 var sst = TrackPlanner.Lookup(t, media) as SubtitleStream;
-                bool ocr = KnA.Core.Ocr.SubtitleOcr.Wanted(t, s);
+                bool ocr = KnA.Core.Ocr.SubtitleOcr.Wanted(t, s, sst, container);
                 // Picture track to read with OCR: the runner replaces it with the SRT before encoding (not in previews).
-                if (ocr && sst is not null && KnA.Core.Ocr.SubtitleOcr.CanRead(sst.CodecName)) continue;
+                if (ocr && sst is not null && KnA.Core.Ocr.SubtitleOcr.CanRead(sst.CodecName))
+                {
+                    if (KnA.Core.Ocr.SubtitleOcr.WouldBeLost(t, sst, container) && !KnA.Core.Ocr.SubtitleOcr.Wanted(t, s))
+                        issues.Add(Containers.Warning("Subtitle track \"{0}\": {1} can't hold pictures, so it is read with OCR and kept as text.",
+                            t.Title ?? t.Language ?? t.Stream.ToString(CultureInfo.InvariantCulture), container.ToUpperInvariant()));
+                    continue;
+                }
                 var codec = Containers.SubtitleCodec(restOnly ? "mkv" : container, sst, t.Codec);
                 if (t.Output is { Length: > 0 } wanted && !ocr)
                 {
@@ -564,8 +577,7 @@ public static class CommandBuilder
             // see exactly the timeline of a single-pass encode, and trim= keeps the segment's frames.
             // The input seek is exact (frames before it never reach the filters, -copyts keeps the timeline):
             // only temporal filters need a little history to look the same across segment borders.
-            double preroll = s.VideoFilters.Denoise != FilterStrength.Off || s.VideoFilters.Deinterlace == DeinterlaceMode.Force
-                || (s.VideoFilters.Deinterlace == DeinterlaceMode.Auto && video.IsInterlaced) ? 1 : 0;
+            double preroll = s.VideoFilters.Denoise != FilterStrength.Off || FilterBuilder.Deinterlacing(video, s.VideoFilters) != DeinterlaceMode.Off ? 1 : 0;
             a2.AddRange(inputs.ToArgs(delay => Math.Max(0, chunk.Start - delay - preroll)));
             a2.Add("-copyts");
             a2.AddRange(body);
@@ -700,6 +712,7 @@ public static class CommandBuilder
         string? frameReason = null;
         bool cropped = s.VideoFilters.Crop is { IsEmpty: false };
         if (s.VideoFilters.ChangesFrameCount) frameReason = L.T("the frame rate changes");
+        else if (FilterBuilder.Deinterlacing(scriptSource ?? video, s.VideoFilters) == DeinterlaceMode.Ivtc) frameReason = L.T("inverse telecine removes frames");
         else if (ChangesFrames(s.VideoFilters.Custom) || ChangesFrames(rigaya ? s.Encoder.GpuFilters : s.VideoFilters.Gpu))
             frameReason = L.T("a filter changes the frame count");
         if (scriptSource is not null)
@@ -735,6 +748,14 @@ public static class CommandBuilder
             FromScript = scriptSource is not null, KeptSeconds = kept, VariableFrameRate = vfr.VariableFrameRate,
         };
     }
+
+    /// <summary>
+    /// The crop of the black bars found in <paramref name="video"/> when the job leaves the crop automatic (not set,
+    /// "automatic crop" on, the video encoded with filters from the source file itself); null otherwise.
+    /// </summary>
+    public static CropSettings? AutoCrop(JobSettings s, VideoStream video, bool fromSource) =>
+        s.VideoFilters is { Crop: null, AutoCrop: true } && fromSource && s.ProfileDefinition is { UsesVideoFilters: true, IsImages: false }
+        && s.VideoFilters.EffectiveRotation(video.Rotation) == 0 && video.DetectedCrop is { IsEmpty: false } c ? c : null;
 
     /// <summary>A user filter chain (FFmpeg or --vpp-*) that adds or removes frames.</summary>
     internal static bool ChangesFrames(string? chain) =>

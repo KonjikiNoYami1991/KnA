@@ -12,6 +12,25 @@
   tracks left out (e.g. PGS subtitles) instead of dropping them silently.
 - Dolby Vision found from the frames when the container has no configuration record (old mkvmerge remuxes).
 
+**Autoencoder review: KnA does it by itself**
+- **GPU first by default**: the encoder program is "Automatic" — NVEncC / QSVEncC / VCEEncC of the chosen GPU when it
+  is installed and makes the codec (AV1 only with hardware AV1), FFmpeg's GPU encoder otherwise; the editor shows the
+  program that will really run, with its profile from the detected GPU.
+- **Hardware detection follows the machine**: a fingerprint of the GPUs, their drivers and the encoder programs is
+  checked at every start; when it changes the test runs again by itself.
+- **Picture subtitles never lost**: PGS / VobSub that the container can't hold (MP4, WebM…) are read with OCR by
+  themselves and kept as text (said in a warning) instead of being left out.
+- **Telecine detection**: "Deinterlace: automatic" analyses a few seconds at three points (FFmpeg idet: combed frames
+  and repeated fields) instead of trusting the field-order flag: telecined film gets inverse telecine back to 23.976
+  (fieldmatch + decimate, `--vpp-ivtc` on the GPU), interlaced video Bwdif, mis-flagged progressive video nothing. New
+  choice "Inverse telecine" in Deinterlace.
+- **Automatic crop of black bars**: cropdetect on keyframes at 16 points of the film; only bars present in every
+  sample are cut (never variable or partial bars), thin bars ignored, even values. Shown in Filters → Crop, editable,
+  switchable off ("Automatic crop of black bars"); the Dolby Vision active area follows.
+- **qaac without a manual step** (Windows): the first AAC encode that would fall back to fdkaac installs Apple's
+  CoreAudioToolbox by itself (extracted on this computer from Apple's iTunes installer, never redistributed); fdkaac
+  goes on if it fails.
+
 **HDR carried through every path, by itself**
 - **Video from a script** (catalogue chain, the standard VapourSynth frameserver or a hand-written script of the source)
   takes the source's colours and HDR metadata: HDR10 / HLG / HDR10+ / Dolby Vision are no longer lost silently with
@@ -188,6 +207,26 @@
 - Il log mostra solo i comandi eseguiti davvero (niente comando dell'encoder FFmpeg accanto a quello di NVEncC) ed elenca
   le tracce escluse (es. sottotitoli PGS) invece di scartarle in silenzio.
 - Dolby Vision riconosciuto dai fotogrammi quando il contenitore non ha il record di configurazione (vecchi remux mkvmerge).
+
+**Revisione da autoencoder: KnA fa da sé**
+- **GPU prima di tutto, di default**: il programma di codifica è "Automatico" — NVEncC / QSVEncC / VCEEncC della GPU
+  scelta quando è installato e fa il codec (AV1 solo con AV1 in hardware), altrimenti l'encoder GPU di FFmpeg; l'editor
+  mostra il programma che girerà davvero, con il profilo ricavato dalla GPU rilevata.
+- **Il rilevamento hardware segue la macchina**: a ogni avvio si controlla un'impronta di GPU, driver e programmi di
+  codifica; se cambia, il test riparte da solo.
+- **Sottotitoli a immagine mai persi**: PGS / VobSub che il contenitore non può tenere (MP4, WebM…) vengono letti con
+  l'OCR da soli e mantenuti come testo (lo dice un avviso) invece di essere scartati.
+- **Rilevamento del telecine**: "Deinterlaccia: automatico" analizza qualche secondo in tre punti (idet di FFmpeg:
+  fotogrammi pettinati e campi ripetuti) invece di fidarsi del flag: il film telecinato ha il telecine inverso a 23,976
+  (fieldmatch + decimate, `--vpp-ivtc` sulla GPU), il video interlacciato Bwdif, quello progressivo con il flag
+  sbagliato niente. Nuova scelta "Telecine inverso" in Deinterlaccia.
+- **Ritaglio automatico delle bande nere**: cropdetect sui fotogrammi chiave in 16 punti del film; si tagliano solo le
+  bande presenti in tutti i campioni (mai bande variabili o parziali), quelle sottili sono ignorate, valori pari.
+  Mostrato in Filtri → Ritaglio, modificabile e disattivabile ("Ritaglio automatico delle bande nere"); l'area attiva
+  Dolby Vision segue.
+- **qaac senza passaggi manuali** (Windows): la prima codifica AAC che ripiegherebbe su fdkaac installa da sola il
+  CoreAudioToolbox di Apple (estratto su questo computer dall'installer di iTunes di Apple, mai ridistribuito); se non
+  riesce si continua con fdkaac.
 
 **HDR mantenuto in ogni percorso, da solo**
 - **Video da uno script** (catena del catalogo, frameserver VapourSynth standard o script scritto a mano sulla

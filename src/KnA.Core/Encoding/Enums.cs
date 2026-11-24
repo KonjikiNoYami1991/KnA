@@ -266,6 +266,7 @@ public static class EnumText
         DeinterlaceMode.Auto => L.T("Automatic"),
         DeinterlaceMode.Off => L.T("Off"),
         DeinterlaceMode.Force => L.T("Always"),
+        DeinterlaceMode.Ivtc => L.T("Inverse telecine (back to film frames)"),
         _ => d.ToString(),
     };
 

@@ -35,7 +35,16 @@ public static class JobRunner
             job.BeginStage(L.T("Analysing"));
             ctx.Changed(job);
             var prober = MediaProber.For(ctx.Tools);
-            job.Media = await prober.ProbeAsync(job.SourcePath, ct);
+            var probed = await prober.ProbeAsync(job.SourcePath, ct);
+            if (job.Media?.PrimaryVideo?.Scan is { } known && probed.PrimaryVideo is { } pv) pv.Scan = known;
+            else await ScanDetector.ApplyAsync(ctx.Tools.Ffmpeg, probed, ct);
+            if (job.Media?.PrimaryVideo?.DetectedCrop is { } bars && probed.PrimaryVideo is { } pc) pc.DetectedCrop = bars;
+            else if (job.Settings.VideoFilters is { Crop: null, AutoCrop: true }) await CropDetector.ApplyAsync(ctx.Tools.Ffmpeg, probed, ct);
+            job.Media = probed;
+            if (probed.PrimaryVideo?.Scan is { } scan) job.AppendLog("Scan analysis (idet): " + scan);
+            if (probed.PrimaryVideo?.DetectedCrop is { IsEmpty: false } dc)
+                job.AppendLog($"Black bars found over the film: {dc.Left}/{dc.Top}/{dc.Right}/{dc.Bottom} (left/top/right/bottom)"
+                              + (job.Settings.VideoFilters is { Crop: null, AutoCrop: true } ? ", cut automatically." : "."));
             EnsureFrameserverScript(job, ctx.Store, ctx.Settings);
             if (job.ScriptNote is { } note) job.AppendLog(note);
             await ProbeExternalsAsync(job, prober, ct);
@@ -49,6 +58,7 @@ public static class JobRunner
             var s = job.Settings;
             var p = s.ProfileDefinition;
             ctx = WithBestBuild(ctx, s, job);
+            ctx = await EnsureQaacAsync(job, ctx, ct);
 
             if (p.IsKeyframes)
             {
@@ -80,7 +90,7 @@ public static class JobRunner
 
             // ------------------------------------------------------------ prepare
             Directory.CreateDirectory(workDir);
-            baseCtx = await OcrSubtitlesAsync(job, baseCtx, workDir, ctx, ct);
+            baseCtx = await OcrSubtitlesAsync(job, baseCtx, check.Container, workDir, ctx, ct);
             PreparedSubtitles? subs = null;
             var burnTrack = check.Tracks.FirstOrDefault(t => t.Burn && t.Kind == "subtitle");
             if (burnTrack is not null && p.UsesVideoFilters)
@@ -203,6 +213,41 @@ public static class JobRunner
         }
     }
 
+    private static int _qaacTried;
+
+    /// <summary>
+    /// qaac without a manual step (Windows): the first job that would encode AAC with fdkaac only because Apple's
+    /// CoreAudioToolbox is missing installs it by itself — extracted on this computer from Apple's own iTunes installer,
+    /// never redistributed — and then uses qaac. Tried once per session; on failure fdkaac simply goes on.
+    /// </summary>
+    private static async Task<RunnerContext> EnsureQaacAsync(QueueJob job, RunnerContext ctx, CancellationToken ct)
+    {
+        if (!OperatingSystem.IsWindows() || ctx.Tools.Qaac is not null || Volatile.Read(ref _qaacTried) != 0) return ctx;
+        var p = job.Settings.ProfileDefinition;
+        if (!p.UsesAudio || p.IsImages || p.IsDemux || p.IsKeyframes) return ctx;
+        try
+        {
+            var cc = BuildContext(job, ctx);
+            var c = CommandBuilder.Compile(cc);
+            var media = new Dictionary<string, MediaInfo>(job.ExternalMedia) { [job.SourcePath] = job.Media! };
+            bool needed = c.Tracks.Where(t => t.Include && t.Kind == "audio").Any(t => TrackPlanner.Lookup(t, media) is AudioStream a
+                && AudioPlanner.PlanTrack(t, a, cc.Settings, c.Container, cc.Options.AudioEncoders).Encoder == AudioEncoderSet.Fdkaac);
+            if (!needed || Interlocked.Exchange(ref _qaacTried, 1) != 0) return ctx;
+            job.BeginStage(L.T("Installing qaac (Apple AAC)"));
+            ctx.Changed(job);
+            job.AppendLog(L.T("qaac: Apple's CoreAudioToolbox is extracted on this computer from Apple's iTunes installer (first AAC encode)."));
+            await new ComponentManager(ctx.Store.DataDirectory).InstallAsync("qaac",
+                new Progress<double>(pc => { job.StagePercent = Math.Clamp(pc, 0, 100); ctx.Changed(job); }),
+                new Progress<string>(l => job.AppendLog("  " + l)), ct);
+            if (FfmpegLocator.LocateQaac(ctx.Store.DataDirectory) is { } qaac) return ctx with { Tools = ctx.Tools with { Qaac = qaac } };
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            job.AppendLog("Warning: " + L.T("qaac could not be installed ({0}): fdkaac is used.", ex.Message));
+        }
+        return ctx;
+    }
+
     /// <summary>
     /// Several kept parts joined into one file: every part is made with the job's own command (cut to that part,
     /// no chapters) in the working folder, then the parts are joined without re-encoding (concat demuxer) and
@@ -281,13 +326,13 @@ public static class JobRunner
     /// Picture subtitles chosen as text (track output "ocr", or the preset's "convert picture subtitles") are read
     /// with OCR first: each becomes an SRT file that replaces the track, with its language, title and flags.
     /// </summary>
-    private static async Task<CompileContext> OcrSubtitlesAsync(QueueJob job, CompileContext cc, string workDir, RunnerContext ctx, CancellationToken ct)
+    private static async Task<CompileContext> OcrSubtitlesAsync(QueueJob job, CompileContext cc, string container, string workDir, RunnerContext ctx, CancellationToken ct)
     {
         var media = new Dictionary<string, MediaInfo>(cc.Media) { [cc.Source.Path] = cc.Source };
         var tracks = (cc.Edit.Tracks ?? TrackPlanner.Default(cc.Source, cc.Settings)).ToList();
         var wanted = tracks.Select((t, i) => (t, i))
-            .Where(x => x.t.Include && x.t.Kind == "subtitle" && Ocr.SubtitleOcr.Wanted(x.t, cc.Settings)
-                        && TrackPlanner.Lookup(x.t, media) is SubtitleStream st && Ocr.SubtitleOcr.CanRead(st.CodecName))
+            .Where(x => x.t.Include && x.t.Kind == "subtitle" && TrackPlanner.Lookup(x.t, media) is SubtitleStream st
+                        && Ocr.SubtitleOcr.Wanted(x.t, cc.Settings, st, container) && Ocr.SubtitleOcr.CanRead(st.CodecName))
             .ToList();
         if (wanted.Count == 0) return cc;
         var options = ctx.Settings.Ocr ?? new Ocr.OcrOptions();

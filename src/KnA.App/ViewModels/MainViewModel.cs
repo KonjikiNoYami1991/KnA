@@ -71,7 +71,8 @@ public sealed partial class MainViewModel : ObservableObject
         FormSettings = queue.Settings.Defaults;
         Watch = new WatchFolderService(queue);
         RefreshHardware();
-        if (queue.Tools is not null && queue.Settings.Capabilities is not { IsCurrent: true })
+        // The test follows the machine: first start, a new GPU or driver, updated encoder programs.
+        if (queue.HardwareTestNeeded() is not null)
             _ = DetectHardwareAsync();
     }
 

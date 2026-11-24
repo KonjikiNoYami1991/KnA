@@ -243,6 +243,14 @@ function bindForm(root, s, opts, codec) {
   };
 }
 
+/** rigaya's encoder encodes this job: chosen, or "Auto" (GPU first, the default) with it installed. */
+function usesRigaya(s, codec) {
+  const rig = state.options.rigayaEncoders?.[`${codec}|${s.backend ?? "Software"}`];
+  if (!rig) return false;
+  const p = s.encoder?.program ?? "Auto";
+  return p === "Rigaya" || (p === "Auto" && (state.tools?.rigaya ?? []).includes(s.backend));
+}
+
 /** FFmpeg or rigaya's encoder for a GPU backend (editor, Video → General): it decides which parameter pages appear. */
 function encoderProgram(s, codec) {
   const o = state.options, e = s.encoder ?? {};
@@ -252,7 +260,7 @@ function encoderProgram(s, codec) {
   const installed = (state.tools?.rigaya ?? []).includes(s.backend);
   const opt = (v, l, cur) => `<option value="${esc(v)}" ${String(cur ?? "") === v ? "selected" : ""}>${esc(l)}</option>`;
   return `<label class="field"><span>${esc(t("Encoder program"))}</span><select data-k="encoder.program">
-      ${opt("FFmpeg", t("FFmpeg ({0})", ffEnc), e.program ?? "FFmpeg")}${opt("Rigaya", rig.name + " (rigaya)", e.program)}</select>
+      ${opt("Auto", t("Automatic: {0} when installed, otherwise FFmpeg", rig.name), e.program ?? "Auto")}${opt("FFmpeg", t("FFmpeg ({0})", ffEnc), e.program)}${opt("Rigaya", rig.name + " (rigaya)", e.program)}</select>
       <small class="muted">${esc(t("{0} reads the source with GPU decoding, resizes on the GPU and copies Dolby Vision / HDR10+ when no FFmpeg filter is needed (otherwise FFmpeg decodes and filters, and sends the frames to it). Install it in Settings → Components.", rig.name))}</small>
       ${e.program === "Rigaya" && !installed ? `<small class="warn">${esc(t("{0} is not installed: add it in Settings → Components, or choose FFmpeg as the encoder program.", rig.name))}</small>` : ""}</label>`;
 }
@@ -265,7 +273,7 @@ function editorRate(s, codec) {
   const o = state.options, e = s.encoder ?? {};
   const ffEnc = o.encoderNames?.[`${codec}|${s.backend ?? "Software"}`] ?? "";
   const rig = o.rigayaEncoders?.[`${codec}|${s.backend ?? "Software"}`];
-  const useRig = !!rig && e.program === "Rigaya";
+  const useRig = usesRigaya(s, codec);
   const enc = useRig ? rig.name : ffEnc;
   const info = (useRig ? rig.info : o.encoders?.[ffEnc]) ?? { speeds: [], tunes: [] };
   let rc = e.rateControl ?? "Auto";
@@ -346,15 +354,15 @@ function advancedEncoder(s, codec) {
   const o = state.options, e = s.encoder ?? {};
   const ffEnc = o.encoderNames?.[`${codec}|${s.backend ?? "Software"}`] ?? "";
   const rig = o.rigayaEncoders?.[`${codec}|${s.backend ?? "Software"}`];
-  const useRig = !!rig && e.program === "Rigaya";
+  const useRig = usesRigaya(s, codec);
   const enc = useRig ? rig.name : ffEnc;
   const info = (useRig ? rig.info : o.encoders?.[ffEnc]) ?? { speeds: [], tunes: [] };
   const opt = (v, l, cur) => `<option value="${esc(v)}" ${String(cur ?? "") === v ? "selected" : ""}>${esc(l)}</option>`;
-  const empty = (e.program ?? "FFmpeg") === "FFmpeg" && !e.speed && !e.tune && e.keyframeSeconds == null && e.bFrames == null && e.lookahead == null && !e.extra;
+  const empty = (e.program ?? "Auto") === "Auto" && !e.speed && !e.tune && e.keyframeSeconds == null && e.bFrames == null && e.lookahead == null && !e.extra;
   const installed = !rig || (state.tools?.rigaya ?? []).includes(s.backend);
   return `<details class="upscale" ${empty ? "" : "open"}><summary>${esc(t("Advanced encoder"))}${empty ? "" : " ●"}</summary>
     ${rig ? `<label class="field"><span>${esc(t("Encoder program"))}</span><select data-k="encoder.program">
-      ${opt("FFmpeg", t("FFmpeg ({0})", ffEnc), e.program ?? "FFmpeg")}${opt("Rigaya", rig.name + " (rigaya)", e.program)}</select>
+      ${opt("Auto", t("Automatic: {0} when installed, otherwise FFmpeg", rig.name), e.program ?? "Auto")}${opt("FFmpeg", t("FFmpeg ({0})", ffEnc), e.program)}${opt("Rigaya", rig.name + " (rigaya)", e.program)}</select>
       <small class="muted">${esc(t("{0} reads the source with GPU decoding, resizes on the GPU and copies Dolby Vision / HDR10+ when no FFmpeg filter is needed (otherwise FFmpeg decodes and filters, and sends the frames to it). Install it in Settings → Components.", rig.name))}</small>
       ${useRig && !installed ? `<small class="warn">${esc(t("{0} is not installed: add it in Settings → Components, or choose FFmpeg as the encoder program.", rig.name))}</small>` : ""}</label>` : ""}
     <small class="muted">${esc(t("Encoder: {0}. Empty fields keep KnA's values for the chosen quality.", enc))}</small>
@@ -388,7 +396,7 @@ function rateControl(s, codec) {
   const o = state.options, e = s.encoder ?? {};
   const ffEnc = o.encoderNames?.[`${codec}|${s.backend ?? "Software"}`] ?? "";
   const rig = o.rigayaEncoders?.[`${codec}|${s.backend ?? "Software"}`];
-  const useRig = !!rig && e.program === "Rigaya";
+  const useRig = usesRigaya(s, codec);
   const info = (useRig ? rig.info : o.encoders?.[ffEnc]) ?? {};
   let rc = e.rateControl ?? "Auto";
   if (rc === "Quality" && !info.qualityLabel) rc = "Auto";

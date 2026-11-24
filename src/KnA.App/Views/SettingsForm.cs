@@ -449,7 +449,8 @@ public sealed class SettingsForm : StackPanel
         var o = s.Encoder;
         var name = RigayaEncoders.DisplayName(s.EffectiveBackend);
         Children.Add(Ui.Field("Encoder program", Ui.Combo(
-            [(EncoderProgram.FFmpeg, L.T("FFmpeg ({0})", VideoEncoders.EncoderName(codec, s.EffectiveBackend) ?? "")), (EncoderProgram.Rigaya, name + " (rigaya)")],
+            [(EncoderProgram.Auto, L.T("Automatic: {0} when installed, otherwise FFmpeg", name)),
+             (EncoderProgram.FFmpeg, L.T("FFmpeg ({0})", VideoEncoders.EncoderName(codec, s.EffectiveBackend) ?? "")), (EncoderProgram.Rigaya, name + " (rigaya)")],
             o.Program, v => Set(s with { Encoder = o with { Program = v, Speed = null, Tune = null, Extra = null, GpuFilters = null } })),
             L.T("{0} reads the source with GPU decoding, resizes on the GPU and copies Dolby Vision / HDR10+ when no FFmpeg filter is needed (otherwise FFmpeg decodes and filters, and sends the frames to it). Install it in Settings → Components.", name)));
         if (o.Program == EncoderProgram.Rigaya && _tools is not null && !KnA.Core.Queue.JobRunner.RigayaFor(_tools()).ContainsKey(s.Backend))
@@ -587,7 +588,8 @@ public sealed class SettingsForm : StackPanel
         {
             var name = RigayaEncoders.DisplayName(s.EffectiveBackend);
             box.Children.Add(Ui.Field("Encoder program", Ui.Combo(
-                [(EncoderProgram.FFmpeg, L.T("FFmpeg ({0})", VideoEncoders.EncoderName(codec, s.EffectiveBackend) ?? "")), (EncoderProgram.Rigaya, name + " (rigaya)")],
+                [(EncoderProgram.Auto, L.T("Automatic: {0} when installed, otherwise FFmpeg", name)),
+                 (EncoderProgram.FFmpeg, L.T("FFmpeg ({0})", VideoEncoders.EncoderName(codec, s.EffectiveBackend) ?? "")), (EncoderProgram.Rigaya, name + " (rigaya)")],
                 o.Program, v => SetO(x => x with { Program = v, Speed = null, Tune = null, Extra = null }, true)),
                 L.T("{0} reads the source with GPU decoding, resizes on the GPU and copies Dolby Vision / HDR10+ when no FFmpeg filter is needed (otherwise FFmpeg decodes and filters, and sends the frames to it). Install it in Settings → Components.", name)));
             if (rigaya && _tools is not null && !KnA.Core.Queue.JobRunner.RigayaFor(_tools()).ContainsKey(s.Backend))

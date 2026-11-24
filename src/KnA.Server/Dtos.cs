@@ -139,6 +139,8 @@ public sealed record AnalysisDto(IReadOnlyList<TrackPlan> Tracks, bool TracksAre
     public string? Script { get; init; }
     /// <summary>Which HDR metadata is kept and how (one line each).</summary>
     public IReadOnlyList<string> HdrDetails { get; init; } = [];
+    /// <summary>Black bars found over the film (automatic crop), null when none or not analysed.</summary>
+    public CropSettings? DetectedCrop { get; init; }
 
     public static AnalysisDto From(JobAnalysis a, string source)
     {
@@ -154,6 +156,7 @@ public sealed record AnalysisDto(IReadOnlyList<TrackPlan> Tracks, bool TracksAre
             } : null,
             Script = a.Script,
             HdrDetails = a.HdrDetails,
+            DetectedCrop = a.Source.PrimaryVideo?.DetectedCrop is { IsEmpty: false } dc ? dc : null,
         };
     }
 

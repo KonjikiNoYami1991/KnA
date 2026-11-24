@@ -22,6 +22,12 @@ public static class EditorModel
         JobSettings s, JobEdit e, CancellationToken ct = default)
     {
         var job = q.Find(id) ?? throw new KeyNotFoundException();
+        // GPU first, made visible: "Auto" becomes the program that will really encode.
+        if (s.Encoder.Program == EncoderProgram.Auto)
+            s = s with { Encoder = s.Encoder with { Program = RigayaEncoders.Resolve(s, JobRunner.RigayaFor(q.Tools).Keys, q.Settings.Capabilities) } };
+        // Automatic crop made visible: the black bars found over the film go into Filters → Crop.
+        if (job.Media?.PrimaryVideo is { } pv && CommandBuilder.AutoCrop(s, pv, true) is { } bars)
+            s = s with { VideoFilters = s.VideoFilters with { Crop = bars } };
         var a = await q.SetEditAsync(id, e, ct, s);
         var p = s.ProfileDefinition;
         var container = s.Container is { } c && p.Containers.Contains(c) ? c : a.Container is { Length: > 0 } ac ? ac : p.Container;
@@ -187,7 +193,12 @@ public static class EditorModel
         var codec = p.Codecs.Contains(s.Codec) ? s.Codec : p.Codecs.FirstOrDefault(VideoCodec.H264);
         var backend = p.AllowsHardware && VideoEncoders.EncoderName(codec, s.Backend) is not null ? s.Backend : EncoderBackend.Software;
         bool tenBitProfile = kind is ProfileKind.UniversalMkv or ProfileKind.Streaming or ProfileKind.Professional;
-        var program = s.Encoder.Program == EncoderProgram.Rigaya && RigayaEncoders.Supports(codec, backend) ? EncoderProgram.Rigaya : EncoderProgram.FFmpeg;
+        var program = s.Encoder.Program switch
+        {
+            EncoderProgram.Rigaya when RigayaEncoders.Supports(codec, backend) => EncoderProgram.Rigaya,
+            EncoderProgram.FFmpeg => EncoderProgram.FFmpeg,
+            _ => EncoderProgram.Auto,
+        };
         var settings = s with
         {
             Profile = kind, Codec = codec, Backend = backend,

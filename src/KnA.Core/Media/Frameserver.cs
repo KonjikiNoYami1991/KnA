@@ -175,7 +175,8 @@ public static class StandardFrameserver
         // Vision profile 5, whose reshaping only FFmpeg's reader applies when converting.
         if (v.Hdr.DolbyVisionWithoutFallback) return Localization.L.T("Dolby Vision profile 5 (its reshaping only travels with FFmpeg's reader)");
         if (v.VariableFrameRate) return Localization.L.T("variable frame rate");
-        if (v.IsInterlaced) return Localization.L.T("interlaced source (deinterlaced by FFmpeg as it reads)");
+        if (v.IsInterlaced || v.EffectiveScan is ScanType.Interlaced or ScanType.Telecine)
+            return Localization.L.T("interlaced source (deinterlaced by FFmpeg as it reads)");
         if (v.Rotation != 0 || s.VideoFilters.OverridesOrientation) return Localization.L.T("rotation");
         if (v.SampleAspectRatio > 0 && Math.Abs(v.SampleAspectRatio - 1) > 0.01) return Localization.L.T("non-square pixels (anamorphic)");
         if (s.Upscale.Method == UpscaleMethod.Neural) return Localization.L.T("AI upscaler (it reads the file itself)");

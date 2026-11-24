@@ -123,9 +123,27 @@ public class RigayaArgsTests
         var m = Media(Uhd);
         var missing = CommandBuilder.Compile(Ctx(m, Nvencc) with { Options = new BuildOptions() });
         Assert.Contains(missing.Issues, i => i.IsError && i.Message.Contains("NVEncC"));
-        var ffmpeg = CommandBuilder.Compile(Ctx(m, Nvencc with { Encoder = new() }));
+        var ffmpeg = CommandBuilder.Compile(Ctx(m, Nvencc with { Encoder = new() { Program = EncoderProgram.FFmpeg } }));
         Assert.Null(ffmpeg.Rigaya);
         Assert.Contains("hevc_nvenc", ffmpeg.Plan.Arguments);
+    }
+
+    [Fact]
+    public void Gpu_first_auto_picks_the_installed_rigaya_encoder_and_falls_back_to_ffmpeg()
+    {
+        var m = Media(Uhd);
+        var auto = Nvencc with { Encoder = new() };
+        Assert.Equal(EncoderProgram.Auto, auto.Encoder.Program);
+        Assert.NotNull(CommandBuilder.Compile(Ctx(m, auto)).Rigaya);
+        // Not installed: FFmpeg's GPU encoder, no error.
+        var none = CommandBuilder.Compile(Ctx(m, auto) with { Options = new BuildOptions() });
+        Assert.False(none.HasErrors);
+        Assert.Null(none.Rigaya);
+        Assert.Contains("hevc_nvenc", none.Plan.Arguments);
+        Assert.Equal(EncoderProgram.Rigaya, RigayaEncoders.Resolve(auto, [EncoderBackend.Nvenc]));
+        Assert.Equal(EncoderProgram.FFmpeg, RigayaEncoders.Resolve(auto, []));
+        // H.264 on the CPU: never.
+        Assert.False(RigayaEncoders.Wanted(auto with { Backend = EncoderBackend.Software }, [EncoderBackend.Nvenc]));
     }
 
     [Fact]

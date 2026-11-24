@@ -34,6 +34,18 @@ public static partial class SubtitleOcr
     public static bool Wanted(Encoding.TrackPlan t, Encoding.JobSettings s) =>
         string.Equals(t.Output, OutputValue, StringComparison.OrdinalIgnoreCase) || (s.OcrPictureSubtitles && t.Output is null);
 
+    /// <summary>
+    /// Read with OCR: chosen, or by itself when a picture subtitle would otherwise be lost because the output container
+    /// can't hold pictures (PGS/VobSub in MP4/WebM…). Tesseract and the Italian/English models are in every package;
+    /// other languages are downloaded when needed.
+    /// </summary>
+    public static bool Wanted(Encoding.TrackPlan t, Encoding.JobSettings s, Media.SubtitleStream? st, string container) =>
+        Wanted(t, s) || WouldBeLost(t, st, container);
+
+    /// <summary>A picture subtitle the container can't hold and that nobody chose to convert otherwise.</summary>
+    public static bool WouldBeLost(Encoding.TrackPlan t, Media.SubtitleStream? st, string container) =>
+        t.Output is null && st is { IsBitmap: true } && CanRead(st.CodecName) && Encoding.Containers.SubtitleCodec(container, st, t.Codec) is null;
+
     /// <summary>Codecs that are pictures, not text (the ones this OCR reads).</summary>
     public static bool CanRead(string? codec) => codec is "hdmv_pgs_subtitle" or "pgssub" or "dvd_subtitle" or "dvdsub";
 

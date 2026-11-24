@@ -13,17 +13,38 @@ namespace KnA.Core.Encoding;
 public static class FilterBuilder
 {
     public const string BurnPlaceholder = "{burn}";
+    public const string IvtcFilter = "fieldmatch=order=auto:combmatch=full,bwdif=mode=send_frame:parity=auto:deint=interlaced,decimate";
+
+    /// <summary>
+    /// What really happens to the frames: Auto follows the analysis (Off for progressive and soft telecine, Auto =
+    /// Bwdif on the interlaced frames, Ivtc for hard telecine); Off / Force / Ivtc as chosen.
+    /// </summary>
+    public static DeinterlaceMode Deinterlacing(VideoStream v, VideoFilterSettings f) => f.Deinterlace switch
+    {
+        DeinterlaceMode.Auto => v.EffectiveScan switch
+        {
+            ScanType.Interlaced => DeinterlaceMode.Auto,
+            ScanType.Telecine => DeinterlaceMode.Ivtc,
+            _ => DeinterlaceMode.Off,
+        },
+        var m => m,
+    };
 
     public static List<string> VideoPre(VideoStream v, VideoFilterSettings f, HdrPlan hdr)
     {
         var chain = new List<string>();
-        switch (f.Deinterlace)
+        switch (Deinterlacing(v, f))
         {
-            case DeinterlaceMode.Auto when v.IsInterlaced:
+            case DeinterlaceMode.Auto:
                 chain.Add("bwdif=mode=send_frame:parity=auto:deint=interlaced");
                 break;
             case DeinterlaceMode.Force:
                 chain.Add("bwdif=mode=send_frame:parity=auto:deint=all");
+                break;
+            case DeinterlaceMode.Ivtc:
+                // Field matching rebuilds the film frames, Bwdif cleans the few still combed, decimate drops the
+                // duplicate of every five: 29.97 → 23.976 (FFmpeg's documented IVTC chain).
+                chain.Add(IvtcFilter);
                 break;
         }
         if (Crop(v, f.Crop) is { } crop) chain.Add(crop);

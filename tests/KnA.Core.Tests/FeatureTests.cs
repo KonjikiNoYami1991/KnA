@@ -153,9 +153,9 @@ public class FeatureTests(FeatureFixture fx) : IClassFixture<FeatureFixture>
         var webmAv1 = CommandBuilder.Compile(new CompileContext { Source = media, Settings = new JobSettings { Profile = ProfileKind.Streaming, Codec = VideoCodec.AV1, Container = "webm" } });
         Assert.DoesNotContain(webmAv1.Issues, i => i.IsError);
         Assert.DoesNotContain("avi", Containers.Allowed(new JobSettings { Profile = ProfileKind.UniversalMkv, Codec = VideoCodec.HEVC }));
-        // PGS in MP4 is skipped with a warning.
+        // PGS in MP4 is never lost: it is read with OCR and kept as text (said in a warning).
         var mp4Pgs = CommandBuilder.Compile(new CompileContext { Source = media, Settings = new JobSettings { Profile = ProfileKind.UniversalMkv, Codec = VideoCodec.H264, Container = "mp4", Subtitles = SubtitleMode.Softsub } });
-        Assert.Contains(mp4Pgs.Issues, i => !i.IsError && i.Message.Contains("hdmv_pgs_subtitle"));
+        Assert.Contains(mp4Pgs.Issues, i => !i.IsError && i.Message.Contains("OCR"));
     }
 
     [Fact]

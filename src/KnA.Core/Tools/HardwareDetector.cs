@@ -39,6 +39,8 @@ public sealed record FfmpegCapabilities(string Version, IReadOnlyList<EncoderCap
     public IReadOnlyList<FfmpegBuild> Builds { get; init; } = [];
 
     public bool IsCurrent => Schema >= CurrentSchema;
+    /// <summary>The machine when the test ran (<see cref="MachineFingerprint"/>): GPUs, drivers and encoder programs.</summary>
+    public string? Fingerprint { get; init; }
     public FfmpegBuild? Main => Builds.FirstOrDefault(b => !b.IsCustom) ?? Builds.FirstOrDefault();
 
     /// <summary>The encoder that will be used: the first usable candidate (custom builds first), else the first one tested.</summary>

@@ -1529,5 +1529,16 @@ public static partial class L
         ["The encoded video could not be counted: Dolby Vision / HDR10+ were not added, static HDR is kept."] = "Non è stato possibile contare i fotogrammi del video codificato: Dolby Vision / HDR10+ non aggiunti, resta l'HDR statico.",
         ["Dolby Vision: the RPU has {0} frames, the video {1}: not added, static HDR is kept."] = "Dolby Vision: l'RPU ha {0} fotogrammi, il video {1}: non aggiunto, resta l'HDR statico.",
         ["HDR10+: the metadata has {0} frames, the video {1}: not added, static HDR10 is kept."] = "HDR10+: i metadati hanno {0} fotogrammi, il video {1}: non aggiunti, resta l'HDR10 statico.",
+        ["Automatic crop of black bars (only bars present over the whole film)"] = "Ritaglio automatico delle bande nere (solo quelle presenti in tutto il film)",
+        ["Automatic: {0} when installed, otherwise FFmpeg"] = "Automatico: {0} se installato, altrimenti FFmpeg",
+        ["Installing qaac (Apple AAC)"] = "Installazione di qaac (AAC di Apple)",
+        ["Inverse telecine (back to film frames)"] = "Telecine inverso (torna ai fotogrammi del film)",
+        ["Inverse telecine"] = "Telecine inverso",
+        ["Subtitle track \"{0}\": {1} can't hold pictures, so it is read with OCR and kept as text."] = "Traccia sottotitoli \"{0}\": {1} non può contenere immagini, quindi viene letta con l'OCR e mantenuta come testo.",
+        ["first start"] = "primo avvio",
+        ["inverse telecine removes frames"] = "il telecine inverso toglie fotogrammi",
+        ["qaac could not be installed ({0}): fdkaac is used."] = "qaac non è stato installato ({0}): si usa fdkaac.",
+        ["qaac: Apple's CoreAudioToolbox is extracted on this computer from Apple's iTunes installer (first AAC encode)."] = "qaac: il CoreAudioToolbox di Apple viene estratto su questo computer dall'installer di iTunes di Apple (prima codifica AAC).",
+        ["the GPU, its driver or the encoder programs changed"] = "sono cambiati la GPU, il suo driver o i programmi di codifica",
     };
 }

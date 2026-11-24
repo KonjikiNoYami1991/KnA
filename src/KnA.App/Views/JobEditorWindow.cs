@@ -1276,7 +1276,14 @@ public sealed class JobEditorWindow : Window
                 }
                 catch (Exception ex) { _saving.Text = ex.Message; }
             });
-            picture.Children.Add(new StackPanel { Spacing = 6, Children = { Ui.Label("Crop (pixels, after rotation)"), Ui.Columns(cropBoxes), detect } });
+            var autoCrop = Ui.Check(L.T("Automatic crop of black bars (only bars present over the whole film)"), v.AutoCrop, x =>
+            {
+                // On: the bars found over the film fill the fields; off: no crop at all.
+                var bars = _a?.Source.PrimaryVideo?.DetectedCrop is { IsEmpty: false } d ? d : null;
+                SetVideo(f => f with { AutoCrop = x, Crop = x ? bars : null }, true);
+                RenderTab();
+            });
+            picture.Children.Add(new StackPanel { Spacing = 6, Children = { Ui.Label("Crop (pixels, after rotation)"), Ui.Columns(cropBoxes), detect, autoCrop } });
             picture.Children.Add(Ui.Columns(
                 Ui.Field("Denoise", Ui.Combo(Strengths(), v.Denoise, x => SetVideo(f => f with { Denoise = x }))),
                 Ui.Field("Deband", Ui.Combo(Strengths(), v.Deband, x => SetVideo(f => f with { Deband = x }))),

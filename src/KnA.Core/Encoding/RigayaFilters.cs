@@ -143,12 +143,17 @@ public static class RigayaFilters
         }
 
         // ------------------------------------------------------------ deinterlace
-        bool deint = f.Deinterlace == DeinterlaceMode.Force || (f.Deinterlace == DeinterlaceMode.Auto && v.IsInterlaced);
-        if (deint)
+        switch (FilterBuilder.Deinterlacing(v, f))
         {
-            // Only NVEncC's bwdif has "deint=interlaced" (QSVEncC 8.38 / VCEEncC 9.23 deinterlace every frame).
-            bool onlyFlagged = f.Deinterlace == DeinterlaceMode.Auto && i.Backend == EncoderBackend.Nvenc;
-            Gpu(L.T("Deinterlace (Bwdif)"), onlyFlagged ? ["--vpp-bwdif", "deint=interlaced"] : ["--vpp-bwdif"]);
+            case DeinterlaceMode.Auto or DeinterlaceMode.Force:
+                // Only NVEncC's bwdif has "deint=interlaced" (QSVEncC 8.38 / VCEEncC 9.23 deinterlace every frame).
+                bool onlyFlagged = f.Deinterlace == DeinterlaceMode.Auto && i.Backend == EncoderBackend.Nvenc;
+                Gpu(L.T("Deinterlace (Bwdif)"), onlyFlagged ? ["--vpp-bwdif", "deint=interlaced"] : ["--vpp-bwdif"]);
+                break;
+            case DeinterlaceMode.Ivtc:
+                // Field matching + 3:2 decimation back to the film frames, on the GPU (cycle=auto decimates at 26 fps and up).
+                Gpu(L.T("Inverse telecine"), "--vpp-ivtc");
+                break;
         }
 
         // ------------------------------------------------------------ crop
