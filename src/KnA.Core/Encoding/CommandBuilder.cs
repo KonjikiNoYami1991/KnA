@@ -40,7 +40,11 @@ public sealed record PreparedSubtitles(string? RelativeSubtitleFile, string? Rel
     string? BitmapFile = null, double BitmapDelaySeconds = 0);
 
 /// <summary>Files produced by external HDR tools for this job.</summary>
-public sealed record HdrSideFiles(string? DolbyVisionRpu, string? Hdr10PlusJson);
+/// <param name="DolbyVisionRpu">RPU of the frames that reach the encoder (trim applied, active area edited).</param>
+/// <param name="Hdr10PlusJson">HDR10+ metadata of the frames that reach the output (trim applied).</param>
+/// <param name="DolbyVisionRpuUncut">RPU of every source frame (active area edited): NVEncC/QSVEncC/VCEEncC number the
+/// frames they read themselves from the start of the source, also with --trim.</param>
+public sealed record HdrSideFiles(string? DolbyVisionRpu, string? Hdr10PlusJson, string? DolbyVisionRpuUncut = null);
 
 public sealed record CompileContext
 {
@@ -220,12 +224,15 @@ public static class CommandBuilder
         }
 
         bool trimmed = ctx.Edit.IsTrimmed;
-        var hdrSettings = preview?.Kind == PreviewKind.Clip ? s with { Hdr = HdrMode.ToneMapSdr } : s;
-        // Chunks are encoded separately: dynamic HDR metadata (per-frame RPU/JSON) cannot follow them.
-        var hdr = HdrPlanner.Plan(video, preview?.Kind == PreviewKind.Frame ? s with { Hdr = HdrMode.ToneMapSdr } : hdrSettings,
-            copyVideo && concat is null, trimmed || chunkedJob, ctx.Hdr);
-        if (chunkedJob && video.Hdr.IsHdr && (video.Hdr.IsDolbyVision || video.Hdr.HasHdr10Plus) && hdr.Action == HdrAction.Preserve)
-            issues.Add(Containers.Warning("Chunked encoding keeps static HDR only (Dolby Vision / HDR10+ dynamic metadata need a single pass)."));
+        // A script made from the job's source (catalogue chain, the standard frameserver or one written for it) gives
+        // frames without colour data: HDR handling and the encoders use the source's colours and HDR metadata.
+        var hdrVideo = video;
+        bool scriptVideo = Frameserver.KindOf(videoTrack.File) != FrameserverKind.None && videoTrack.File != ctx.Source.Path;
+        VideoStream? hdrSource = scriptVideo && ctx.Source.PrimaryVideo is { Hdr.IsHdr: true } sv ? sv : null;
+        if (hdrSource is not null && !video.Hdr.IsHdr) hdrVideo = video.WithColoursOf(hdrSource);
+        var hdrSettings = preview is not null ? s with { Hdr = HdrMode.ToneMapSdr } : s;
+        var hdr = HdrPlanner.Plan(hdrVideo, hdrSettings, copyVideo && concat is null,
+            HdrRouteFor(ctx, s, videoTrack, hdrVideo, hdrSource, chunkedJob, rigaya), ctx.Hdr);
         issues.AddRange(hdr.Issues);
 
         var inputs = new InputTable(ctx.Source.Path);
@@ -673,15 +680,70 @@ public static class CommandBuilder
         RigayaPlan? rigayaPlan = null;
         GpuPipeline? gpuPipeline = null;
         if (rigaya && !copyVideo)
-            (rigayaPlan, gpuPipeline) = PlanRigaya(ctx, s, p, media, videoTrack, video, encodeCodec, tenBit, hdr, rigayaScale,
+            (rigayaPlan, gpuPipeline) = PlanRigaya(ctx, s, p, media, videoTrack, hdrVideo, encodeCodec, tenBit, hdr, rigayaScale,
                 burnTrack, burnPrepared, placebo || neural ? Ai.UpscaleText.Display(up.Method) : null, issues);
         string? scriptText = null;
         if (p.EncodesVideo && !p.IsImages && !copyVideo && preview is null && concat is null && chunk is null && !ctx.RestOnly)
-            scriptText = ScriptPreview.Build(s, video, videoTrack.File, hdr,
+            scriptText = ScriptPreview.Build(s, hdrVideo, videoTrack.File, hdr,
                 placebo || neural ? null : ScaleCalculator.Compute(croppedSource, p.UsesResolution ? s.Resolution : 0),
                 ctx.Edit, burnTrack, burnPrepared, gpuPipeline);
         return new CompiledJob(new EncodePlan(a2, output), issues, hdr, tracks, container, duration) { Pipe = inputs.Pipe, Rigaya = rigayaPlan, Gpu = gpuPipeline, Script = scriptText };
     }
+
+    /// <summary>
+    /// What decides whether Dolby Vision / HDR10+ can follow the video frame by frame: trims (which frames stay),
+    /// crops (RPU active area), frame-rate changes, chunked or multi-part encodes and the encoder.
+    /// </summary>
+    internal static HdrRoute HdrRouteFor(CompileContext ctx, JobSettings s, TrackPlan videoTrack, VideoStream video, VideoStream? scriptSource,
+        bool chunked, bool rigaya)
+    {
+        string? frameReason = null;
+        bool cropped = s.VideoFilters.Crop is { IsEmpty: false };
+        if (s.VideoFilters.ChangesFrameCount) frameReason = L.T("the frame rate changes");
+        else if (ChangesFrames(s.VideoFilters.Custom) || ChangesFrames(rigaya ? s.Encoder.GpuFilters : s.VideoFilters.Gpu))
+            frameReason = L.T("a filter changes the frame count");
+        if (scriptSource is not null)
+        {
+            // The script's own frames against the source's: same rate and (within a frame or two) the same count.
+            long srcFrames = scriptSource.FrameCount > 0 ? scriptSource.FrameCount
+                : (long)Math.Round(ctx.Source.Duration.TotalSeconds * scriptSource.FrameRate);
+            bool rateChanged = video.FrameRate > 0 && scriptSource.FrameRate > 0 && Math.Abs(video.FrameRate - scriptSource.FrameRate) > 0.01;
+            bool countChanged = video.FrameCount > 0 && srcFrames > 0 && Math.Abs(video.FrameCount - srcFrames) > Math.Max(2, srcFrames / 500);
+            if (rateChanged || countChanged) frameReason ??= L.T("the script changes the frame count ({0} → {1} frames)",
+                srcFrames, video.FrameCount > 0 ? video.FrameCount : (long)Math.Round(ctx.Source.Duration.TotalSeconds * video.FrameRate));
+            // A smaller picture with another shape: the script crops (a plain resize keeps the shape).
+            if (video.Width > 0 && video.Height > 0 && (video.Width != scriptSource.Width || video.Height != scriptSource.Height))
+            {
+                double a = (double)video.Width / video.Height, b = scriptSource.Height > 0 ? (double)scriptSource.Width / scriptSource.Height : a;
+                if (Math.Abs(a - b) > 0.01 * b) cropped = true;
+            }
+            if (s.Frameserver.Chain?.Any(f => f.Id is "vs.crop" or "avs.crop") == true) cropped = true;
+        }
+        bool trimmed = ctx.Edit.IsTrimmed;
+        var vfr = scriptSource ?? video;
+        if (trimmed && vfr.VariableFrameRate) frameReason ??= L.T("the variable-frame-rate source is trimmed");
+        List<(double, double)>? kept = null;
+        if (trimmed)
+        {
+            double delay = videoTrack.DelaySeconds;
+            kept = ctx.Edit.KeptParts(ctx.Source.Duration.TotalSeconds).Select(p => (Math.Max(0, p.Start - delay), Math.Max(0, p.End - delay))).ToList();
+        }
+        return new HdrRoute
+        {
+            Trimmed = trimmed, MultiSegment = ctx.Edit.IsMultiSegment, Chunked = chunked, Rigaya = rigaya,
+            FrameCountChanged = frameReason is not null, FrameCountReason = frameReason, Cropped = cropped,
+            FromScript = scriptSource is not null, KeptSeconds = kept, VariableFrameRate = vfr.VariableFrameRate,
+        };
+    }
+
+    /// <summary>A user filter chain (FFmpeg or --vpp-*) that adds or removes frames.</summary>
+    internal static bool ChangesFrames(string? chain) =>
+        chain is { Length: > 0 } c && (c.Contains("decimate", StringComparison.OrdinalIgnoreCase) || c.Contains("fps=", StringComparison.OrdinalIgnoreCase)
+            || c.Contains("framerate", StringComparison.OrdinalIgnoreCase) || c.Contains("minterpolate", StringComparison.OrdinalIgnoreCase)
+            || c.Contains("telecine", StringComparison.OrdinalIgnoreCase) || c.Contains("select", StringComparison.OrdinalIgnoreCase)
+            || c.Contains("ivtc", StringComparison.OrdinalIgnoreCase) || c.Contains("fruc", StringComparison.OrdinalIgnoreCase)
+            || c.Contains("send_field", StringComparison.OrdinalIgnoreCase) || c.Contains("bob", StringComparison.OrdinalIgnoreCase)
+            || c.Contains("--vpp-fps", StringComparison.OrdinalIgnoreCase));
 
     /// <summary>
     /// GPU-first plan of a NVEncC / QSVEncC / VCEEncC encode: KnA's filters become the encoder's --vpp-* filters and
@@ -751,14 +813,16 @@ public static class CommandBuilder
                 L.T("Needed for: {0}. Frames go to {1} on a pipe.", why, RigayaEncoders.DisplayName(s.Backend))));
         }
 
-        var native = RigayaEncoders.EncoderArgs(s.Backend, encodeCodec, s.Quality, tenBit, s.Encoder, fr, hdr, video, why is null && !script);
-        var plan = new RigayaPlan(s.Backend, RigayaEncoders.EncoderArgs(s.Backend, encodeCodec, s.Quality, tenBit, s.Encoder, fr, hdr, video, false))
+        var native = RigayaEncoders.EncoderArgs(s.Backend, encodeCodec, s.Quality, tenBit, s.Encoder, fr, hdr, video, why is null && !script,
+            ctx.HdrFiles is { DolbyVisionRpuUncut: { } uncut } hf ? hf with { DolbyVisionRpu = uncut } : ctx.HdrFiles);
+        var plan = new RigayaPlan(s.Backend, RigayaEncoders.EncoderArgs(s.Backend, encodeCodec, s.Quality, tenBit, s.Encoder, fr, hdr, video, false, ctx.HdrFiles))
         {
             PipeReason = why,
             TrimStart = t.TrimStart,
             NativeArgs = why is null
                 ? RigayaEncoders.NativeArgs(file, script ? (kind == FrameserverKind.VapourSynth ? "--vpy" : "--avs") : RigayaEncoders.HwDecodable(readVideo.CodecName) ? "--avhw" : "--avsw",
-                    [.. extra, .. t.Args, .. native], readVideo, hdr, encodeCodec, s.VideoFilters, "video.mkv", s.Chunks.Enabled && !script)
+                    [.. extra, .. t.Args, .. native], readVideo, hdr, encodeCodec, s.VideoFilters, "video.mkv",
+                    s.Chunks.Enabled && !script && hdr.DolbyVision != HdrCarry.Encoder)
                 : null,
         };
         if (s.Chunks.Enabled && why is not null)
@@ -823,9 +887,9 @@ public static class CommandBuilder
     {
         if (hdr.Action != HdrAction.Preserve || hdr.X265Params.Count == 0) return;
         var extra = new List<string>(hdr.X265Params);
-        if (hdr.UseDolbyVisionRpu && files?.DolbyVisionRpu is { } rpu)
-            extra.AddRange(["dolby-vision-profile=8.1", "dolby-vision-rpu=" + EscapeX265(rpu)]);
-        if (hdr.UseHdr10PlusJson && files?.Hdr10PlusJson is { } json)
+        if (hdr.DolbyVision == HdrCarry.Encoder && files?.DolbyVisionRpu is { } rpu)
+            extra.AddRange([$"dolby-vision-profile={hdr.DolbyVisionProfile ?? "8.1"}", "dolby-vision-rpu=" + EscapeX265(rpu)]);
+        if (hdr.Hdr10Plus == HdrCarry.Encoder && files?.Hdr10PlusJson is { } json)
             extra.Add("dhdr10-info=" + EscapeX265(json));
         int i = venc.IndexOf("-x265-params");
         if (i >= 0) venc[i + 1] = venc[i + 1] + ":" + string.Join(':', extra);

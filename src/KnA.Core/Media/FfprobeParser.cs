@@ -100,6 +100,7 @@ public static class FfprobeParser
                             ColorTransfer = Str(s, "color_transfer"),
                             ColorSpace = Str(s, "color_space"),
                             ColorRange = Str(s, "color_range"),
+                            ChromaLocation = Str(s, "chroma_location"),
                             Rotation = ParseRotation(s),
                         };
                         vs.Hdr = DetectHdr(vs, s.TryGetProperty("side_data_list", out var sd) ? sd : default, null);

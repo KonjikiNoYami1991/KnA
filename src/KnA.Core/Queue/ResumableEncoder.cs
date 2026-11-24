@@ -33,7 +33,7 @@ public static class ResumableEncoder
         && job.Media is { Duration.TotalSeconds: > 2 }
         && !job.Settings.Chunks.Enabled
         && !job.Edit.IsMultiSegment
-        && !final.Hdr.UseDolbyVisionRpu && !final.Hdr.UseHdr10PlusJson
+        && !final.Hdr.EncoderReadsSideFiles
         && final.Tracks.FirstOrDefault(t => t.Include && t.Kind == "video") is { CopyVideo: false }
         && CommandBuilder.ResumableEncoder(CommandBuilder.ResolvedEncoder(final.Plan.Arguments));
 

@@ -4,44 +4,6 @@ Work through it in order, on `master`; ask before releasing. Every point is conf
 all of them: CLAUDE.md, "it is an *auto*encoder" — the user is never forced to do anything for an encode to come out
 right; optional controls are fine, a required manual step or a silent loss is a bug.
 
-## 1. HDR carried through every path, by itself
-
-**Fully automatic**: no option, no button, no extraction step for the user. KnA detects the HDR of the source,
-extracts and edits RPU / HDR10+ by itself and passes everything to the encoder. StaxRip is the reference for the logic
-only, not for its interface or workflow (`Source/Encoding/NVEnc.vb` SetMetaData/BeforeEncoding,
-`Source/Forms/MainForm.vb` ExtractHdr10PlusMetadata / ExtractDolbyVisionMetadata,
-`Source/General/DolbyVisionMetadataFile.vb`). Option names checked against the NVEncC 9.41, QSVEncC 8.38 and
-VCEEncC 9.23 option documents: `copy`/`auto` work only with the `--avhw`/`--avsw` readers, a script needs explicit
-values and files.
-
-- **Video from a script** (catalogue chain or hand-written): today the script is probed without HDR data, so
-  `HdrPlanner` treats it as SDR and HDR10 / HDR10+ / Dolby Vision are lost silently with NVEncC/QSVEncC/VCEEncC
-  (`--vpy`/`--avs` or the y4m pipe) and with FFmpeg/x265. When the script derives from the job's source, use the
-  source's HDR data (primaries, transfer, matrix, range, mastering display, MaxCLL/MaxFALL, HDR10+, Dolby Vision).
-- **Static metadata, explicit** with a script: rigaya gets `--colorprim/--transfer/--colormatrix/--colorrange`,
-  `--master-display G(..)B(..)R(..)WP(..)L(max,min)`, `--max-cll MaxCLL,MaxFALL` (and `--chromaloc`), never `copy`;
-  x265 gets the same from the source's data.
-- **HDR10+**: extract the JSON (`hdr10plus_tool extract`, already used for x265) and pass `--dhdr10-info <json>`;
-  check that rigaya's `hdr10plus_gen` module it needs is in every package (CLAUDE.md standalone rule).
-- **Dolby Vision**: extract the RPU (`dovi_tool extract-rpu`, already used for x265) and pass
-  `--dolby-vision-rpu <rpu>` with `--dolby-vision-profile` derived from the RPU (5 → 5.0, 7/8 → 8.1, 8.1 on HLG → 8.4;
-  AV1 → 10.x).
-- **Edit the metadata instead of dropping it** (today DV/HDR10+ are dropped with only a warning on a trim, a crop,
-  chunked encoding, FFmpeg's GPU encoders hevc_nvenc/qsv/amf…, and rigaya's encoders when a filter forces the pipe):
-  crop → RPU active area (`dovi_tool editor`, or `--dolby-vision-rpu-prm crop=true`); trim → keep only the kept frames
-  in the RPU and in the HDR10+ JSON; when the encoder can't take them, inject them into the finished HEVC
-  (`dovi_tool inject-rpu`, `hdr10plus_tool inject`, then remux), so every HEVC path keeps DV/HDR10+. Check what
-  dovi_tool / hdr10plus_tool support for AV1 before promising it there.
-- **Frame-count changes** (frame-rate change, double-rate deinterlace such as QTGMC, IVTC/decimate, script trims):
-  dynamic metadata no longer matches frame by frame → static HDR10 only, said clearly; never dropped silently.
-- **HDR → SDR**: when the output is SDR (tone mapping: H.264/8-bit, "convert to SDR", DV profile 5…) no HDR parameter
-  reaches the encoder (no `--master-display`, `--max-cll`, `--dhdr10-info`, `--dolby-vision-*`, no BT.2020/PQ/HLG
-  tags): output tagged BT.709. The source's HDR data is still used *for the conversion*: the tone mapping of a script's
-  video must know the source is PQ/HLG BT.2020 (y4m from vspipe carries no colour data), so it runs on the source
-  before/inside the script or with the input colours set explicitly — never on frames assumed SDR.
-- Show in the editor's pipeline / log which HDR metadata is kept and how; tests with HDR10, HDR10+ and DV samples
-  through a catalogue chain, a trim, a crop and chunked encoding.
-
 ## 2. The rest of the autoencoder review
 
 Found by reading the code. Each point: KnA does it by itself, the user can still change it, the log / editor say
@@ -114,6 +76,12 @@ user's machines are available.
 - rigaya's commands on real GPUs (NVIDIA / Intel / AMD): GPU filters, `--trim`, `--vpp-subburn`, `--vpy` with
   `--vsdir`, the speed/quality profiles, `--split-enc`, the mini benchmark.
 - KNLMeansCL (OpenCL) and placebo.Deband (Vulkan) in the portable VapourSynth with a GPU driver present.
+- HDR with real HDR10 / HDR10+ / Dolby Vision samples (through a catalogue chain, a trim, a crop, chunked encoding,
+  hevc_nvenc and NVEncC): RPU / JSON extraction, the editor's frame ranges, `inject-rpu` / `inject` and the remux;
+  NVEncC's `--dolby-vision-rpu <file>` together with `--trim` (KnA gives the uncut RPU to the encoder's own reader,
+  because rigaya numbers the frames from the start of the source — verify); players / TVs recognising Dolby Vision in
+  the output: FFmpeg writes no Dolby Vision configuration record (dvcC) for x265's or injected RPUs, only the RPU NAL
+  units — if needed, mux with a tool that writes it (mkvmerge) and add it to the packages.
 
 ## 7. Theme: Golden Darkness (last of the queue)
 
@@ -122,6 +90,11 @@ suitable backgrounds, desktop and web, next to the current light/dark themes. Mi
 the user provides or that may be redistributed; nothing scraped.
 
 ## Done (details in CHANGELOG)
+
+- HDR carried through every path by itself: script video with the source's HDR data, explicit static metadata,
+  Dolby Vision RPU / HDR10+ extracted, edited for trim and crop, given to the encoder or injected into the finished
+  HEVC; frame-count changes keep static HDR and say so; HDR → SDR of script frames with the source's colours. HDR10+
+  never needs rigaya's hdr10plus_gen module (HEVC: injected; AV1: copied by the encoder's own reader).
 
 - Customization editor (the pencil) rebuilt: explicit settings only, Preset tab, encoder parameter pages, per-track
   Audio/Subtitles, GPU and VapourSynth/AviSynth filters, containers that fit the streams.

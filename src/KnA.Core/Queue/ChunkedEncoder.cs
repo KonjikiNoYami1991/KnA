@@ -35,7 +35,7 @@ public static class ChunkedEncoder
         && !KnA.Core.Media.Discs.DiscSource.IsTitlePath(job.SourcePath)
         && job.Media is { Duration.TotalSeconds: > 120 }
         && !job.Edit.IsMultiSegment
-        && !final.Hdr.UseDolbyVisionRpu && !final.Hdr.UseHdr10PlusJson
+        && !final.Hdr.EncoderReadsSideFiles
         && final.Tracks.FirstOrDefault(t => t.Include && t.Kind == "video") is { CopyVideo: false };
 
     public static string ChunksRoot(SettingsStore store) => Path.Combine(store.DataDirectory, "chunks");

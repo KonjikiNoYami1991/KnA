@@ -79,7 +79,8 @@ function renderIssues() {
   const html = list.map(i => `<div class="issue ${i.isError ? "err" : "warn"}">${i.isError ? "✖" : "⚠"} ${esc(i.message)}</div>`).join("");
   const info = [a.container && `${t("Container")}: ${a.container.toUpperCase()}`, a.hdrSummary && a.hdrSummary !== "SDR" && `HDR: ${a.hdrSummary}`,
     a.outputDuration && `${t("Output duration")}: ${fmtTime(a.outputDuration)}`].filter(Boolean).join(" · ");
-  $("#ed-issues").innerHTML = html + (info ? `<div class="issue info">${esc(info)}</div>` : "");
+  const hdr = (a.hdrDetails ?? []).map(d => `<div class="issue info">HDR · ${esc(d)}</div>`).join("");
+  $("#ed-issues").innerHTML = html + (info ? `<div class="issue info">${esc(info)}</div>` : "") + hdr;
 }
 
 function renderTab() {

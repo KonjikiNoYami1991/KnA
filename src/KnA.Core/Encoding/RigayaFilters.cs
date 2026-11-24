@@ -170,7 +170,10 @@ public static class RigayaFilters
                     _ => "bt2390",
                 };
                 double peak = h.MaxCll is > 0 and var cll ? cll : h.Mastering?.MaxLuminance is > 0 and var ml ? ml : 1000;
-                Gpu(L.T("HDR → SDR ({0})", curve), "--vpp-colorspace", $"hdr2sdr={curve},source_peak={N(peak)},ldr_nits=100");
+                // The input colours are written out: a script (--vpy/--avs) or the y4m pipe carries none, and "auto" only
+                // works with the encoder's own file reader.
+                Gpu(L.T("HDR → SDR ({0})", curve), "--vpp-colorspace",
+                    $"matrix=bt2020nc:bt709,colorprim=bt2020:bt709,transfer=smpte2084:bt709,range=limited:limited,hdr2sdr={curve},source_peak={N(peak)},ldr_nits=100");
                 if (i.Settings.ToneMap is ToneMapCurve.Spline or ToneMapCurve.Bt2446a)
                     steps[^1] = steps[^1] with { Note = L.T("{0} has no {1} curve: BT.2390 is used (choose Hable, Mobius or BT.2390 to match exactly).", enc, i.Settings.ToneMap.ToString()) };
                 if (i.Settings.ToneMapDynamic)

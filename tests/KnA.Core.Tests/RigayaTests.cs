@@ -49,17 +49,27 @@ public class RigayaArgsTests
     }
 
     [Fact]
-    public void Plain_hdr_source_is_read_by_the_encoder_with_dolby_vision_copy()
+    public void Plain_hdr_source_is_read_by_the_encoder_with_dolby_vision_from_kna_rpu()
     {
         var dv = Video(new HdrInfo { Format = HdrFormat.Hdr10, DolbyVisionProfile = 8, DolbyVisionCompatibility = 1, MaxCll = 1000, MaxFall = 400 });
-        var job = CommandBuilder.Compile(Ctx(Media(dv), Nvencc with { Resolution = 1080 }));
+        var ctx = Ctx(Media(dv), Nvencc with { Resolution = 1080 }) with
+        {
+            Hdr = new HdrEnvironment(true, false, true, true),
+            HdrFiles = new HdrSideFiles("/w/RPU.kept.bin", "/w/hdr10plus.json", "/w/RPU.bin"),
+        };
+        var job = CommandBuilder.Compile(ctx);
         Assert.False(job.HasErrors, string.Join("\n", job.Issues.Select(i => i.Message)));
         var r = Assert.IsType<RigayaPlan>(job.Rigaya);
         var n = Assert.IsAssignableFrom<IReadOnlyList<string>>(r.NativeArgs);
         Assert.Equal(["--avhw", "-i", "/m/film.mkv", "--output-res", "1920x1080", "--vpp-resize", "lanczos3"], n.Take(7));
         Assert.Contains("--master-display", n);
-        Assert.Equal("copy", n[n.ToList().IndexOf("--dolby-vision-rpu") + 1]);
+        // The encoder numbers the frames it reads itself: the uncut RPU; the FFmpeg pipe gets the frames already cut.
+        Assert.Equal("/w/RPU.bin", n[n.ToList().IndexOf("--dolby-vision-rpu") + 1]);
+        Assert.Equal("8.1", n[n.ToList().IndexOf("--dolby-vision-profile") + 1]);
+        Assert.Equal("/w/RPU.kept.bin", r.EncoderArgs[r.EncoderArgs.ToList().IndexOf("--dolby-vision-rpu") + 1]);
+        Assert.DoesNotContain("--parallel", n);
         Assert.Equal("video.mkv", n[^1]);
+        Assert.Equal(HdrCarry.Encoder, job.Hdr.DolbyVision);
     }
 
     [Fact]

@@ -222,13 +222,20 @@ public class FeatureTests(FeatureFixture fx) : IClassFixture<FeatureFixture>
         var plan = HdrPlanner.Plan(v, new JobSettings { Codec = VideoCodec.HEVC, TenBit = true }, false, false, HdrEnvironment.Unknown);
         Assert.Equal(HdrAction.ToneMap, plan.Action);
         Assert.Contains(plan.Issues, i => i.Message.Contains("libplacebo") || i.Message.Contains("profile 5"));
-        var p8 = HdrPlanner.Plan(v, new JobSettings { Codec = VideoCodec.HEVC, TenBit = true }, false, false, new HdrEnvironment(true, false, true, true));
-        Assert.Equal(HdrAction.ToneMap, p8.Action); // still profile 5
+        // With dovi_tool x265 keeps profile 5 (RPU + the reshaped base layer as it is); a frame-rate change can't.
+        var p5 = HdrPlanner.Plan(v, new JobSettings { Codec = VideoCodec.HEVC, TenBit = true }, false, false, new HdrEnvironment(true, false, true, true));
+        Assert.Equal(HdrAction.Preserve, p5.Action);
+        Assert.Equal("5.0", p5.DolbyVisionProfile);
+        Assert.Empty(p5.ColorArgs);
+        var p5fps = HdrPlanner.Plan(v, new JobSettings { Codec = VideoCodec.HEVC, TenBit = true }, false,
+            new HdrRoute { FrameCountChanged = true }, new HdrEnvironment(true, false, true, true));
+        Assert.Equal(HdrAction.ToneMap, p5fps.Action);
         var v81 = new VideoStream { Width = 3840, Height = 2160, ColorTransfer = "smpte2084", Hdr = new HdrInfo { Format = HdrFormat.DolbyVision, DolbyVisionProfile = 8, DolbyVisionCompatibility = 1 } };
         var keep = HdrPlanner.Plan(v81, new JobSettings { Codec = VideoCodec.HEVC, TenBit = true }, false, false, new HdrEnvironment(true, false, true, false));
         Assert.True(keep.UseDolbyVisionRpu);
+        // A trim keeps Dolby Vision now (the RPU is cut to the kept frames).
         var trimmed = HdrPlanner.Plan(v81, new JobSettings { Codec = VideoCodec.HEVC, TenBit = true }, false, true, new HdrEnvironment(true, false, true, false));
-        Assert.False(trimmed.UseDolbyVisionRpu);
+        Assert.True(trimmed.UseDolbyVisionRpu);
         Assert.Equal(HdrAction.Preserve, trimmed.Action);
     }
 

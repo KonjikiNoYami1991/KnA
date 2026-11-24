@@ -74,6 +74,7 @@ public static class JobRunner
             foreach (var i in check.Issues) job.AppendLog((i.IsError ? "ERROR: " : "Warning: ") + i.Message);
             if (check.HasErrors) throw new InvalidOperationException(check.Issues.First(i => i.IsError).Message);
             job.AppendLog("HDR: " + check.Hdr.Summary);
+            foreach (var d in check.Hdr.Details) job.AppendLog("  " + d);
 
             CheckDestination(p.IsImages ? Path.GetDirectoryName(check.Plan.OutputPath)! : Path.GetDirectoryName(check.Plan.OutputPath)!, job.Media);
 
@@ -94,7 +95,7 @@ public static class JobRunner
             {
                 job.BeginStage(L.T("Extracting HDR metadata"));
                 ctx.Changed(job);
-                sideFiles = await ExtractHdrMetadataAsync(job, check.Hdr, workDir, ctx, ct);
+                sideFiles = await HdrMetadata.PrepareAsync(job, check.Hdr, workDir, ctx, ct);
             }
 
             if (baseCtx.Upscale is { ModelPath: { } model, ModelKnown: true } && !File.Exists(model))
@@ -157,6 +158,14 @@ public static class JobRunner
                 return;
             }
 
+            // Dolby Vision / HDR10+ the encoder couldn't take: injected into the finished HEVC.
+            var hdrWarnings = new List<string>();
+            if (compiled.Hdr.NeedsInjection && sideFiles is not null && File.Exists(job.OutputPath))
+            {
+                hdrWarnings = await HdrMetadata.InjectAsync(job, compiled, sideFiles, workDir, ctx, ct);
+                foreach (var w in hdrWarnings) job.AppendLog("Warning: " + w);
+            }
+
             // ------------------------------------------------------------ verify
             job.BeginStage(L.T("Checking the result"));
             ctx.Changed(job);
@@ -172,6 +181,7 @@ public static class JobRunner
             var warnings = new List<string>();
             if (job.Log.Contains("Glyph 0x", StringComparison.Ordinal)) warnings.Add(L.T("Some glyphs were missing from the fonts."));
             warnings.AddRange(compiled.Issues.Where(i => !i.IsError).Select(i => i.Message));
+            warnings.AddRange(hdrWarnings);
             Complete(job, warnings.Count == 0 ? JobStatus.Done : JobStatus.Warning, warnings.Count == 0 ? null : string.Join(" ", warnings.Distinct()), ctx);
         }
         catch (OperationCanceledException)
@@ -214,6 +224,7 @@ public static class JobRunner
                 Edit = cc.Edit with { Segments = null, TrimStart = start > 0.0005 ? start : null, TrimEnd = end, KeepChapters = false },
                 ForcedOutputPath = file,
                 ChaptersFile = null,
+                HdrFiles = null,   // the whole edited metadata is injected after the join
             };
             var c = CommandBuilder.Compile(partCtx);
             if (c.HasErrors) throw new InvalidOperationException(c.Issues.First(x => x.IsError).Message);
@@ -648,28 +659,8 @@ public static class JobRunner
         return "fonts";
     }
 
-    private static async Task<HdrSideFiles> ExtractHdrMetadataAsync(QueueJob job, HdrPlan hdr, string workDir, RunnerContext ctx, CancellationToken ct)
-    {
-        var v = job.Media!.PrimaryVideo!;
-        string? rpu = null, json = null;
-        if (hdr.UseDolbyVisionRpu && ctx.Tools.DoviTool is { } dovi)
-        {
-            rpu = Path.Combine(workDir, "RPU.bin");
-            // Mode 2 converts profile 7 (dual layer) and keeps 8.x as profile 8.1.
-            await PipeAsync(ctx, job.SourcePath, v.Index, dovi, ["-m", "2", "extract-rpu", "-", "-o", rpu], ct);
-            job.AppendLog("Dolby Vision RPU extracted.");
-        }
-        if (hdr.UseHdr10PlusJson && ctx.Tools.Hdr10PlusTool is { } h10)
-        {
-            json = Path.Combine(workDir, "hdr10plus.json");
-            await PipeAsync(ctx, job.SourcePath, v.Index, h10, ["extract", "-", "-o", json], ct);
-            job.AppendLog("HDR10+ metadata extracted.");
-        }
-        return new HdrSideFiles(rpu, json);
-    }
-
     /// <summary>ffmpeg (HEVC Annex B to stdout) | tool (stdin), both under pause/stop control.</summary>
-    private static Task PipeAsync(RunnerContext ctx, string source, int videoIndex, string tool, string[] toolArgs, CancellationToken ct)
+    internal static Task PipeVideoAsync(RunnerContext ctx, string source, int videoIndex, string tool, IReadOnlyList<string> toolArgs, CancellationToken ct)
     {
         var ffArgs = new List<string> { "-hide_banner", "-nostdin", "-v", "error" };
         ffArgs.AddRange(MediaProber.RobustInputArgs(source));

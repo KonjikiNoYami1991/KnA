@@ -133,7 +133,7 @@ public static class RigayaEncoders
 
     /// <summary>Encoding options (codec, rate control, speed, depth, GOP, colour and static HDR).</summary>
     public static List<string> EncoderArgs(EncoderBackend backend, VideoCodec codec, QualityLevel quality, bool tenBit,
-        EncoderOverrides o, double frameRate, HdrPlan hdr, VideoStream video, bool native)
+        EncoderOverrides o, double frameRate, HdrPlan hdr, VideoStream video, bool native, HdrSideFiles? files = null)
     {
         var enc = ToolId(backend) ?? throw new NotSupportedException(backend.Display());
         int q = (int)quality;
@@ -183,10 +183,18 @@ public static class RigayaEncoders
         // ---------------------------------------------------------------- colour / HDR
         if (hdr.Action == HdrAction.Preserve)
         {
+            // Explicit values except when the encoder reads the source itself (--avhw/--avsw: "copy"/"auto" then work);
+            // a script or the y4m pipe carries no colour data at all.
             var h = video.Hdr;
+            bool p5 = hdr.DolbyVisionProfile is "5.0" or "10.0";
             string trc = h.IsHlg ? "arib-std-b67" : "smpte2084";
-            a.AddRange(["--colorprim", "bt2020", "--transfer", trc, "--colormatrix", "bt2020nc", "--colorrange", "limited"]);
-            if (codec != VideoCodec.H264 && !h.IsHlg)
+            if (!p5)
+            {
+                a.AddRange(["--colorprim", "bt2020", "--transfer", trc, "--colormatrix", "bt2020nc", "--colorrange", video.ColorRange == "pc" ? "full" : "limited"]);
+                if (native) a.AddRange(["--chromaloc", "auto"]);
+                else if (video.ChromaLocationIndex is { } cl) a.AddRange(["--chromaloc", cl.ToString(CultureInfo.InvariantCulture)]);
+            }
+            if (codec != VideoCodec.H264 && !h.IsHlg && !p5)
             {
                 if (native) a.AddRange(["--master-display", "copy", "--max-cll", "copy"]);
                 else
@@ -196,6 +204,9 @@ public static class RigayaEncoders
                 }
             }
             if (h.IsHlg && codec == VideoCodec.HEVC) a.AddRange(["--atc-sei", "arib-std-b67"]);
+            // Dolby Vision: the RPU extracted by KnA (edited for the trim / crop) is read from a file in every path.
+            if (hdr.DolbyVision == HdrCarry.Encoder && codec != VideoCodec.H264)
+                a.AddRange(["--dolby-vision-rpu", files?.DolbyVisionRpu ?? "RPU.bin", "--dolby-vision-profile", hdr.DolbyVisionProfile ?? "8.1"]);
         }
         else if (hdr.Action == HdrAction.ToneMap || video.Height >= 600 || video.Height == 0)
             a.AddRange(["--colorprim", "bt709", "--transfer", "bt709", "--colormatrix", "bt709", "--colorrange", "limited"]);
@@ -217,7 +228,7 @@ public static class RigayaEncoders
     /// <summary>
     /// Command for the native path: the encoder opens the source (--avhw GPU decoding, --avsw CPU decoding) or the
     /// script (--vpy / --avs) and runs the --vpp-* filters in <paramref name="encoderArgs"/> on the GPU. Dolby Vision
-    /// RPU and HDR10+ are copied when kept (HEVC/AV1, file sources, as before: not with a crop); --parallel splits the file between the GPU's
+    /// RPU comes from KnA's file (edited for trim/crop), HDR10+ is copied (AV1) or injected afterwards (HEVC); --parallel splits the file between the GPU's
     /// encoder engines when nothing forbids it (the encoder turns it off by itself with --trim or --vpp-subburn).
     /// </summary>
     public static List<string> NativeArgs(string source, string reader, IReadOnlyList<string> encoderArgs, VideoStream video, HdrPlan hdr,
@@ -225,14 +236,9 @@ public static class RigayaEncoders
     {
         var a = new List<string> { reader, "-i", source };
         a.AddRange(encoderArgs);
-        if (hdr.Action == HdrAction.Preserve && codec != VideoCodec.H264 && reader is "--avhw" or "--avsw")
-        {
-            // The RPU describes the full picture: a crop or resize would make it wrong.
-            // The RPU's active area is in source pixels: a crop would make it wrong (a resize keeps the proportions).
-            if (video.Hdr.IsDolbyVision && !video.Hdr.DolbyVisionWithoutFallback && !encoderArgs.Contains("--crop"))
-                a.AddRange(["--dolby-vision-rpu", "copy", "--dolby-vision-profile", "8.1"]);
-            if (video.Hdr.HasHdr10Plus) a.AddRange(["--dhdr10-info", "copy"]);
-        }
+        // HDR10+ in AV1: copied while the encoder reads the source (a JSON file would need rigaya's hdr10plus_gen module).
+        // In HEVC it is injected after encoding, Dolby Vision comes from KnA's RPU file (EncoderArgs).
+        if (hdr.Hdr10Plus == HdrCarry.Copy && reader is "--avhw" or "--avsw") a.AddRange(["--dhdr10-info", "copy"]);
         if (parallel) a.AddRange(["--parallel", "auto"]);
         a.AddRange(["-o", output]);
         return a;

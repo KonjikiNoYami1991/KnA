@@ -97,11 +97,35 @@ public sealed class VideoStream : StreamBase
     public string? ColorTransfer { get; init; }
     public string? ColorSpace { get; init; }
     public string? ColorRange { get; init; }
+    /// <summary>Chroma sample location as ffprobe names it ("left", "topleft"…), null = unknown.</summary>
+    public string? ChromaLocation { get; init; }
     public HdrInfo Hdr { get; set; } = HdrInfo.Sdr;
     /// <summary>Clockwise rotation requested by the container (display matrix / "rotate" tag): 0, 90, 180, 270.</summary>
     public int Rotation { get; init; }
 
     public bool IsInterlaced => FieldOrder is "tt" or "bb" or "tb" or "bt";
+
+    /// <summary>
+    /// This stream (a script's video, which carries no colour data) with the colours and HDR metadata of
+    /// <paramref name="source"/>, the file the script reads: what HDR handling and the encoders must know.
+    /// </summary>
+    public VideoStream WithColoursOf(VideoStream source) => new()
+    {
+        Kind = Kind, Index = Index, CodecName = CodecName, Profile = Profile, Language = Language, Title = Title,
+        IsDefault = IsDefault, IsForced = IsForced, BitRate = BitRate, SizeBytes = SizeBytes,
+        Width = Width, Height = Height, SampleAspectRatio = SampleAspectRatio, FrameRate = FrameRate,
+        FrameRateRational = FrameRateRational, FrameCount = FrameCount, VariableFrameRate = VariableFrameRate,
+        PixelFormat = PixelFormat, BitDepth = BitDepth, FieldOrder = FieldOrder, IsAttachedPicture = IsAttachedPicture,
+        Rotation = Rotation,
+        ColorPrimaries = source.ColorPrimaries, ColorTransfer = source.ColorTransfer, ColorSpace = source.ColorSpace,
+        ColorRange = source.ColorRange, ChromaLocation = source.ChromaLocation, Hdr = source.Hdr,
+    };
+
+    /// <summary>H.264/HEVC chroma_sample_loc_type of <see cref="ChromaLocation"/> (0 left … 5 bottom), or null.</summary>
+    public int? ChromaLocationIndex => ChromaLocation switch
+    {
+        "left" => 0, "center" => 1, "topleft" => 2, "top" => 3, "bottomleft" => 4, "bottom" => 5, _ => null,
+    };
     public double DisplayWidth => Width * (SampleAspectRatio > 0 ? SampleAspectRatio : 1.0);
     public double DisplayAspectRatio => Height > 0 ? DisplayWidth / Height : 0;
 }

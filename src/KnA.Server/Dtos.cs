@@ -137,6 +137,8 @@ public sealed record AnalysisDto(IReadOnlyList<TrackPlan> Tracks, bool TracksAre
     public object? Gpu { get; init; }
     /// <summary>The picture chain as a VapourSynth script, each step marked with where it runs.</summary>
     public string? Script { get; init; }
+    /// <summary>Which HDR metadata is kept and how (one line each).</summary>
+    public IReadOnlyList<string> HdrDetails { get; init; } = [];
 
     public static AnalysisDto From(JobAnalysis a, string source)
     {
@@ -151,6 +153,7 @@ public sealed record AnalysisDto(IReadOnlyList<TrackPlan> Tracks, bool TracksAre
                 steps = g.Steps.Select(s => new { s.Name, place = s.Place.ToString(), placeLabel = KnA.Core.Encoding.GpuPipeline.Place(s.Place), s.Option, s.Note, s.GpuAlternative, s.ChainIndex }),
             } : null,
             Script = a.Script,
+            HdrDetails = a.HdrDetails,
         };
     }
 

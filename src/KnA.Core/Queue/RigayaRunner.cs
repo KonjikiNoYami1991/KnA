@@ -10,7 +10,7 @@ namespace KnA.Core.Queue;
 /// Video encode with NVEncC / QSVEncC / VCEEncC, GPU first:
 ///  • native: the encoder opens the source with GPU decoding (--avhw; --avsw for formats its GPU lacks) or the
 ///    VapourSynth / AviSynth script (--vpy / --avs), runs KnA's filters as its --vpp-* GPU filters (crop, deinterlace,
-///    HDR → SDR, denoise, deband, resize, sharpen, burned subtitles, trim) and copies Dolby Vision / HDR10+ (the
+///    HDR → SDR, denoise, deband, resize, sharpen, burned subtitles, trim) and writes Dolby Vision / HDR10+ (the
 ///    StaxRip way: decode → filters → encode never leave the GPU);
 ///  • pipe: FFmpeg decodes, filters, burns subtitles and trims exactly as in a single-pass encode and sends y4m
 ///    frames to the encoder's stdin (a VapourSynth or AI-upscaler process can sit in front of FFmpeg).
@@ -67,6 +67,8 @@ public static class RigayaRunner
             }
         }
         else job.AppendLog($"{name}: FFmpeg decodes the video ({plan.PipeReason}).");
+        if (exit != 0 && final.Hdr.Hdr10Plus == HdrCarry.Copy)
+            job.AppendLog("Warning: " + L.T("HDR10+ is copied only while {0} reads the source itself: this encode keeps static HDR10.", name));
 
         if (exit != 0)
         {

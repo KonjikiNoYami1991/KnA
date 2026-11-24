@@ -24,6 +24,8 @@ public sealed record JobAnalysis(
     public GpuPipeline? Gpu { get; init; }
     /// <summary>The picture chain as a VapourSynth script, each step marked with where it runs (editor, Filters tab).</summary>
     public string? Script { get; init; }
+    /// <summary>Which HDR metadata is kept and how (one line each), empty for SDR.</summary>
+    public IReadOnlyList<string> HdrDetails { get; init; } = [];
 }
 
 /// <summary>
@@ -487,7 +489,7 @@ public sealed class QueueService : IDisposable
             Containers.AllowedFor(j.Settings, tracks, new Dictionary<string, MediaInfo>(j.ExternalMedia) { [j.SourcePath] = j.Media },
                 JobRunner.AudioEncodersFor(Settings.Capabilities, tools)), compiled.Hdr.Summary,
             RigayaCommand(compiled, ctx.Options, tools) ?? (compiled.Plan.Arguments.Count > 0 ? compiled.Plan.CommandLine(tools.Ffmpeg) : null), compiled.OutputDuration)
-        { Gpu = compiled.Gpu, Script = j.ScriptNote is { } note && compiled.Script is { } sct ? "# " + note + "\n" + sct : compiled.Script };
+        { Gpu = compiled.Gpu, HdrDetails = compiled.Hdr.Details, Script = j.ScriptNote is { } note && compiled.Script is { } sct ? "# " + note + "\n" + sct : compiled.Script };
     }
 
     /// <summary>The commands a rigaya encode really runs: the encoder (GPU reader or FFmpeg pipe), then FFmpeg for the rest.</summary>

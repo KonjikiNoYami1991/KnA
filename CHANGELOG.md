@@ -12,6 +12,26 @@
   tracks left out (e.g. PGS subtitles) instead of dropping them silently.
 - Dolby Vision found from the frames when the container has no configuration record (old mkvmerge remuxes).
 
+**HDR carried through every path, by itself**
+- **Video from a script** (catalogue chain, the standard VapourSynth frameserver or a hand-written script of the source)
+  takes the source's colours and HDR metadata: HDR10 / HLG / HDR10+ / Dolby Vision are no longer lost silently with
+  x265 or NVEncC/QSVEncC/VCEEncC reading `--vpy`/`--avs` or the y4m pipe. HDR sources now go through the standard
+  VapourSynth frameserver too (only Dolby Vision profile 5 stays with FFmpeg's reader).
+- **Static metadata written explicitly** whenever the encoder doesn't read the file itself: colour primaries,
+  transfer, matrix, range, chroma location, mastering display and MaxCLL/MaxFALL (`copy`/`auto` only with
+  `--avhw`/`--avsw`).
+- **Dolby Vision** RPU extracted by KnA (dovi_tool) and given to x265 and to NVEncC/QSVEncC/VCEEncC as a file, with
+  the profile derived from the source (8.1, 8.4 on HLG, 5.0 for profile 5, 10.x in AV1); profile 5 is now kept instead
+  of being converted to SDR when the encoder can carry it.
+- **Edited, not dropped**: a trim keeps only the kept frames in the RPU and in the HDR10+ JSON; a crop resets the RPU's
+  active area; FFmpeg's GPU encoders, chunked and multi-part encodes and HDR10+ with rigaya's HEVC get the metadata
+  injected into the finished HEVC (dovi_tool `inject-rpu`, hdr10plus_tool `inject`), checked frame by frame and
+  remuxed. When frames are added or removed (frame-rate change, a script that changes the count) dynamic metadata
+  can't follow: static HDR is kept and the reason is said.
+- **HDR → SDR** of a script's video: the tone mapping knows the frames are PQ/HLG BT.2020 (FFmpeg `setparams`,
+  explicit `--vpp-colorspace` input colours on the GPU); no HDR parameter reaches the encoder.
+- The editor and the log list which HDR metadata is kept and how.
+
 **Customization editor (the pencil), rebuilt**
 - Tabs: **Preset** · Trim · Video · Audio · Subtitles · Filters · Output · Preview. The Tracks tab is gone: each kind of
   stream (video, audio, subtitles, attachments) is listed, kept or left out, ordered and labelled in its own tab, and
@@ -168,6 +188,25 @@
 - Il log mostra solo i comandi eseguiti davvero (niente comando dell'encoder FFmpeg accanto a quello di NVEncC) ed elenca
   le tracce escluse (es. sottotitoli PGS) invece di scartarle in silenzio.
 - Dolby Vision riconosciuto dai fotogrammi quando il contenitore non ha il record di configurazione (vecchi remux mkvmerge).
+
+**HDR mantenuto in ogni percorso, da solo**
+- **Video da uno script** (catena del catalogo, frameserver VapourSynth standard o script scritto a mano sulla
+  sorgente): prende i colori e i metadati HDR della sorgente, quindi HDR10 / HLG / HDR10+ / Dolby Vision non si perdono
+  più in silenzio con x265 o con NVEncC/QSVEncC/VCEEncC che leggono `--vpy`/`--avs` o la pipe y4m. Anche le sorgenti
+  HDR passano ora dal frameserver VapourSynth standard (solo Dolby Vision profilo 5 resta al lettore di FFmpeg).
+- **Metadati statici scritti esplicitamente** quando l'encoder non legge da sé il file: primari, transfer, matrice,
+  range, posizione della crominanza, mastering display e MaxCLL/MaxFALL (`copy`/`auto` solo con `--avhw`/`--avsw`).
+- **Dolby Vision**: l'RPU è estratto da KnA (dovi_tool) e passato come file a x265 e a NVEncC/QSVEncC/VCEEncC, con il
+  profilo ricavato dalla sorgente (8.1, 8.4 su HLG, 5.0 per il profilo 5, 10.x in AV1); il profilo 5 ora viene
+  mantenuto invece di essere convertito in SDR quando l'encoder lo può portare.
+- **Modificati, non scartati**: un taglio tiene nell'RPU e nel JSON HDR10+ solo i fotogrammi tenuti; un ritaglio
+  azzera l'area attiva dell'RPU; con gli encoder GPU di FFmpeg, la codifica a segmenti o a più parti e l'HDR10+ con
+  l'HEVC di rigaya i metadati vengono iniettati nell'HEVC finito (dovi_tool `inject-rpu`, hdr10plus_tool `inject`),
+  controllati fotogramma per fotogramma e rimuxati. Quando si aggiungono o tolgono fotogrammi (cambio di frame rate,
+  uno script che cambia il numero) i metadati dinamici non possono seguire: resta l'HDR statico e viene detto perché.
+- **HDR → SDR** del video di uno script: il tone mapping sa che i fotogrammi sono PQ/HLG BT.2020 (`setparams` di FFmpeg,
+  colori di ingresso espliciti in `--vpp-colorspace` sulla GPU); nessun parametro HDR arriva all'encoder.
+- L'editor e il log dicono quali metadati HDR vengono mantenuti e come.
 
 **Editor di personalizzazione (la matita), rifatto**
 - Schede: **Preset** · Taglio · Video · Audio · Sottotitoli · Filtri · Output · Anteprima. La scheda Tracce non c'è più:

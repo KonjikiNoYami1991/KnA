@@ -220,7 +220,7 @@ public sealed class SettingsWindow : Window
             }, _hwDecode, v => _hwDecode = v), L.T("The GPU decodes the source (NVDEC, D3D11VA, VA-API, VideoToolbox): a UHD HEVC source no longer limits a GPU encode to the CPU's decoding speed.")),
             Ui.Toggle(L.T("Resumable encodes (continue after a stop, a crash or a restart)"), _resumable, v => _resumable = v),
             Ui.Toggle(L.T("VapourSynth reads the video of CPU encodes (like StaxRip)"), _vsEncodes, v => _vsEncodes = v),
-            Ui.Muted(L.T("The script is shown in the editor (Filters tab). GPU encoders keep their GPU decoding; HDR, variable frame rate, interlaced, rotated and anamorphic sources, discs and MPEG streams stay with FFmpeg's reader.")),
+            Ui.Muted(L.T("The script is shown in the editor (Filters tab). GPU encoders keep their GPU decoding; HDR travels with the script (Dolby Vision profile 5, variable frame rate, interlaced, rotated and anamorphic sources, discs and MPEG streams stay with FFmpeg's reader).")),
             Ui.Columns(
                 Ui.Field("Stuck FFmpeg timeout (minutes)", Ui.Number(_stall, 1, 1440, 1, v => _stall = (int)v, "0")),
                 Ui.Field("Logs to keep", Ui.Number(_keepLogs, 10, 100000, 10, v => _keepLogs = (int)v, "0"))));

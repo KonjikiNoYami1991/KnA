@@ -171,7 +171,9 @@ public static class StandardFrameserver
         if (Discs.DiscSource.IsTitlePath(sourcePath)) return Localization.L.T("disc source");
         if (RigayaEncoders.Wanted(s) || s.EffectiveBackend != EncoderBackend.Software) return Localization.L.T("GPU encoder: the GPU decodes the file (GPU first)");
         if (media?.PrimaryVideo is not { } v) return Localization.L.T("no video");
-        if (v.Hdr.IsHdr) return Localization.L.T("HDR source (its metadata only travels with FFmpeg's reader)");
+        // HDR travels with the script (KnA gives the encoder the source's colours, RPU and HDR10+ explicitly), except Dolby
+        // Vision profile 5, whose reshaping only FFmpeg's reader applies when converting.
+        if (v.Hdr.DolbyVisionWithoutFallback) return Localization.L.T("Dolby Vision profile 5 (its reshaping only travels with FFmpeg's reader)");
         if (v.VariableFrameRate) return Localization.L.T("variable frame rate");
         if (v.IsInterlaced) return Localization.L.T("interlaced source (deinterlaced by FFmpeg as it reads)");
         if (v.Rotation != 0 || s.VideoFilters.OverridesOrientation) return Localization.L.T("rotation");

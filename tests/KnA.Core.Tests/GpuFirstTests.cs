@@ -72,7 +72,8 @@ public class GpuFirstTests
         var s = Rig with { Codec = VideoCodec.H264, Hdr = HdrMode.ToneMapSdr, ToneMap = ToneMapCurve.Hable };
         var j = CommandBuilder.Compile(Ctx(Media(Video("hevc", hdr, 3840, 2160)), s));
         var n = Native(j);
-        Assert.Equal("hdr2sdr=hable,source_peak=1200,ldr_nits=100", n[n.IndexOf("--vpp-colorspace") + 1]);
+        Assert.Equal("matrix=bt2020nc:bt709,colorprim=bt2020:bt709,transfer=smpte2084:bt709,range=limited:limited,hdr2sdr=hable,source_peak=1200,ldr_nits=100",
+            n[n.IndexOf("--vpp-colorspace") + 1]);
         Assert.Equal("bt709", n[n.IndexOf("--colorprim") + 1]);
         // A curve the encoder lacks: the closest one, and the editor says so.
         var spline = CommandBuilder.Compile(Ctx(Media(Video("hevc", hdr, 3840, 2160)), s with { ToneMap = ToneMapCurve.Spline }));

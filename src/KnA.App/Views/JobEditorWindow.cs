@@ -170,6 +170,7 @@ public sealed class JobEditorWindow : Window
         if (_a.HdrSummary is { Length: > 0 } h && h != "SDR") info.Add("HDR: " + h);
         if (_a.OutputDuration > TimeSpan.Zero) info.Add($"{L.T("Output duration")}: {Ui.Short(_a.OutputDuration)}");
         if (info.Count > 0) _issues.Children.Add(Ui.Note(string.Join(" · ", info)));
+        foreach (var d in _a.HdrDetails) _issues.Children.Add(Ui.Note("HDR · " + d));
     }
 
     private void RenderTab()
