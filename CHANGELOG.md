@@ -53,6 +53,8 @@
   writes the container's Dolby Vision configuration record that FFmpeg leaves out (x265, injected RPUs); the video is
   remuxed with every frame's original time, language, name and static HDR10 metadata, MP4 gets the record through
   FFmpeg. Injected metadata is remuxed by mkvmerge too: FFmpeg can't time a raw HEVC stream (that remux failed).
+  Settings → Components installs MKVToolNix's own builds (Windows portable zip: only mkvmerge.exe; Linux x64 AppImage:
+  mkvmerge with its libraries, for systems with glibc 2.14 or newer).
 - The editor and the log list which HDR metadata is kept and how.
 
 **Customization editor (the pencil), rebuilt**
@@ -253,7 +255,9 @@
   scrive il record di configurazione Dolby Vision del contenitore che FFmpeg non mette (x265, RPU iniettati); il video
   viene rimuxato con i tempi originali di ogni fotogramma, lingua, nome e metadati HDR10 statici, l'MP4 riceve il
   record tramite FFmpeg. Anche i metadati iniettati vengono rimuxati con mkvmerge: FFmpeg non sa dare i tempi a un
-  flusso HEVC grezzo (quel rimux falliva).
+  flusso HEVC grezzo (quel rimux falliva). Impostazioni → Componenti installa le build ufficiali di MKVToolNix (zip
+  portable per Windows: solo mkvmerge.exe; AppImage per Linux x64: mkvmerge con le sue librerie, per sistemi con
+  glibc 2.14 o più recente).
 - L'editor e il log dicono quali metadati HDR vengono mantenuti e come.
 
 **Editor di personalizzazione (la matita), rifatto**

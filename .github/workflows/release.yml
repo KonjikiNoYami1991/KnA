@@ -212,7 +212,7 @@ jobs:
           # checked by loading every plugin (the install fails otherwise).
           case "${{ matrix.rid }}" in
             win-x64)     ids="nvencc,qsvencc,vceencc,qaac,vapoursynth,dovi_tool,hdr10plus_tool,tesseract,$common,mkvtoolnix" ;;
-            linux-x64)   ids="nvencc,qsvencc,vceencc,vapoursynth,dovi_tool,hdr10plus_tool,$common" ;;
+            linux-x64)   ids="nvencc,qsvencc,vceencc,vapoursynth,dovi_tool,hdr10plus_tool,$common,mkvtoolnix" ;;
             linux-arm64) ids="vapoursynth,dovi_tool,hdr10plus_tool,$common" ;;
             # built on an x64 runner: x64 programs, which Windows on Arm runs through its x64 emulation
             win-arm64)   ids="vapoursynth,dovi_tool,hdr10plus_tool,tesseract,$common,mkvtoolnix" ;;
@@ -223,16 +223,17 @@ jobs:
           dotnet run --project src/KnA.Server -c Release -- --bundle "$abs" "$ids" || echo "::warning::Some components could not be bundled for ${{ matrix.rid }} (see the log)"
           # VapourSynth is required in every package (CLAUDE.md): stop here rather than publish a package without it.
           find "$b/tools/vapoursynth" -name 'vspipe*' -type f | grep -q . || { echo "::error::VapourSynth missing from the ${{ matrix.rid }} package"; exit 1; }
-          # mkvmerge (Dolby Vision configuration record): Windows from MKVToolNix's portable build here, Linux and macOS below.
-          if [ "$RUNNER_OS" = Windows ]; then
-            find "$b/tools/mkvtoolnix" -name 'mkvmerge.exe' -type f | grep -q . || { echo "::error::mkvmerge missing from the ${{ matrix.rid }} package"; exit 1; }
-          fi
+          # mkvmerge (Dolby Vision configuration record): MKVToolNix's own builds here (Windows portable zip, Linux x64
+          # AppImage), Linux ARM64 and macOS below.
+          case "${{ matrix.rid }}" in
+            win-*|linux-x64) find "$b/tools/mkvtoolnix" -name 'mkvmerge*' -type f | grep -q . || { echo "::error::mkvmerge missing from the ${{ matrix.rid }} package"; exit 1; } ;;
+          esac
           rm -rf "$b/data/temp"
           du -sh "$b"/tools/* "$b"/ai 2>/dev/null || true
-      # Linux: mkvmerge (Dolby Vision configuration record) from the distribution's package, with the libraries it loads
-      # copied next to it and a small launcher that points the loader at them (no system package needed).
-      - name: mkvmerge (Linux, with its libraries)
-        if: runner.os == 'Linux'
+      # Linux ARM64 (MKVToolNix publishes no ARM64 AppImage): mkvmerge from the distribution's package, with the libraries
+      # it loads copied next to it and a small launcher that points the loader at them (no system package needed).
+      - name: mkvmerge (Linux ARM64, with its libraries)
+        if: matrix.rid == 'linux-arm64'
         run: |
           sudo apt-get update && sudo apt-get install -y --no-install-recommends mkvtoolnix
           d=bundle/tools/mkvtoolnix

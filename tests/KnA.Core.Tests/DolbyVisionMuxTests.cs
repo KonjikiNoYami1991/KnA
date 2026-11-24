@@ -19,6 +19,16 @@ public class DolbyVisionMuxTests
     }
 
     [Fact]
+    public void Mkvtoolnix_site_and_ldd_output_are_read()
+    {
+        // As the site serves them (checked on 2026-11-24).
+        Assert.Equal("103.0", ComponentManager.VersionFromXml("""<?xml version="1.0" encoding="utf-8"?><mkvtoolnix-releases><latest-source><source-code-url>https://mkvtoolnix.download/sources/mkvtoolnix-103.0.tar.xz</source-code-url><url>https://mkvtoolnix.download/downloads.html</url><version>103.0</version></latest-source></mkvtoolnix-releases>"""));
+        Assert.Equal("104.0", ComponentManager.NewestFolder("""<a href="./97.0/">97.0/</a><a href="./103.0/">103.0/</a><a href="./104.0/">104.0/</a><a href="./old-runtime/">"""));
+        var self = typeof(DolbyVisionMuxTests).Assembly.Location;
+        Assert.Equal([self], ComponentManager.LddLibraries($"\tlinux-vdso.so.1 (0x0)\n\tlibx.so.1 => {self} (0x7f)\n\tlibmissing.so => not found\n\t/lib64/ld-linux-x86-64.so.2 (0x7f)\n"));
+    }
+
+    [Fact]
     public void Mkvmerge_gets_the_static_metadata_language_and_name()
     {
         var plan = new HdrPlan

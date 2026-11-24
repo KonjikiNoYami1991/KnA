@@ -8,8 +8,10 @@ namespace KnA.Core.Tools;
 /// <summary>
 /// MKVToolNix (mkvmerge, GPLv2, https://mkvtoolnix.download): KnA uses it for one job only, writing the Dolby Vision
 /// configuration record of a re-encoded Dolby Vision video (FFmpeg writes only the RPU in the video stream).
-///  • Windows (x64; Windows on Arm runs it through x64 emulation): the official portable 7z;
-///  • Linux x64: the official AppImage, unpacked (no FUSE needed) with a small launcher next to its libraries;
+///  • Windows (x64; Windows on Arm runs it through x64 emulation): the official portable zip, of which only the
+///    statically linked mkvmerge.exe is kept (28 MB of the 270 MB of the GUI package);
+///  • Linux x64: the official AppImage, unpacked (no FUSE needed): its mkvmerge with the libraries it loads from the
+///    AppImage, zlib and GMP, next to a small launcher (built for old systems: glibc 2.14 or newer);
 ///  • macOS and Linux ARM64: the release packages carry it (Homebrew / the distribution's package with its
 ///    libraries); otherwise Homebrew or the package manager, which KnA finds by itself.
 /// </summary>
@@ -22,7 +24,7 @@ public sealed partial class ComponentManager
 
     [GeneratedRegex(@"<version>\s*(\d+(?:\.\d+)+)\s*</version>", RegexOptions.CultureInvariant)]
     private static partial Regex XmlVersion();
-    [GeneratedRegex(@"href=""(\d+(?:\.\d+)+)/""", RegexOptions.CultureInvariant)]
+    [GeneratedRegex(@"href=""(?:\./)?(\d+(?:\.\d+)+)/""", RegexOptions.CultureInvariant)]
     private static partial Regex FolderVersion();
 
     /// <summary>Latest release: the site's latest-release.xml, or the newest folder of the Windows releases.</summary>
@@ -32,13 +34,18 @@ public sealed partial class ComponentManager
         http.DefaultRequestHeaders.UserAgent.ParseAdd("KnA");
         try
         {
-            var xml = await http.GetStringAsync(MkvToolNixSite + "/latest-release.xml", ct);
-            if (XmlVersion().Match(xml) is { Success: true } m) return m.Groups[1].Value;
+            if (VersionFromXml(await http.GetStringAsync(MkvToolNixSite + "/latest-release.xml", ct)) is { } v) return v;
         }
         catch (HttpRequestException) { }
-        var list = await http.GetStringAsync(MkvToolNixSite + "/windows/releases/", ct);
-        return FolderVersion().Matches(list).Select(x => x.Groups[1].Value).OrderBy(ReleaseInfo.ParseVersion).LastOrDefault();
+        return NewestFolder(await http.GetStringAsync(MkvToolNixSite + "/windows/releases/", ct));
     }
+
+    /// <summary>The version of latest-release.xml ("&lt;latest-source&gt;…&lt;version&gt;103.0&lt;/version&gt;").</summary>
+    internal static string? VersionFromXml(string xml) => XmlVersion().Match(xml) is { Success: true } m ? m.Groups[1].Value : null;
+
+    /// <summary>The newest version folder of a directory listing (href="./103.0/").</summary>
+    internal static string? NewestFolder(string listing) =>
+        FolderVersion().Matches(listing).Select(x => x.Groups[1].Value).OrderBy(ReleaseInfo.ParseVersion).LastOrDefault();
 
     private async Task InstallMkvtoolnixAsync(string temp, IProgress<double>? progress, IProgress<string>? log, CancellationToken ct)
     {
@@ -49,16 +56,18 @@ public sealed partial class ComponentManager
         var extracted = Path.Combine(temp, "mkv");
         if (OperatingSystem.IsWindows())
         {
-            var name = $"mkvtoolnix-64-bit-{version}.7z";
+            var name = $"mkvtoolnix-64-bit-{version}.zip";
             var archive = Path.Combine(temp, name);
             log?.Report(L.T("Downloading {0}…", name));
             await GitHubReleases.DownloadAsync($"{MkvToolNixSite}/windows/releases/{version}/{name}", archive, progress, ct);
-            if (!ArchiveEngine.IsInstalled(dataDirectory)) await ArchiveEngine.InstallAsync(this, dataDirectory, temp, null, log, ct);
             log?.Report(L.T("Extracting…"));
-            await ArchiveEngine.ExtractAsync(dataDirectory, archive, extracted, ct);
+            await ExtractAsync(archive, extracted, ct);
             var exe = Directory.EnumerateFiles(extracted, "mkvmerge.exe", SearchOption.AllDirectories).FirstOrDefault()
                       ?? throw new InvalidDataException(L.T("The archive did not contain {0}.", "mkvmerge.exe"));
-            ReplaceFolder(Path.GetDirectoryName(exe)!, target);
+            Directory.CreateDirectory(target);
+            ReplaceFile(exe, Path.Combine(target, "mkvmerge.exe"));
+            if (Directory.EnumerateFiles(extracted, "COPYING.txt", SearchOption.AllDirectories).FirstOrDefault() is { } lic)
+                ReplaceFile(lic, Path.Combine(target, "COPYING.txt"));
         }
         else
         {
@@ -69,17 +78,26 @@ public sealed partial class ComponentManager
             File.SetUnixFileMode(image, UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute);
             Directory.CreateDirectory(extracted);
             log?.Report(L.T("Extracting…"));
-            // An AppImage unpacks itself without FUSE.
+            // An AppImage unpacks itself without FUSE (squashfs-root/usr/bin/mkvmerge).
             var x = await ProcessRunner.RunAsync(image, ["--appimage-extract"], extracted, TimeSpan.FromMinutes(10), ct);
-            var root = Path.Combine(extracted, "squashfs-root");
-            var bin = Directory.Exists(root) ? Directory.EnumerateFiles(root, "mkvmerge", SearchOption.AllDirectories).FirstOrDefault() : null;
-            if (bin is null) throw new InvalidDataException(L.T("The archive did not contain {0}.", "mkvmerge") + " " + x.StdErr.Trim());
-            var appDir = Path.Combine(target, "appimage");
-            ReplaceFolder(root, appDir);
-            var rel = Path.GetRelativePath(root, bin).Replace('\\', '/');
-            var libs = string.Join(':', new[] { "usr/lib", "usr/lib64", "lib", Path.GetDirectoryName(rel)!.Replace('\\', '/') + "/../lib" }
-                .Select(l => "$d/appimage/" + l));
-            WriteLauncher(Path.Combine(target, "mkvmerge"), "$d/appimage/" + rel, libs);
+            var bin = Path.Combine(extracted, "squashfs-root", "usr", "bin", "mkvmerge");
+            if (!File.Exists(bin)) throw new InvalidDataException(L.T("The archive did not contain {0}.", "mkvmerge") + " " + x.StdErr.Trim());
+            if (Directory.Exists(target)) Directory.Delete(target, true);
+            var lib = Path.Combine(target, "lib");
+            Directory.CreateDirectory(lib);
+            File.Copy(bin, Path.Combine(target, "mkvmerge.bin"));
+            File.SetUnixFileMode(Path.Combine(target, "mkvmerge.bin"), UnixFileMode.UserRead | UnixFileMode.UserWrite | UnixFileMode.UserExecute
+                | UnixFileMode.GroupRead | UnixFileMode.GroupExecute | UnixFileMode.OtherRead | UnixFileMode.OtherExecute);
+            // The libraries it loads from the AppImage travel with it, and zlib and GMP from the system (not every
+            // system has GMP); glibc and the C++ runtime stay the system's.
+            var appLib = Path.Combine(extracted, "squashfs-root", "usr", "lib");
+            var ldd = await ProcessRunner.RunAsync("sh", ["-c", "LD_LIBRARY_PATH=\"$1\" ldd \"$2\"", "ldd", appLib, bin], timeout: TimeSpan.FromSeconds(30), ct: ct);
+            foreach (var path in LddLibraries(ldd.StdOut).Where(p => p.StartsWith(appLib, StringComparison.Ordinal)
+                         || Path.GetFileName(p).StartsWith("libz.", StringComparison.Ordinal) || Path.GetFileName(p).StartsWith("libgmp.", StringComparison.Ordinal)))
+                File.Copy(path, Path.Combine(lib, Path.GetFileName(path)), overwrite: true);
+            var copying = Directory.EnumerateFiles(Path.Combine(extracted, "squashfs-root"), "COPYING*", SearchOption.AllDirectories).FirstOrDefault();
+            if (copying is not null) File.Copy(copying, Path.Combine(target, "COPYING.txt"), overwrite: true);
+            WriteLauncher(Path.Combine(target, "mkvmerge"), "$d/mkvmerge.bin", "$d/lib");
         }
         var mkvmerge = Path.Combine(target, FfmpegLocator.ExeName("mkvmerge"));
         var r = await ProcessRunner.RunAsync(mkvmerge, ["--version"], timeout: TimeSpan.FromSeconds(30), ct: ct);
@@ -88,6 +106,11 @@ public sealed partial class ComponentManager
         log?.Report(r.StdOut.Trim().Split('\n')[0]);
         SaveState("mkvtoolnix", version);
     }
+
+    /// <summary>The libraries "ldd" resolved to a file ("libz.so.1 => /lib/x86_64-linux-gnu/libz.so.1 (0x…)").</summary>
+    internal static IEnumerable<string> LddLibraries(string ldd) =>
+        ldd.Split('\n').Select(l => l.Split("=>", 2)).Where(p => p.Length == 2)
+            .Select(p => p[1].Trim().Split(' ')[0]).Where(p => p.StartsWith('/') && File.Exists(p));
 
     /// <summary>A launcher script that starts a program with its own libraries (Linux), wherever the folder is moved.</summary>
     internal static void WriteLauncher(string path, string program, string libraryPath)

@@ -57,10 +57,11 @@ user's machines are available.
   NVEncC's `--dolby-vision-rpu <file>` together with `--trim` (KnA gives the uncut RPU to the encoder's own reader,
   because rigaya numbers the frames from the start of the source — verify); players / TVs recognising Dolby Vision in
   the output (configuration record written by mkvmerge).
-- mkvmerge in the packages: Windows from MKVToolNix's portable 7z (download URL and folder layout not verifiable from
-  the development container: check the bundle log), Linux from Ubuntu's package with its libraries (needs glibc ≥ the
-  runner's: check on older distributions), macOS from Homebrew with dylibbundler (Qt frameworks), the in-app install
-  on Linux x64 from the AppImage; package sizes.
+- mkvmerge in the packages: Windows x64/ARM64 from MKVToolNix's portable zip (only the static mkvmerge.exe is kept:
+  it could not be started in the development container — check the bundle log and run it on Windows / Windows on
+  Arm), Linux x64 from the AppImage (installed and verified in the development container), Linux ARM64 from Ubuntu's
+  package with its libraries (needs the runner's glibc: check on older distributions), macOS from Homebrew with
+  dylibbundler (Qt frameworks); package sizes.
 
 ## 5. Theme: Golden Darkness (last of the queue)
 
