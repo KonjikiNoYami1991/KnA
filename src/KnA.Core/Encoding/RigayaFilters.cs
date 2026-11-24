@@ -245,7 +245,7 @@ public static class RigayaFilters
         "bwdif" => ("--vpp-bwdif", L.T("the same Bwdif deinterlacer on the GPU"), true),
         "qtgmc" => ("--vpp-rtgmc", L.T("rigaya's QTGMC for the GPU (relaxed implementation, much faster)"), false),
         "ivtc" => ("--vpp-ivtc --vpp-decimate", L.T("inverse telecine and decimation on the GPU"), false),
-        "knlm" => ("--vpp-nlmeans", L.T("the same non-local means algorithm on the GPU"), false),
+        "knlm" or "nlmeans" => ("--vpp-nlmeans", L.T("the same non-local means algorithm on the GPU"), false),
         "dfttest" => ("--vpp-fft3d", L.T("frequency-domain denoiser on the GPU"), false),
         "fft3d" => ("--vpp-fft3d", L.T("FFT3D denoiser on the GPU"), false),
         "smdegrain" => ("--vpp-degrain", L.T("motion-compensated temporal denoiser on the GPU"), false),

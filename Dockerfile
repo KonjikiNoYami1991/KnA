@@ -122,6 +122,12 @@ RUN set -e; if ls /tmp/debs/*.deb >/dev/null 2>&1; then apt-get update; \
 # Archive engine (7-Zip packages, e.g. PaddleOCR): py7zr next to the program, used with the image's Python.
 RUN python3 -m pip install --no-cache-dir --break-system-packages --target /app/tools/archive/lib py7zr multivolumefile \
  || python3 -m pip install --no-cache-dir --target /app/tools/archive/lib py7zr multivolumefile
+# VapourSynth (portable Python + VapourSynth + vsjetpack + the filter catalogue's plugins), installed by KnA's own
+# component manager exactly as in the release packages; its configuration is written to /config at run time.
+RUN mkdir -p /tmp/vsb && touch /tmp/vsb/portable.txt \
+ && dotnet /app/kna-server.dll --bundle /tmp/vsb vapoursynth \
+ && mkdir -p /app/tools && mv /tmp/vsb/tools/vapoursynth /app/tools/vapoursynth \
+ && rm -rf /tmp/vsb
 COPY deploy/docker-entrypoint.sh /usr/local/bin/kna-entrypoint
 RUN chmod 755 /usr/local/bin/kna-entrypoint
 

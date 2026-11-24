@@ -123,9 +123,19 @@ public class GpuFirstTests
             VideoFilters = new VideoFilterSettings { Sharpen = FilterStrength.Medium },
         };
         var j = CommandBuilder.Compile(Ctx(Media(Video()), qtgmc, new JobEdit { Tracks = tracks }, new() { [script] = sm }));
-        var n = Native(j);
-        Assert.Equal(["--vpy", "-i", script], n.Take(3));
-        Assert.Contains("--vpp-cas", n);                                       // KnA's own filters still on the GPU
+        List<string> n;
+        if (OperatingSystem.IsWindows())
+        {
+            n = Native(j);
+            Assert.Equal(["--vpy", "-i", script], n.Take(3));
+            Assert.Contains("--vpp-cas", n);                                   // KnA's own filters still on the GPU
+        }
+        else
+        {
+            // Linux/macOS: the encoders can't load KnA's portable VapourSynth, vspipe feeds them (and KnA says so).
+            Assert.Null(j.Rigaya!.NativeArgs);
+            Assert.Contains("vspipe", j.Rigaya.PipeReason);
+        }
         Assert.Contains(j.Gpu!.Steps, x => x.Name == "QTGMC" && x.Place == StepPlace.CpuScript && x.GpuAlternative!.StartsWith("--vpp-rtgmc", StringComparison.Ordinal));
         Assert.True(j.Gpu.UsesScript);
 

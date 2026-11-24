@@ -147,7 +147,9 @@ public sealed class FrameserverEditor : StackPanel
             if (!cats.Contains(_category)) _category = cats.FirstOrDefault() ?? "";
             var catCombo = Ui.Combo(cats.Select(c => (c, L.T(c))), _category, c => { _category = c; Render(); });
             var inCat = filters.Where(f => f.EnglishCategory == _category).ToList();
-            var add = Ui.Combo(new[] { ("", L.T("Add a filter…")) }.Concat(inCat.Select(f => (f.Id, $"{f.Name} — {f.Description}"))), "",
+            // Filters whose plugin this VapourSynth lacks are listed but can't be picked.
+            var add = Ui.Combo(new[] { ("", L.T("Add a filter…"), true) }.Concat(inCat.Select(f => (f.Id,
+                    $"{f.Name} — {f.Description}" + (VapourSynthRuntime.Has(f.Plugin) ? "" : " — " + L.T("not available here ({0})", f.Plugin!)), VapourSynthRuntime.Has(f.Plugin)))), "",
                 id => { if (id.Length > 0) Set(_fs with { Chain = [.. _fs.Chain ?? [], new FrameserverFilter(id)] }); });
             Children.Add(Ui.Columns(Ui.Field("Category", catCombo), Ui.Field("Filter", add)));
             var chain = fs.Chain ?? [];

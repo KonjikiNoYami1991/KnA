@@ -94,6 +94,9 @@ public sealed class QueueService : IDisposable
     public FfmpegTools? RefreshTools()
     {
         Tools = FfmpegLocator.Locate(Settings.FfmpegPath, Store.DataDirectory, Settings.ToolPaths);
+        // Which catalogue filters the VapourSynth here can run (editors), read in the background.
+        var vspipe = Tools?.VsPipe;
+        _ = Task.Run(() => VapourSynthRuntime.ProbeAsync(vspipe, Store.TempDirectory));
         if (Settings.Capabilities?.Main is { } main)
             Media.Discs.DiscSource.Support = new Media.Discs.DiscSupport(main.HasBluray, main.HasDvdVideo);
         return Tools;

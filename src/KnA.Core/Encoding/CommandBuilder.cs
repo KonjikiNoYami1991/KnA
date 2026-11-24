@@ -727,6 +727,8 @@ public static class CommandBuilder
         if (!script && Media.Discs.DiscSource.IsTitlePath(file)) blockers.Add(L.T("disc source"));
         if (!script && media.GetValueOrDefault(file)?.Video.Count(v => !v.IsAttachedPicture) is not 1) blockers.Add(L.T("several video streams"));
         if (script && kind == FrameserverKind.AviSynth && !OperatingSystem.IsWindows()) blockers.Add(L.T("AviSynth script outside Windows"));
+        // The encoders find KnA's portable VapourSynth only on Windows (--vsdir); elsewhere vspipe feeds them.
+        else if (script && kind == FrameserverKind.VapourSynth && !OperatingSystem.IsWindows()) blockers.Add(L.T("VapourSynth script outside Windows (read through vspipe)"));
 
         var steps = t.Steps.ToList();
         if (script && s.Frameserver.Kind != FrameserverKind.None && file != ctx.Source.Path)

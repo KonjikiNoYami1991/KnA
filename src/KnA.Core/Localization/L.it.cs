@@ -1466,5 +1466,20 @@ public static partial class L
         ["The \"balanced\" preset (StaxRip's default) with adaptive quantization for H.264/HEVC."] = "Il preset \"balanced\" (predefinito di StaxRip) con quantizzazione adattiva per H.264/HEVC.",
         ["The \"fast\" preset: for quick encodes."] = "Il preset \"fast\": per codifiche rapide.",
         ["On the GPU ({0}) once nothing needs FFmpeg."] = "Sulla GPU ({0}) quando nulla richiede FFmpeg.",
+
+        // ------------------------------------------------------------ portable VapourSynth everywhere
+        ["Frameserver with its own Python and every plugin of the filter catalogue (QTGMC, SMDegrain, DFTTest, KNLMeansCL, f3kdb, BestSource, L-SMASH…), inside KnA's folder."] = "Frameserver con il suo Python e tutti i plugin del catalogo dei filtri (QTGMC, SMDegrain, DFTTest, KNLMeansCL, f3kdb, BestSource, L-SMASH…), dentro la cartella di KnA.",
+        ["{0}: no build for this platform, skipped."] = "{0}: nessuna build per questa piattaforma, saltato.",
+        ["VapourSynth could not be configured: {0}"] = "Impossibile configurare VapourSynth: {0}",
+        ["VapourSynth script outside Windows (read through vspipe)"] = "script VapourSynth fuori da Windows (letto tramite vspipe)",
+        ["not available here ({0})"] = "non disponibile qui ({0})",
+        ["Chroma threshold"] = "Soglia crominanza",
+        ["High sensitivity"] = "Sensibilità alta",
+        ["Low sensitivity"] = "Sensibilità bassa",
+        ["Removes banding in gradients (anime, dark scenes): the flash3kyuu / neo_f3kdb algorithm (vszip)."] = "Toglie il banding nelle sfumature (anime, scene scure): l'algoritmo flash3kyuu / neo_f3kdb (vszip).",
+        ["Strong sharpening of fine detail with halo control (LSFmod's successor in vsjetpack)."] = "Nitidezza forte sui dettagli fini con controllo degli aloni (il successore di LSFmod in vsjetpack).",
+        ["The same non-local means on the CPU (vszip): for computers without OpenCL."] = "Lo stesso non-local means sulla CPU (vszip): per i computer senza OpenCL.",
+        ["NLMeans (CPU)"] = "NLMeans (CPU)",
+        ["Add grain"] = "Aggiungi grana",
     };
 }

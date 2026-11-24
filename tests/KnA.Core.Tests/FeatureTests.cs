@@ -554,6 +554,37 @@ public class FrameserverTests(FeatureFixture fx) : IClassFixture<FeatureFixture>
     }
 }
 
+/// <summary>A catalogue chain (QTGMC through vsjetpack, L-SMASH source) run by KnA end to end (needs KnA's portable VapourSynth).</summary>
+public class CatalogueEncodeTests(FeatureFixture fx) : IClassFixture<FeatureFixture>
+{
+    [Fact]
+    public async Task Qtgmc_from_the_catalogue_doubles_the_frame_rate()
+    {
+        var vspipe = Environment.GetEnvironmentVariable("KNA_VSPIPE");
+        if (fx.Tools is null || vspipe is null || VapourSynthRuntime.RootOf(vspipe) is null) return;
+        var src = Path.Combine(fx.Dir, "interlaced.mkv");
+        var g = await ProcessRunner.RunAsync(fx.Tools.Ffmpeg, ["-v", "error", "-y", "-f", "lavfi", "-i", "testsrc2=size=720x576:rate=50:duration=2,interlace",
+            "-f", "lavfi", "-i", "sine=duration=2", "-c:v", "libx264", "-preset", "ultrafast", "-flags", "+ildct+ilme", "-c:a", "aac", src]);
+        Assert.Equal(0, g.ExitCode);
+        using var q = new QueueService(new SettingsStore(Path.Combine(fx.Dir, "data-qtgmc")), restoreQueue: false);
+        var job = Assert.Single(q.AddPaths([src], new JobSettings
+        {
+            Profile = ProfileKind.UniversalMkv, Codec = VideoCodec.H264, Quality = QualityLevel.Draft, Resolution = 0, Subtitles = SubtitleMode.None,
+            Frameserver = new FrameserverSettings { Kind = FrameserverKind.VapourSynth, Chain = [new FrameserverFilter("vs.qtgmc", new() { ["tff"] = "true" })] },
+        }));
+        var done = new TaskCompletionSource();
+        q.QueueChanged += () => { if (!q.IsRunning) done.TrySetResult(); };
+        q.Start();
+        await done.Task.WaitAsync(TimeSpan.FromMinutes(5));
+        Assert.True(job.Status is JobStatus.Done or JobStatus.Warning, job.Message + "\n" + job.Log);
+        Assert.Contains("QTempGaussMC", File.ReadAllText(job.FrameserverScript!));
+        var frames = await ProcessRunner.RunAsync(fx.Tools.Ffprobe, ["-v", "error", "-count_frames", "-select_streams", "v:0", "-show_entries", "stream=nb_read_frames", "-of", "csv=p=0", job.OutputPath!]);
+        Assert.InRange(int.Parse(frames.StdOut.Trim().TrimEnd(','), System.Globalization.CultureInfo.InvariantCulture), 98, 102);   // 50 fields/s → 50 frames/s
+        var m = await new MediaProber(fx.Tools.Ffprobe).ProbeAsync(job.OutputPath!);
+        Assert.Single(m.Audio);
+    }
+}
+
 public class EstimateAndEventsTests(FeatureFixture fx) : IClassFixture<FeatureFixture>
 {
     [Fact]

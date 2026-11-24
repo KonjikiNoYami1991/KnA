@@ -24,7 +24,10 @@ public static class ProcessRunner
         if (OperatingSystem.IsLinux() && PrivateLibraryPath(fileName) is { } libs)
             psi.Environment["LD_LIBRARY_PATH"] = libs + (Environment.GetEnvironmentVariable("LD_LIBRARY_PATH") is { Length: > 0 } old ? ":" + old : "");
         // ArgumentList quotes every argument correctly: no more broken paths with spaces/quotes.
-        foreach (var a in args) psi.ArgumentList.Add(a);
+        var list = args as IReadOnlyCollection<string> ?? args.ToList();
+        foreach (var a in list) psi.ArgumentList.Add(a);
+        // KnA's portable VapourSynth (Linux/macOS): the programs that load it read its generated configuration.
+        Tools.VapourSynthRuntime.Apply(psi, fileName, list);
         return psi;
     }
 

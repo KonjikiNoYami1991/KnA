@@ -18,8 +18,13 @@ public sealed record FilterParam(string Name, string EnglishLabel, FilterParamTy
 /// A VapourSynth or AviSynth+ filter of the catalogue: what it does, the plugin it needs and its parameters. The
 /// template is the script line(s) with "{parameter}" where the values go.
 /// </summary>
+/// <remarks>
+/// <see cref="Import"/>: the Python line the template needs at the top of the script (vsjetpack modules).
+/// <see cref="Plugin"/>: the VapourSynth plugin namespace or Python module the filter needs, checked against the
+/// installed VapourSynth (filters whose plugin is missing are shown as not available).
+/// </remarks>
 public sealed record CatalogFilter(string Id, FrameserverKind Kind, string EnglishCategory, string Name, string EnglishDescription,
-    string Requires, IReadOnlyList<FilterParam> Params, string Template, bool NeedsHavsfunc = false)
+    string Requires, IReadOnlyList<FilterParam> Params, string Template, string? Import = null, string? Plugin = null)
 {
     public string Category => L.T(EnglishCategory);
     public string Description => L.T(EnglishDescription);
@@ -49,42 +54,46 @@ public static class FilterCatalog
     [
         // ------------------------------------------------------------------ VapourSynth
         new("vs.qtgmc", FrameserverKind.VapourSynth, Deint, "QTGMC", "The reference deinterlacer: motion-compensated, very clean (slow).",
-            "havsfunc, mvtools, znedi3/nnedi3, fmtconv",
-            [C("preset", "Preset", "Slower", QtgmcPresets), B("tff", "Top field first", true), C("fpsdiv", "Frame rate", "1", ["1", "2"], "1 = double rate (every field a frame), 2 = same rate.")],
-            "clip = haf.QTGMC(clip, Preset=\"{preset}\", TFF={tff}, FPSDivisor={fpsdiv})", NeedsHavsfunc: true),
+            "vsjetpack (vsdeinterlace), mvtools, mvutensils, znedi3",
+            [B("tff", "Top field first", true), C("fpsdiv", "Frame rate", "1", ["1", "2"], "1 = double rate (every field a frame), 2 = same rate.")],
+            "clip = QTempGaussMC().motion_blur(fps_divisor={fpsdiv}).deinterlace(clip, tff={tff})", "from vsdeinterlace import QTempGaussMC", "vsdeinterlace"),
         new("vs.bwdif", FrameserverKind.VapourSynth, Deint, "Bwdif", "Fast, good deinterlacer (w3fdif + yadif).", "bwdif",
             [C("field", "Mode", "1", ["0", "1", "2", "3"], "0/1 = same rate (bottom/top field kept), 2/3 = double rate (bottom/top first).")],
-            "clip = core.bwdif.Bwdif(clip, field={field})"),
+            "clip = core.bwdif.Bwdif(clip, field={field})", Plugin: "bwdif"),
         new("vs.ivtc", FrameserverKind.VapourSynth, Deint, "VFM + VDecimate", "Inverse telecine: back to the 23.976 fps film frames.", "vivtc",
             [C("order", "Field order", "1", ["1", "0"], "1 = top field first, 0 = bottom field first.")],
-            "clip = core.vivtc.VFM(clip, order={order})\nclip = core.vivtc.VDecimate(clip)"),
+            "clip = core.vivtc.VFM(clip, order={order})\nclip = core.vivtc.VDecimate(clip)", Plugin: "vivtc"),
         new("vs.knlm", FrameserverKind.VapourSynth, Denoise, "KNLMeansCL", "Non-local means on the GPU (OpenCL): strong, detail-friendly.", "knlmeanscl",
             [I("d", "Temporal radius", 1, 0, 8), I("a", "Search radius", 2, 1, 8), I("s", "Similarity radius", 4, 0, 8), F("h", "Strength", 1.2, 0.1, 20),
              C("channels", "Planes", "Y", ["Y", "UV", "YUV"])],
-            "clip = core.knlm.KNLMeansCL(clip, d={d}, a={a}, s={s}, h={h}, channels=\"{channels}\")"),
-        new("vs.dfttest", FrameserverKind.VapourSynth, Denoise, "DFTTest", "Frequency-domain denoiser: smooth, good on grain.", "dfttest",
-            [F("sigma", "Strength (sigma)", 8, 0.1, 100), I("tbsize", "Temporal size", 3, 1, 15)],
-            "clip = core.dfttest.DFTTest(clip, sigma={sigma}, tbsize={tbsize})"),
-        new("vs.smdegrain", FrameserverKind.VapourSynth, Denoise, "SMDegrain", "Motion-compensated temporal denoiser (MVTools).", "havsfunc, mvtools",
+            "clip = core.knlm.KNLMeansCL(clip, d={d}, a={a}, s={s}, h={h}, channels=\"{channels}\")", Plugin: "knlm"),
+        new("vs.nlmeans", FrameserverKind.VapourSynth, Denoise, "NLMeans (CPU)", "The same non-local means on the CPU (vszip): for computers without OpenCL.", "vszip",
+            [I("d", "Temporal radius", 1, 0, 8), I("a", "Search radius", 2, 1, 8), I("s", "Similarity radius", 4, 0, 8), F("h", "Strength", 1.2, 0.1, 20),
+             C("channels", "Planes", "Y", ["Y", "UV", "YUV"])],
+            "clip = core.vszip.NLMeans(clip, d={d}, a={a}, s={s}, h={h}, channels=\"{channels}\")", Plugin: "vszip"),
+        new("vs.dfttest", FrameserverKind.VapourSynth, Denoise, "DFTTest", "Frequency-domain denoiser: smooth, good on grain.", "vsjetpack (vsdenoise), dfttest2",
+            [F("sigma", "Strength (sigma)", 8, 0.1, 100), I("tr", "Temporal radius", 1, 0, 7)],
+            "clip = DFTTest(sloc={sigma}, tr={tr}).denoise(clip)", "from vsdenoise import DFTTest", "vsdenoise"),
+        new("vs.smdegrain", FrameserverKind.VapourSynth, Denoise, "SMDegrain", "Motion-compensated temporal denoiser (MVTools).", "vsjetpack (vsdenoise), mvtools, mvutensils",
             [I("tr", "Temporal radius", 2, 1, 6), I("thsad", "Strength (thSAD)", 300, 50, 2000)],
-            "clip = haf.SMDegrain(clip, tr={tr}, thSAD={thsad})", NeedsHavsfunc: true),
-        new("vs.f3kdb", FrameserverKind.VapourSynth, Deband, "neo_f3kdb", "Removes banding in gradients (anime, dark scenes).", "neo_f3kdb",
-            [I("range", "Range", 15, 1, 31), I("y", "Luma threshold", 48, 0, 255), I("cb", "Cb threshold", 48, 0, 255), I("cr", "Cr threshold", 48, 0, 255),
-             I("grainy", "Luma grain", 0, 0, 255), I("grainc", "Chroma grain", 0, 0, 255), C("depth", "Output bit depth", "16", ["8", "10", "16"])],
-            "clip = core.neo_f3kdb.Deband(clip, range={range}, y={y}, cb={cb}, cr={cr}, grainy={grainy}, grainc={grainc}, output_depth={depth})"),
+            "clip = mc_degrain(clip, tr={tr}, thsad={thsad})", "from vsdenoise import mc_degrain", "vsdenoise"),
+        new("vs.f3kdb", FrameserverKind.VapourSynth, Deband, "f3kdb", "Removes banding in gradients (anime, dark scenes): the flash3kyuu / neo_f3kdb algorithm (vszip).", "vsjetpack (vsdeband), vszip",
+            [I("radius", "Range", 16, 1, 255), I("thr", "Luma threshold", 96, 0, 512), I("thrc", "Chroma threshold", 96, 0, 512),
+             I("grainy", "Luma grain", 0, 0, 255), I("grainc", "Chroma grain", 0, 0, 255)],
+            "clip = f3k_deband(clip, radius={radius}, thr=[{thr}, {thrc}, {thrc}], grain=[{grainy}, {grainc}])", "from vsdeband import f3k_deband", "vsdeband"),
         new("vs.placebo", FrameserverKind.VapourSynth, Deband, "placebo.Deband", "libplacebo's debanding on the GPU (Vulkan).", "vs-placebo",
             [I("iterations", "Iterations", 1, 1, 16), F("threshold", "Threshold", 4, 0, 50), F("radius", "Radius", 16, 1, 64), F("grain", "Grain", 6, 0, 50)],
-            "clip = core.placebo.Deband(clip, iterations={iterations}, threshold={threshold}, radius={radius}, grain={grain})"),
+            "clip = core.placebo.Deband(clip, iterations={iterations}, threshold={threshold}, radius={radius}, grain={grain})", Plugin: "placebo"),
         new("vs.cas", FrameserverKind.VapourSynth, Sharp, "CAS", "AMD Contrast Adaptive Sharpening: natural, few halos.", "cas",
-            [F("sharpness", "Sharpness", 0.5, 0, 1)], "clip = core.cas.CAS(clip, sharpness={sharpness})"),
-        new("vs.lsfmod", FrameserverKind.VapourSynth, Sharp, "LSFmod", "LimitedSharpenFaster: strong sharpening with halo control.", "havsfunc",
-            [I("strength", "Strength", 100, 0, 500)], "clip = haf.LSFmod(clip, strength={strength})", NeedsHavsfunc: true),
-        new("vs.awarpsharp", FrameserverKind.VapourSynth, Sharp, "AWarpSharp2", "Thins and straightens lines (anime).", "warpsharp",
+            [F("sharpness", "Sharpness", 0.5, 0, 1)], "clip = core.cas.CAS(clip, sharpness={sharpness})", Plugin: "cas"),
+        new("vs.lsfmod", FrameserverKind.VapourSynth, Sharp, "FineSharp", "Strong sharpening of fine detail with halo control (LSFmod's successor in vsjetpack).", "vsjetpack (vsrgtools)",
+            [F("sstr", "Strength", 2, 0, 8)], "clip = fine_sharp(clip, sstr={sstr})", "from vsrgtools import fine_sharp", "vsrgtools"),
+        new("vs.awarpsharp", FrameserverKind.VapourSynth, Sharp, "AWarpSharp2", "Thins and straightens lines (anime).", "vsjetpack (vsrgtools), awarp",
             [I("thresh", "Threshold", 128, 0, 255), I("blur", "Blur", 2, 0, 20), I("depth", "Depth", 16, -128, 127)],
-            "clip = core.warp.AWarpSharp2(clip, thresh={thresh}, blur={blur}, depth={depth})"),
-        new("vs.dehalo", FrameserverKind.VapourSynth, Sharp, "DeHalo_alpha", "Removes halos around edges.", "havsfunc",
-            [F("rx", "Horizontal radius", 2, 1, 5), F("ry", "Vertical radius", 2, 1, 5), F("darkstr", "Dark halo strength", 1, 0, 2), F("brightstr", "Bright halo strength", 1, 0, 2)],
-            "clip = haf.DeHalo_alpha(clip, rx={rx}, ry={ry}, darkstr={darkstr}, brightstr={brightstr})", NeedsHavsfunc: true),
+            "clip = awarpsharp(clip, thresh={thresh}, blur={blur}, depth_h={depth}, depth_v={depth})", "from vsrgtools import awarpsharp", "vsrgtools"),
+        new("vs.dehalo", FrameserverKind.VapourSynth, Sharp, "DeHalo_alpha", "Removes halos around edges.", "vsjetpack (vsdehalo)",
+            [F("lowsens", "Low sensitivity", 50, 0, 100), F("highsens", "High sensitivity", 50, 0, 100), F("darkstr", "Dark halo strength", 0, 0, 2), F("brightstr", "Bright halo strength", 1, 0, 2)],
+            "clip = dehalo_alpha(clip, lowsens={lowsens}, highsens={highsens}, darkstr={darkstr}, brightstr={brightstr})", "from vsdehalo import dehalo_alpha", "vsdehalo"),
         new("vs.crop", FrameserverKind.VapourSynth, Resize, "Crop", "Cuts the borders (pixels; even values for 4:2:0).", "core",
             [I("left", "Left", 0, 0, 4096), I("right", "Right", 0, 0, 4096), I("top", "Top", 0, 0, 4096), I("bottom", "Bottom", 0, 0, 4096)],
             "clip = core.std.Crop(clip, left={left}, right={right}, top={top}, bottom={bottom})"),
@@ -97,8 +106,8 @@ public static class FilterCatalog
         new("vs.levels", FrameserverKind.VapourSynth, Colour, "Levels", "Remaps the luma range (8-bit values).", "core",
             [I("min_in", "Input black", 16, 0, 255), I("max_in", "Input white", 235, 0, 255), F("gamma", "Gamma", 1, 0.1, 10), I("min_out", "Output black", 16, 0, 255), I("max_out", "Output white", 235, 0, 255)],
             "clip = core.std.Levels(clip, min_in={min_in}, max_in={max_in}, gamma={gamma}, min_out={min_out}, max_out={max_out}, planes=0)"),
-        new("vs.grain", FrameserverKind.VapourSynth, Grain, "AddGrain", "Adds film grain (hides banding, keeps texture).", "addgrain",
-            [F("var", "Luma grain", 1, 0, 20), F("uvar", "Chroma grain", 0, 0, 20)], "clip = core.grain.Add(clip, var={var}, uvar={uvar})"),
+        new("vs.grain", FrameserverKind.VapourSynth, Grain, "Add grain", "Adds film grain (hides banding, keeps texture).", "vsjetpack (vsdeband)",
+            [F("var", "Luma grain", 1, 0, 20), F("uvar", "Chroma grain", 0, 0, 20)], "clip = Grainer.GAUSS(clip, strength=({var}, {uvar}))", "from vsdeband import Grainer", "vsdeband"),
         new("vs.fps", FrameserverKind.VapourSynth, Rate, "AssumeFPS", "Sets the frame rate without dropping frames (speeds up or slows down).", "core",
             [I("num", "Numerator", 24000, 1, 1000000), I("den", "Denominator", 1001, 1, 1000000)],
             "clip = core.std.AssumeFPS(clip, fpsnum={num}, fpsden={den})"),
@@ -211,7 +220,7 @@ public static class FilterCatalog
         if (fs.Kind == FrameserverKind.VapourSynth)
         {
             lines.Add("import vapoursynth as vs");
-            if (chain.Any(f => Get(f.Id)?.NeedsHavsfunc == true)) lines.Add("import havsfunc as haf");
+            foreach (var import in chain.Select(f => Get(f.Id)?.Import).OfType<string>().Distinct()) lines.Add(import);
             lines.Add("core = vs.core");
             lines.Add(src switch
             {

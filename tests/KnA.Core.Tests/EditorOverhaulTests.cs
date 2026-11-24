@@ -187,12 +187,14 @@ public class FilterCatalogTests
         var fs = new FrameserverSettings
         {
             Kind = FrameserverKind.VapourSynth, Source = "bs", AudioFromScript = true,
-            Chain = [new("vs.qtgmc", new() { ["preset"] = "Slow", ["tff"] = "false" }), new("vs.resize", new() { ["kernel"] = "Lanczos", ["width"] = "99999" }), new("nope")],
+            Chain = [new("vs.qtgmc", new() { ["tff"] = "false" }), new("vs.smdegrain"), new("vs.qtgmc"), new("vs.resize", new() { ["kernel"] = "Lanczos", ["width"] = "99999" }), new("nope")],
         };
         var script = fs.EffectiveScript!;
-        Assert.Contains("import havsfunc as haf", script);
+        Assert.Contains("from vsdeinterlace import QTempGaussMC", script);
+        Assert.Contains("from vsdenoise import mc_degrain", script);
+        Assert.Single(script.Split('\n'), l => l == "from vsdeinterlace import QTempGaussMC");   // one import per module
         Assert.Contains("clip = core.bs.VideoSource(source=r\"{source}\")", script);
-        Assert.Contains("haf.QTGMC(clip, Preset=\"Slow\", TFF=False, FPSDivisor=1)", script);
+        Assert.Contains("clip = QTempGaussMC().motion_blur(fps_divisor=1).deinterlace(clip, tff=False)", script);
         Assert.Contains("core.resize.Lanczos(clip, width=16384, height=1080)", script);   // clamped to the range
         Assert.Contains("audio.set_output(1)", script);
         Assert.DoesNotContain("nope", script);

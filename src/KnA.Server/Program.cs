@@ -377,6 +377,7 @@ app.MapGet("/api/frameserver/catalog", () => Results.Ok(new
     filters = KnA.Core.Media.FilterCatalog.All.Select(f => new
     {
         f.Id, Kind = f.Kind.ToString(), Category = f.EnglishCategory, CategoryLabel = f.Category, f.Name, f.Description, f.Requires,
+        f.Plugin, Available = KnA.Core.Tools.VapourSynthRuntime.Has(f.Plugin),
         Params = f.Params.Select(x => new { x.Name, x.Label, Type = x.Type.ToString(), x.Default, x.Min, x.Max, x.Choices, x.Help }),
     }),
 }));

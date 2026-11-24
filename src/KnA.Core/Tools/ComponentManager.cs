@@ -375,10 +375,11 @@ public sealed partial class ComponentManager(string dataDirectory)
     /// <summary>
     /// Picks "cpython-3.12.N+TAG-triple-install_only.tar.gz" (newest patch of the preferred minor) from release file names.
     /// </summary>
-    public static string? PickPortablePython(IEnumerable<string> names, string triple, int? onlyMinor = null)
+    public static string? PickPortablePython(IEnumerable<string> names, string triple, int? onlyMinor = null, bool stripped = false)
     {
+        // "_stripped": the same build without debug symbols (a few times smaller).
         var rx = new System.Text.RegularExpressions.Regex(
-            $@"^cpython-3\.(\d+)\.(\d+)\+\d+-{System.Text.RegularExpressions.Regex.Escape(triple)}-install_only\.tar\.gz$");
+            $@"^cpython-3\.(\d+)\.(\d+)\+\d+-{System.Text.RegularExpressions.Regex.Escape(triple)}-install_only{(stripped ? "_stripped" : "")}\.tar\.gz$");
         var found = names.Select(n => (n, m: rx.Match(n))).Where(x => x.m.Success)
             .Select(x => (x.n, minor: int.Parse(x.m.Groups[1].Value, System.Globalization.CultureInfo.InvariantCulture),
                 patch: int.Parse(x.m.Groups[2].Value, System.Globalization.CultureInfo.InvariantCulture))).ToList();
@@ -422,7 +423,8 @@ public sealed partial class ComponentManager(string dataDirectory)
     }
 
     /// <summary>Downloads and unpacks a portable Python (python-build-standalone); returns its folder ("python").</summary>
-    internal static async Task<string> DownloadPortablePythonAsync(string temp, int? minor, IProgress<double>? progress, IProgress<string>? log, CancellationToken ct)
+    internal static async Task<string> DownloadPortablePythonAsync(string temp, int? minor, IProgress<double>? progress, IProgress<string>? log, CancellationToken ct,
+        bool stripped = false)
     {
         var triple = PortablePythonTriple() ?? throw new PlatformNotSupportedException(L.T("Install Python 3.11–3.14 first (python.org, your package manager, or the Docker image)."));
         string? tag = null, name = null, sha = null;
@@ -431,7 +433,7 @@ public sealed partial class ComponentManager(string dataDirectory)
         {
             var rel = await GitHubReleases.LatestAsync(PythonRepo, ct);
             tag = rel?.Tag;
-            if (rel is not null) name = PickPortablePython(rel.Assets.Select(a => a.Name), triple, minor);
+            if (rel is not null) name = PickPortablePython(rel.Assets.Select(a => a.Name), triple, minor, stripped);
         }
         catch (Exception ex) when (ex is HttpRequestException or JsonException or InvalidOperationException or TaskCanceledException) { log?.Report(ex.Message); }
         if (tag is null)
@@ -448,7 +450,7 @@ public sealed partial class ComponentManager(string dataDirectory)
             var lines = sums.Split('\n', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
                 .Select(l => l.Split((char[])[' ', '\t'], 2, StringSplitOptions.RemoveEmptyEntries)).Where(x => x.Length == 2)
                 .ToDictionary(x => x[1].TrimStart('*'), x => x[0], StringComparer.Ordinal);
-            name ??= PickPortablePython(lines.Keys, triple, minor);
+            name ??= PickPortablePython(lines.Keys, triple, minor, stripped);
             if (name is not null) sha = lines.GetValueOrDefault(name);
         }
         catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException) { log?.Report(ex.Message); }

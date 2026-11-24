@@ -156,7 +156,8 @@ jobs:
       # Portable editions (desktop and server): everything in one folder, each dependency in its own subfolder:
       #   KnA(.exe) + native libs · portable.txt · tools/ffmpeg (BtbN GPL build) · tools/fdkaac · tools/nvencc,qsvencc,vceencc
       #   (rigaya) · tools/qaac (without Apple's files: extracted from iTunes on the user's machine) · tools/vapoursynth
-      #   (portable, embedded Python, BestSource, L-SMASH) · tools/dovi_tool, hdr10plus_tool · tools/shaders · ai/models
+      #   (portable Python 3.13 + VapourSynth + vsjetpack + the catalogue's plugins, every platform) · tools/dovi_tool,
+      #   hdr10plus_tool · tools/shaders · ai/models
       #   (Real-ESRGAN) · data/ (settings, queue, logs, temp). PyTorch is not included: its build depends on the GPU
       #   (CUDA / ROCm / XPU / CPU) and weighs several GB, Settings → Components installs the right one.
       - name: Tesseract (static build)
@@ -207,17 +208,21 @@ jobs:
           # Every package is complete (CLAUDE.md): OCR models, the archive engine (portable Python + py7zr), shaders,
           # upscale models. Only PaddleOCR and PyTorch (GBs, GPU-specific) stay one click away in Settings → Components.
           common="archive,anime4k,fsrcnnx,ocr:eng,ocr:ita,$models"
+          # VapourSynth everywhere: portable Python 3.13 + VapourSynth + vsjetpack + the filter catalogue's plugins (wheels),
+          # checked by loading every plugin (the install fails otherwise).
           case "${{ matrix.rid }}" in
             win-x64)     ids="nvencc,qsvencc,vceencc,qaac,vapoursynth,dovi_tool,hdr10plus_tool,tesseract,$common" ;;
-            linux-x64)   ids="nvencc,qsvencc,vceencc,dovi_tool,hdr10plus_tool,$common" ;;
-            linux-arm64) ids="dovi_tool,hdr10plus_tool,$common" ;;
+            linux-x64)   ids="nvencc,qsvencc,vceencc,vapoursynth,dovi_tool,hdr10plus_tool,$common" ;;
+            linux-arm64) ids="vapoursynth,dovi_tool,hdr10plus_tool,$common" ;;
             # built on an x64 runner: x64 programs, which Windows on Arm runs through its x64 emulation
-            win-arm64)   ids="dovi_tool,hdr10plus_tool,tesseract,$common" ;;
-            *)           ids="dovi_tool,hdr10plus_tool,$common" ;;   # macOS (FFmpeg and Tesseract from the next step)
+            win-arm64)   ids="vapoursynth,dovi_tool,hdr10plus_tool,tesseract,$common" ;;
+            *)           ids="vapoursynth,dovi_tool,hdr10plus_tool,$common" ;;   # macOS (FFmpeg and Tesseract from the next step)
           esac
           # Absolute path: "dotnet run" starts in the project folder (pwd -W = Windows form under Git Bash).
           abs=$(cd "$b" && { pwd -W 2>/dev/null || pwd; })
           dotnet run --project src/KnA.Server -c Release -- --bundle "$abs" "$ids" || echo "::warning::Some components could not be bundled for ${{ matrix.rid }} (see the log)"
+          # VapourSynth is required in every package (CLAUDE.md): stop here rather than publish a package without it.
+          find "$b/tools/vapoursynth" -name 'vspipe*' -type f | grep -q . || { echo "::error::VapourSynth missing from the ${{ matrix.rid }} package"; exit 1; }
           rm -rf "$b/data/temp"
           du -sh "$b"/tools/* "$b"/ai 2>/dev/null || true
       # macOS: FFmpeg and Tesseract from Homebrew, made relocatable (every library they load copied next to them and

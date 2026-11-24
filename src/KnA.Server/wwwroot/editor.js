@@ -1092,7 +1092,7 @@ async function frameserver(el) {
         <label class="field"><span>${esc(t("Script"))} <small class="muted">({source} = ${esc(t("this file"))})</small></span>
           <textarea class="mono" rows="10" data-fs="script" spellcheck="false">${esc(f.script ?? "")}</textarea></label>`
       : `<div class="grid2"><label class="field"><span>${esc(t("Category"))}</span><select data-fs="cat">${cats.map(([v2, l]) => opt(v2, l, ed.fsCat)).join("")}</select></label>
-        <label class="field"><span>${esc(t("Filter"))}</span><select data-fs="add"><option value="">${esc(t("Add a filter…"))}</option>${filters.filter(x => x.category === ed.fsCat).map(x => `<option value="${esc(x.id)}">${esc(x.name)} — ${esc(x.description)}</option>`).join("")}</select></label></div>
+        <label class="field"><span>${esc(t("Filter"))}</span><select data-fs="add"><option value="">${esc(t("Add a filter…"))}</option>${filters.filter(x => x.category === ed.fsCat).map(x => `<option value="${esc(x.id)}" ${x.available === false ? "disabled" : ""}>${esc(x.name)} — ${esc(x.description)}${x.available === false ? " — " + esc(t("not available here ({0})", x.plugin)) : ""}</option>`).join("")}</select></label></div>
         ${(f.chain ?? []).length ? f.chain.map((c, i) => {
           const d = catalog.filters.find(x => x.id === c.id);
           return `<div class="section" data-fi="${i}" style="margin-top:8px"><div class="row" style="justify-content:space-between"><div><b>${i + 1}. ${esc(d?.name ?? c.id)}</b>

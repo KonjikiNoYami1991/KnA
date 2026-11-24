@@ -104,8 +104,18 @@ public static class FfmpegLocator
         return coreAudio ? exe : null;
     }
 
-    /// <summary>vspipe: PATH, $KNA_VSPIPE, the VapourSynth installer folders on Windows.</summary>
+    /// <summary>
+    /// vspipe: $KNA_VSPIPE, KnA's portable VapourSynth (data folder, then the one shipped with the program), PATH,
+    /// the VapourSynth installer folders. KnA's portable one is prepared (configuration written) when found.
+    /// </summary>
     public static string? LocateVsPipe(string? dataDirectory = null)
+    {
+        var found = FindVsPipe(dataDirectory);
+        if (found is not null && dataDirectory is not null) VapourSynthRuntime.Prepare(found, dataDirectory);
+        return found;
+    }
+
+    private static string? FindVsPipe(string? dataDirectory)
     {
         if (KnA.Core.Settings.AppEnv.Get("VSPIPE") is { } env && File.Exists(env)) return env;
         // VapourSynth portable bundled with KnA or installed by the component manager.
@@ -117,6 +127,11 @@ public static class FfmpegLocator
             // R74+ (pip package inside a portable Python): Lib\site-packages\vapoursynth\vspipe.exe
             var inPackage = Path.Combine(root, "Lib", "site-packages", "vapoursynth", ExeName("vspipe"));
             if (File.Exists(inPackage)) return inPackage;
+            // Linux/macOS: <root>/lib/python3.N/site-packages/vapoursynth/vspipe
+            var lib = Path.Combine(root, "lib");
+            if (!OperatingSystem.IsWindows() && Directory.Exists(lib))
+                foreach (var py in Directory.EnumerateDirectories(lib, "python3.*").OrderByDescending(d => d.Length).ThenByDescending(d => d))
+                    if (Path.Combine(py, "site-packages", "vapoursynth", "vspipe") is var p && File.Exists(p)) return p;
         }
         var found = SearchPath("vspipe").FirstOrDefault() ?? SearchPath("VSPipe").FirstOrDefault();
         if (found is not null) return found;
