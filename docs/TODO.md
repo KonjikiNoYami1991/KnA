@@ -4,7 +4,22 @@ Work through it in order, on `master`; ask before releasing. Every point is conf
 all of them: CLAUDE.md, "it is an *auto*encoder" — the user is never forced to do anything for an encode to come out
 right; optional controls are fine, a required manual step or a silent loss is a bug.
 
-## 1. Web server: separate user accounts
+## 1. mkvmerge in the packages: Dolby Vision recognised by players
+
+Approved by the user. FFmpeg writes only the RPU NAL units of a re-encoded Dolby Vision video (x265's
+`dolby-vision-rpu`, `dovi_tool inject-rpu` after encoding), never the container's Dolby Vision configuration record
+(Matroska BlockAdditionMapping `dvcC`/`dvvC`, MP4 `dvcC`): TVs and players may not see Dolby Vision.
+
+- Add **mkvmerge** (MKVToolNix) to every package (CLAUDE.md standalone rule: Windows x64/ARM64 portable, Linux
+  static/AppImage build, macOS inside `KnA.app`), as a component like dovi_tool, with its licence (GPLv2).
+- When Dolby Vision is kept (`HdrCarry.Encoder` / `Inject`) in MKV, the final mux of the video (or a remux of the
+  finished file) goes through mkvmerge, which reads the RPU and writes the configuration record by itself; audio,
+  subtitles, attachments, chapters, languages, flags and delays must stay exactly as FFmpeg made them. MP4: check
+  FFmpeg with `-strict unofficial` and the profile's side data, otherwise MP4Box or say clearly that MP4 keeps only the
+  RPU.
+- Verify with ffprobe / MediaInfo that the output shows the Dolby Vision profile, and on a real TV (point 5).
+
+## 2. Web server: separate user accounts
 
 - **Accounts instead of the single shared password**: at first start KnA asks to create an **admin** account; the
   admin creates, edits, disables and removes the other accounts.
@@ -18,7 +33,7 @@ right; optional controls are fine, a required manual step or a silent loss is a 
 - **Proxy SSO**: accept an auth header from a trusted proxy (Authelia/Authentik style) as the logged-in user.
 - **Migration**: existing `KNA_PASSWORD` installs migrate smoothly (Docker, Linux, Windows service).
 
-## 2. Filter presets and before/after preview
+## 3. Filter presets and before/after preview
 
 - Every VapourSynth/AviSynth catalogue filter and every GPU filter (`--vpp-*`) gets **many sensible presets**: quality
   levels (light / medium / strong…) **and** content types (clean anime, grainy film, old VHS, noisy phone video…).
@@ -26,7 +41,7 @@ right; optional controls are fine, a required manual step or a silent loss is a 
   numbers stay editable under "Advanced".
 - **Before/after preview** of a frame right in the filter's box, to choose by looking.
 
-## 3. Quick use first, "Pro" for the rest
+## 4. Quick use first, "Pro" for the rest
 
 Users often just want something fast ("compress this for WhatsApp, done"), but KnA must also have a Pro side that can
 one day match StaxRip (which doesn't exist for Linux/macOS; there the reference is Hybrid).
@@ -38,7 +53,7 @@ one day match StaxRip (which doesn't exist for Linux/macOS; there the reference 
 - Optional (Pro): **quality check** (VMAF/SSIM on a few sample seconds) to compare presets and filters with a number.
 - To evaluate, not a priority: importing Hybrid/StaxRip presets.
 
-## 4. Checks on real hardware and runners
+## 5. Checks on real hardware and runners
 
 Not verifiable in the development container; do them when a test release (workflow input `test_package`) or the
 user's machines are available.
@@ -57,9 +72,9 @@ user's machines are available.
   NVEncC's `--dolby-vision-rpu <file>` together with `--trim` (KnA gives the uncut RPU to the encoder's own reader,
   because rigaya numbers the frames from the start of the source — verify); players / TVs recognising Dolby Vision in
   the output: FFmpeg writes no Dolby Vision configuration record (dvcC) for x265's or injected RPUs, only the RPU NAL
-  units — if needed, mux with a tool that writes it (mkvmerge) and add it to the packages.
+  units — mkvmerge in the packages is point 1.
 
-## 5. Theme: Golden Darkness (last of the queue)
+## 6. Theme: Golden Darkness (last of the queue)
 
 A UI theme dedicated to Golden Darkness (Yami) from *To LOVE-Ru*: colours from the character (black, gold, deep red),
 suitable backgrounds, desktop and web, next to the current light/dark themes. Mind the artwork's rights: use images
