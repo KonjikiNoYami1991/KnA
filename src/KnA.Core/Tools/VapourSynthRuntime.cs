@@ -76,6 +76,14 @@ public static class VapourSynthRuntime
         var root = RootOf(vspipe);
         Root = root;
         if (root is null || OperatingSystem.IsWindows()) { ConfigHome = null; return root is not null || File.Exists(vspipe); }
+        ConfigHome = WriteConfig(vspipe, root, dataDirectory);
+        _config = ConfigHome is null ? null : (vspipe, root, dataDirectory);
+        return ConfigHome is not null;
+    }
+
+    /// <summary>Writes vapoursynth.toml for a portable VapourSynth; returns the folder to use as XDG_CONFIG_HOME, null when incomplete.</summary>
+    internal static string? WriteConfig(string vspipe, string root, string dataDirectory)
+    {
         var package = Path.GetDirectoryName(Path.GetFullPath(vspipe))!;
         var vsscript = Directory.EnumerateFiles(package, "libvsscript*").FirstOrDefault();
         // The real files, not the python3 / libpython….so links: VapourSynth checks the executable's modification time.
@@ -84,7 +92,7 @@ public static class VapourSynthRuntime
         var python = Real(Directory.EnumerateFiles(Path.Combine(root, "bin"), "python3*").Where(f => !f.EndsWith("-config", StringComparison.Ordinal)).OrderByDescending(f => f.Length));
         var libpython = Real(Directory.EnumerateFiles(Path.Combine(root, "lib"), OperatingSystem.IsMacOS() ? "libpython3.*.dylib" : "libpython3.*.so*")
             .Where(f => !Path.GetFileName(f).StartsWith("libpython3.so", StringComparison.Ordinal)));
-        if (vsscript is null || python is null || libpython is null) { ConfigHome = null; return false; }
+        if (vsscript is null || python is null || libpython is null) return null;
         var home = Path.Combine(dataDirectory, "vapoursynth-config");
         var file = Path.Combine(home, "vapoursynth", "vapoursynth.toml");
         var text = Toml(vsscript, python, libpython);
@@ -95,10 +103,9 @@ public static class VapourSynthRuntime
                 Directory.CreateDirectory(Path.GetDirectoryName(file)!);
                 File.WriteAllText(file, text, new UTF8Encoding(false));
             }
-            ConfigHome = home;
-            return true;
+            return home;
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { ConfigHome = null; return false; }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return null; }
     }
 
     /// <summary>
@@ -113,11 +120,21 @@ public static class VapourSynthRuntime
     }
 
     /// <summary>Programs that load VapourSynth (vspipe, its Python, an encoder reading a script) get the configuration.</summary>
+    private static (string VsPipe, string Root, string Data)? _config;
+
     public static void Apply(ProcessStartInfo psi, string fileName, IEnumerable<string> args)
     {
-        if (ConfigHome is not { } home) return;
+        // The file can disappear (data folder cleaned while KnA runs): written again before it is needed.
+        if (ConfigHome is { } home && _config is { } c && !File.Exists(Path.Combine(home, "vapoursynth", "vapoursynth.toml")))
+            WriteConfig(c.VsPipe, c.Root, c.Data);
+        Apply(psi, fileName, args, ConfigHome, Root);
+    }
+
+    internal static void Apply(ProcessStartInfo psi, string fileName, IEnumerable<string> args, string? configHome, string? root)
+    {
+        if (configHome is not { } home) return;
         bool vs = Path.GetFileNameWithoutExtension(fileName).Equals("vspipe", StringComparison.OrdinalIgnoreCase)
-                  || (Root is { } r && Path.GetFullPath(fileName).StartsWith(r, StringComparison.Ordinal))
+                  || (root is { } r && Path.GetFullPath(fileName).StartsWith(r, StringComparison.Ordinal))
                   || args.Any(a => a is "--vpy" || a.EndsWith(".vpy", StringComparison.OrdinalIgnoreCase));
         if (vs) psi.Environment["XDG_CONFIG_HOME"] = home;
     }

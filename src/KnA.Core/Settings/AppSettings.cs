@@ -53,6 +53,11 @@ public sealed class AppSettings
     public HardwareDecoding HardwareDecoding { get; set; } = HardwareDecoding.Auto;
     /// <summary>Video encodes are written in pieces, so a stopped or crashed encode continues where it was (see ResumableEncoder).</summary>
     public bool ResumableEncoding { get; set; } = true;
+    /// <summary>
+    /// VapourSynth reads the video of CPU encodes (L-SMASH source, then the catalogue's filters), like StaxRip: the
+    /// script is the frameserver of the encode. GPU encoders keep their GPU decoding; unsafe sources stay with FFmpeg.
+    /// </summary>
+    public bool VapourSynthForEncodes { get; set; } = true;
     /// <summary>null = write next to the source file.</summary>
     public string? OutputDirectory { get; set; }
     public JobSettings Defaults { get; set; } = new();

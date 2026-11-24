@@ -1481,5 +1481,22 @@ public static partial class L
         ["The same non-local means on the CPU (vszip): for computers without OpenCL."] = "Lo stesso non-local means sulla CPU (vszip): per i computer senza OpenCL.",
         ["NLMeans (CPU)"] = "NLMeans (CPU)",
         ["Add grain"] = "Aggiungi grana",
+
+        // ------------------------------------------------------------ VapourSynth as the standard frameserver
+        ["the video is not encoded"] = "il video non viene codificato",
+        ["the source is already a script"] = "la sorgente è già uno script",
+        ["GPU encoder: the GPU decodes the file (GPU first)"] = "encoder GPU: la GPU decodifica il file (prima la GPU)",
+        ["no video"] = "nessun video",
+        ["HDR source (its metadata only travels with FFmpeg's reader)"] = "sorgente HDR (i suoi metadati passano solo con il lettore di FFmpeg)",
+        ["variable frame rate"] = "frame rate variabile",
+        ["interlaced source (deinterlaced by FFmpeg as it reads)"] = "sorgente interlacciata (deinterlacciata da FFmpeg mentre legge)",
+        ["non-square pixels (anamorphic)"] = "pixel non quadrati (anamorfico)",
+        ["AI upscaler (it reads the file itself)"] = "upscaler AI (legge il file da sé)",
+        ["MPEG stream (timestamps that don't start at 0)"] = "flusso MPEG (timestamp che non partono da 0)",
+        ["the video is copied"] = "il video viene copiato",
+        ["VapourSynth reads the video (standard frameserver, like StaxRip); KnA's filters follow in FFmpeg."] = "VapourSynth legge il video (frameserver standard, come StaxRip); i filtri di KnA seguono in FFmpeg.",
+        ["FFmpeg reads the video instead of VapourSynth: {0}."] = "FFmpeg legge il video al posto di VapourSynth: {0}.",
+        ["VapourSynth reads the video of CPU encodes (like StaxRip)"] = "VapourSynth legge il video delle codifiche su CPU (come StaxRip)",
+        ["The script is shown in the editor (Filters tab). GPU encoders keep their GPU decoding; HDR, variable frame rate, interlaced, rotated and anamorphic sources, discs and MPEG streams stay with FFmpeg's reader."] = "Lo script è mostrato nell'editor (scheda Filtri). Gli encoder GPU mantengono la decodifica sulla GPU; le sorgenti HDR, a frame rate variabile, interlacciate, ruotate e anamorfiche, i dischi e i flussi MPEG restano al lettore di FFmpeg.",
     };
 }

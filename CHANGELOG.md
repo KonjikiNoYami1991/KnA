@@ -65,6 +65,17 @@
   generations with hardware AV1 start one step more careful); **AV1 only where the GPU encodes it in hardware**.
 - **Optional GPU mini benchmark**: a 10-second 1080p clip encoded with each profile gives this job's expected time
   with each one and the suggested profile (Video → Quality and speed). Desktop and web.
+- **VapourSynth in every package** (Windows x64/ARM64, Linux x64/ARM64, macOS, Docker): a portable Python 3.13 with
+  VapourSynth R82, vsjetpack and every plugin of the filter catalogue (official wheels, fixed versions, checked by
+  loading them when installed), nothing installed on the system; on Linux/macOS KnA writes VapourSynth's
+  configuration at run time, so the folder can be moved. The catalogue's QTGMC, SMDegrain, DFTTest, LSFmod →
+  FineSharp, AWarpSharp2, DeHalo_alpha, f3kdb and grain now use vsjetpack (the old havsfunc functions are gone);
+  "NLMeans (CPU)" added for computers without OpenCL; filters whose plugin is missing are marked. L-SMASH's index
+  goes to KnA's folder, not next to the video.
+- **VapourSynth reads the video of CPU encodes** (like StaxRip; Settings → Processing, on by default): the script is
+  the frameserver and KnA's filters follow. GPU encoders keep their GPU decoding; HDR, variable frame rate,
+  interlaced, rotated and anamorphic sources, discs and MPEG streams stay with FFmpeg's reader, and the editor and
+  the log say which one reads the video and why.
 
 **Segmented encoding and progress**
 - Encodes that can't be written as resumable pieces (encoders without forced keyframes) use the segment logic with one
@@ -217,6 +228,17 @@
   hardware**.
 - **Mini benchmark GPU facoltativo**: una clip 1080p di 10 secondi codificata con ogni profilo dà il tempo previsto
   di questo lavoro con ciascuno e il profilo consigliato (Video → Qualità e velocità). Desktop e web.
+- **VapourSynth in ogni pacchetto** (Windows x64/ARM64, Linux x64/ARM64, macOS, Docker): un Python 3.13 portable con
+  VapourSynth R82, vsjetpack e tutti i plugin del catalogo dei filtri (wheel ufficiali, versioni fisse, verificati
+  caricandoli all'installazione), niente installato nel sistema; su Linux/macOS KnA scrive la configurazione di
+  VapourSynth all'avvio, così la cartella si può spostare. QTGMC, SMDegrain, DFTTest, LSFmod → FineSharp,
+  AWarpSharp2, DeHalo_alpha, f3kdb e la grana del catalogo usano ora vsjetpack (le vecchie funzioni di havsfunc non
+  esistono più); aggiunto "NLMeans (CPU)" per i computer senza OpenCL; i filtri il cui plugin manca sono segnalati.
+  L'indice di L-SMASH va nella cartella di KnA, non accanto al video.
+- **VapourSynth legge il video delle codifiche su CPU** (come StaxRip; Impostazioni → Elaborazione, attivo di
+  predefinito): lo script è il frameserver e i filtri di KnA seguono. Gli encoder GPU mantengono la decodifica sulla
+  GPU; le sorgenti HDR, a frame rate variabile, interlacciate, ruotate e anamorfiche, i dischi e i flussi MPEG restano
+  al lettore di FFmpeg, e l'editor e il log dicono chi legge il video e perché.
 
 **Codifica a segmenti e avanzamento**
 - Le codifiche che non si possono scrivere a pezzi ripristinabili (encoder senza keyframe forzati) usano la logica dei

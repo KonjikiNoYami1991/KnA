@@ -23,15 +23,19 @@ public class VapourSynthTests(FeatureFixture fx) : IClassFixture<FeatureFixture>
         Assert.Null(VapourSynthRuntime.RootOf("/usr/bin/vspipe"));
         if (OperatingSystem.IsWindows()) return;
         var data = Directory.CreateTempSubdirectory("kna-vsdata-").FullName;
-        Assert.True(VapourSynthRuntime.Prepare(Path.Combine(package, "vspipe"), data));
+        // The pure part only: the process-wide state belongs to the real VapourSynth of the other tests.
+        var home = VapourSynthRuntime.WriteConfig(Path.Combine(package, "vspipe"), root, data);
+        Assert.Equal(Path.Combine(data, "vapoursynth-config"), home);
         var toml = File.ReadAllText(Path.Combine(data, "vapoursynth-config", "vapoursynth", "vapoursynth.toml"));
         Assert.StartsWith($"\"{package}/libvsscript.", toml);
         Assert.Contains($"\"{root}/bin/python3.13\"", toml);
         // The programs that load VapourSynth get it, the others don't.
-        var psi = ProcessRunner.CreateStartInfo(Path.Combine(package, "vspipe"), ["-c", "y4m", "a.vpy", "-"]);
-        Assert.Equal(Path.Combine(data, "vapoursynth-config"), psi.Environment["XDG_CONFIG_HOME"]);
-        var other = ProcessRunner.CreateStartInfo("/usr/bin/ffmpeg", ["-i", "a.mkv"]).Environment;
-        Assert.NotEqual(Path.Combine(data, "vapoursynth-config"), other.TryGetValue("XDG_CONFIG_HOME", out var x) ? x : null);
+        var psi = new System.Diagnostics.ProcessStartInfo();
+        VapourSynthRuntime.Apply(psi, Path.Combine(package, "vspipe"), ["-c", "y4m", "a.vpy", "-"], home, root);
+        Assert.Equal(home, psi.Environment["XDG_CONFIG_HOME"]);
+        var other = new System.Diagnostics.ProcessStartInfo();
+        VapourSynthRuntime.Apply(other, "/usr/bin/ffmpeg", ["-i", "a.mkv"], home, root);
+        Assert.NotEqual(home, other.Environment.TryGetValue("XDG_CONFIG_HOME", out var x) ? x : null);
     }
 
     /// <summary>Needs a VapourSynth (KNA_VSPIPE, e.g. a package's tools/vapoursynth): skipped otherwise.</summary>
@@ -55,7 +59,7 @@ public class VapourSynthTests(FeatureFixture fx) : IClassFixture<FeatureFixture>
             var fs = new FrameserverSettings { Kind = FrameserverKind.VapourSynth, Chain = [new FrameserverFilter(f.Id)] };
             var script = Path.Combine(data, f.Id + ".vpy");
             // vsjetpack's filters refuse interlaced input (they come after a deinterlacer).
-            File.WriteAllText(script, fs.EffectiveScript!.Replace("{source}", f.EnglishCategory == "Deinterlace / IVTC" ? clip : progressive));
+            File.WriteAllText(script, fs.EffectiveScript!.Replace("{source}", f.EnglishCategory == "Deinterlace / IVTC" ? clip : progressive).Replace("{cachedir}", data));
             var r = await ProcessRunner.RunAsync(vspipe, ["-c", "y4m", script, "-"], workingDirectory: data, timeout: TimeSpan.FromMinutes(3));
             if (r.ExitCode != 0) failed.Add(f.Id + ": " + r.StdErr.Trim().Split('\n').LastOrDefault());
         }

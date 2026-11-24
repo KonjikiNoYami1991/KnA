@@ -119,7 +119,7 @@ public static class EditorModel
     /// audio, when asked): its tracks are put in place of the file's when the frameserver is switched on, and taken
     /// away (the file's tracks back on) when it is switched off.
     /// </summary>
-    private static IReadOnlyList<TrackPlan> ScriptTracks(QueueJob job, JobSettings s, IReadOnlyList<TrackPlan> tracks, bool automatic)
+    internal static IReadOnlyList<TrackPlan> ScriptTracks(QueueJob job, JobSettings s, IReadOnlyList<TrackPlan> tracks, bool automatic)
     {
         if (automatic || Frameserver.KindOf(job.SourcePath) != FrameserverKind.None) return tracks;
         var script = job.FrameserverScript;

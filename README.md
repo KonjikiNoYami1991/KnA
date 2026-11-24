@@ -262,7 +262,7 @@ KnA\
   tools\ffmpeg\      FFmpeg + FFprobe (BtbN GPL build) · tools\fdkaac\ · tools\dovi_tool\ · tools\hdr10plus_tool\ · tools\shaders\
   tools\nvencc\ tools\qsvencc\ tools\vceencc\   rigaya's GPU encoders (Windows / Linux x64)
   tools\qaac\       qaac (Windows; Apple's files are extracted on your PC: Components → qaac → Install)
-  tools\vapoursynth\ VapourSynth portable + embedded Python + BestSource + L-SMASH-Works (Windows x64)
+  tools\vapoursynth\ VapourSynth R82 + portable Python 3.13 + vsjetpack + the filter catalogue's plugins (every package)
   ai\                AI upscaler: script, Real-ESRGAN models (portable Python + PyTorch from Components)
   data\              settings, presets, queue, logs, temporary files
 ```
@@ -343,10 +343,12 @@ On macOS, run `brew install ffmpeg` (AAC uses AudioToolbox).
 dotnet run --project src/KnA.Server -c Release -- --open
 ```
 
-### VapourSynth and AviSynth (optional)
+### VapourSynth and AviSynth
 
-- **VapourSynth**: install it so that `vspipe` is on the PATH (or set `KNA_VSPIPE`), plus the source plugins your
-  scripts use (L-SMASH Works, BestSource or FFMS2). `.vpy` files can be added to the queue directly.
+- **VapourSynth** is included in every package (tools/vapoursynth: portable Python, VapourSynth, vsjetpack and the
+  filter catalogue's plugins); from source code, install it from Settings → Components, or point `KNA_VSPIPE` to
+  another installation. It reads the video of CPU encodes (Settings → Processing) and runs the catalogue's filters;
+  `.vpy` files can be added to the queue directly.
 - **AviSynth+**: install AviSynth+ and use an FFmpeg built with `--enable-avisynth`; `.avs` scripts are read by FFmpeg.
   KnA shows a clear message when the FFmpeg in use cannot read them.
 

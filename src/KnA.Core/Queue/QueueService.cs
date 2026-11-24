@@ -453,7 +453,7 @@ public sealed class QueueService : IDisposable
         var tools = Tools ?? throw new InvalidOperationException(L.T("FFmpeg was not found. Configure it in Settings."));
         var prober = MediaProber.For(tools);
         j.Media ??= await prober.ProbeAsync(j.SourcePath, ct);
-        JobRunner.EnsureFrameserverScript(j, Store);
+        JobRunner.EnsureFrameserverScript(j, Store, Settings);
         foreach (var gone in j.ExternalMedia.Keys.Except(j.Edit.ExternalFiles).Where(k => j.Edit.Tracks?.All(t => t.File != k) ?? true).ToList())
             j.ExternalMedia.Remove(gone);
         await JobRunner.ProbeExternalsAsync(j, prober, ct);
@@ -461,7 +461,8 @@ public sealed class QueueService : IDisposable
         var edit = j.Edit;
         bool isDefault = edit.Tracks is null;
         var tracks = edit.Tracks is { } custom
-            ? TrackPlanner.Complete(custom, j.Media)
+            // The plan follows the script: its video in place of the file's, or the file's back when no script is used.
+            ? TrackPlanner.Complete(EditorModel.ScriptTracks(j, j.Settings, custom, automatic: false), j.Media)
             : TrackPlanner.Default(j.Media, j.Settings, frameserver: JobRunner.FrameserverMedia(j));
         // Offer the streams of external files that are not in the plan yet.
         var extra = edit.ExternalFiles.Where(f => tracks.All(t => t.File != f))
@@ -486,7 +487,7 @@ public sealed class QueueService : IDisposable
             Containers.AllowedFor(j.Settings, tracks, new Dictionary<string, MediaInfo>(j.ExternalMedia) { [j.SourcePath] = j.Media },
                 JobRunner.AudioEncodersFor(Settings.Capabilities, tools)), compiled.Hdr.Summary,
             RigayaCommand(compiled, ctx.Options, tools) ?? (compiled.Plan.Arguments.Count > 0 ? compiled.Plan.CommandLine(tools.Ffmpeg) : null), compiled.OutputDuration)
-        { Gpu = compiled.Gpu, Script = compiled.Script };
+        { Gpu = compiled.Gpu, Script = j.ScriptNote is { } note && compiled.Script is { } sct ? "# " + note + "\n" + sct : compiled.Script };
     }
 
     /// <summary>The commands a rigaya encode really runs: the encoder (GPU reader or FFmpeg pipe), then FFmpeg for the rest.</summary>

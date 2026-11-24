@@ -263,7 +263,7 @@ KnA\
   tools\ffmpeg\      FFmpeg + FFprobe (build GPL di BtbN) · tools\fdkaac\ · tools\dovi_tool\ · tools\hdr10plus_tool\ · tools\shaders\
   tools\nvencc\ tools\qsvencc\ tools\vceencc\   encoder GPU di rigaya (Windows / Linux x64)
   tools\qaac\       qaac (Windows; i file di Apple si estraggono sul tuo PC: Componenti → qaac → Installa)
-  tools\vapoursynth\ VapourSynth portable + Python incorporato + BestSource + L-SMASH-Works (Windows x64)
+  tools\vapoursynth\ VapourSynth R82 + Python 3.13 portable + vsjetpack + i plugin del catalogo dei filtri (ogni pacchetto)
   ai\                upscaler AI: script, modelli Real-ESRGAN (Python portabile + PyTorch da Componenti)
   data\              impostazioni, preset, coda, log, file temporanei
 ```
@@ -344,10 +344,12 @@ Su macOS esegui `brew install ffmpeg` (l'AAC usa AudioToolbox).
 dotnet run --project src/KnA.Server -c Release -- --open
 ```
 
-### VapourSynth e AviSynth (facoltativi)
+### VapourSynth e AviSynth
 
-- **VapourSynth**: installalo in modo che `vspipe` sia nel PATH (oppure imposta `KNA_VSPIPE`), insieme ai plugin sorgente usati
-  dai tuoi script (L-SMASH Works, BestSource o FFMS2). I file `.vpy` si possono aggiungere direttamente alla coda.
+- **VapourSynth** è incluso in ogni pacchetto (tools/vapoursynth: Python portable, VapourSynth, vsjetpack e i plugin
+  del catalogo dei filtri); dal codice sorgente si installa da Impostazioni → Componenti, oppure `KNA_VSPIPE` indica
+  un'altra installazione. Legge il video delle codifiche su CPU (Impostazioni → Elaborazione) ed esegue i filtri del
+  catalogo; i file `.vpy` si possono aggiungere direttamente alla coda.
 - **AviSynth+**: installa AviSynth+ e usa un FFmpeg compilato con `--enable-avisynth`; gli script `.avs` vengono letti da FFmpeg.
   KnA mostra un messaggio chiaro se l'FFmpeg in uso non riesce a leggerli.
 

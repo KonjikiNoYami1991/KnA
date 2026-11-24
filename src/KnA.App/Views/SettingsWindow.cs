@@ -30,6 +30,7 @@ public sealed class SettingsWindow : Window
     private ProcessPriority _priority;
     private HardwareDecoding _hwDecode;
     private bool _resumable;
+    private bool _vsEncodes;
     private PostQueueAction _post;
     private int _stall, _keepLogs;
     private readonly HashSet<string> _extensions;
@@ -50,7 +51,7 @@ public sealed class SettingsWindow : Window
         _language = _s.Language; _theme = _s.Theme; _template = _s.OutputNameTemplate;
         _output = _s.OutputDirectory; _ffmpeg = _s.FfmpegPath; _vaapi = _s.VaapiDevice; _temp = _s.TempDirectory; _work = _s.WorkLocation; _extra = _s.ExtraArguments; _afterJob = _s.AfterJobCommand; _afterQueue = _s.AfterQueueCommand;
         _checkUpdates = _s.CheckUpdatesOnStart; _autoInstall = _s.AutoInstallUpdates; _restoreQueue = _s.RestoreQueue; _confirmClose = _s.ConfirmOnClose;
-        _priority = _s.Priority; _hwDecode = _s.HardwareDecoding; _resumable = _s.ResumableEncoding; _post = _s.PostAction; _stall = _s.StallTimeoutMinutes; _keepLogs = _s.KeepLogs;
+        _priority = _s.Priority; _hwDecode = _s.HardwareDecoding; _resumable = _s.ResumableEncoding; _vsEncodes = _s.VapourSynthForEncodes; _post = _s.PostAction; _stall = _s.StallTimeoutMinutes; _keepLogs = _s.KeepLogs;
         _extensions = [.. _s.FolderExtensions];
         _sendTo = [.. _s.SendToPresets];
         _discAll = _s.DiscAllTitles; _discMin = _s.DiscMinMinutes; _channel = _s.FfmpegChannel;
@@ -218,6 +219,8 @@ public sealed class SettingsWindow : Window
                 (HardwareDecoding.Auto, L.T("With GPU encoders (recommended)")), (HardwareDecoding.Always, L.T("Always (also CPU encoders and previews)")), (HardwareDecoding.Off, L.T("Off")),
             }, _hwDecode, v => _hwDecode = v), L.T("The GPU decodes the source (NVDEC, D3D11VA, VA-API, VideoToolbox): a UHD HEVC source no longer limits a GPU encode to the CPU's decoding speed.")),
             Ui.Toggle(L.T("Resumable encodes (continue after a stop, a crash or a restart)"), _resumable, v => _resumable = v),
+            Ui.Toggle(L.T("VapourSynth reads the video of CPU encodes (like StaxRip)"), _vsEncodes, v => _vsEncodes = v),
+            Ui.Muted(L.T("The script is shown in the editor (Filters tab). GPU encoders keep their GPU decoding; HDR, variable frame rate, interlaced, rotated and anamorphic sources, discs and MPEG streams stay with FFmpeg's reader.")),
             Ui.Columns(
                 Ui.Field("Stuck FFmpeg timeout (minutes)", Ui.Number(_stall, 1, 1440, 1, v => _stall = (int)v, "0")),
                 Ui.Field("Logs to keep", Ui.Number(_keepLogs, 10, 100000, 10, v => _keepLogs = (int)v, "0"))));
@@ -510,6 +513,7 @@ public sealed class SettingsWindow : Window
         s.Priority = _priority;
         s.HardwareDecoding = _hwDecode;
         s.ResumableEncoding = _resumable;
+        s.VapourSynthForEncodes = _vsEncodes;
         s.PostAction = _post;
         s.StallTimeoutMinutes = Math.Max(1, _stall);
         s.KeepLogs = Math.Max(10, _keepLogs);

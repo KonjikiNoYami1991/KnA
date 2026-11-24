@@ -289,6 +289,8 @@
           <label class="field"><span data-i18n>Hardware decoding</span><select id="s-hwdecode"></select>
             <small class="muted" data-i18n>The GPU decodes the source (NVDEC, D3D11VA, VA-API, VideoToolbox): a UHD HEVC source no longer limits a GPU encode to the CPU's decoding speed.</small></label>
           <label class="toggle"><input type="checkbox" id="s-resumable"><span class="switch"></span><span data-i18n>Resumable encodes (continue after a stop, a crash or a restart)</span></label>
+          <label class="toggle"><input type="checkbox" id="s-vsencodes"><span class="switch"></span><span data-i18n>VapourSynth reads the video of CPU encodes (like StaxRip)</span></label>
+          <small class="muted" data-i18n>The script is shown in the editor (Filters tab). GPU encoders keep their GPU decoding; HDR, variable frame rate, interlaced, rotated and anamorphic sources, discs and MPEG streams stay with FFmpeg's reader.</small>
         </div>
         <h3 data-i18n>Blu-ray and DVD</h3>
         <div class="grid2">

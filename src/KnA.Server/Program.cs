@@ -560,6 +560,7 @@ app.MapPut("/api/settings", (SettingsUpdate u) =>
     if (u.WorkLocation is { } wl) s.WorkLocation = wl;
     if (u.HardwareDecoding is { } hd) s.HardwareDecoding = hd;
     if (u.ResumableEncoding is { } re) s.ResumableEncoding = re;
+    if (u.VapourSynthForEncodes is { } vse) s.VapourSynthForEncodes = vse;
     if (u.StallTimeoutMinutes is { } st) s.StallTimeoutMinutes = Math.Clamp(st, 1, 600);
     if (u.KeepLogs is { } kl) s.KeepLogs = Math.Clamp(kl, 10, 100000);
     if (u.TempDirectory is not null)

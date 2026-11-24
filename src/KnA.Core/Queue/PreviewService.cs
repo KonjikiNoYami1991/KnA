@@ -208,7 +208,7 @@ public sealed class PreviewService(QueueService queue)
         var tools = queue.Tools ?? throw new InvalidOperationException(L.T("FFmpeg was not found. Configure it in Settings."));
         var prober = MediaProber.For(tools);
         job.Media ??= await prober.ProbeAsync(job.SourcePath, ct);
-        JobRunner.EnsureFrameserverScript(job, queue.Store);
+        JobRunner.EnsureFrameserverScript(job, queue.Store, queue.Settings);
         await JobRunner.ProbeExternalsAsync(job, prober, ct);
         return job.Media;
     }

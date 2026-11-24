@@ -87,17 +87,15 @@ Do this before item 8. Desktop and web.
 - **Subtitles: the same structure**, duplicate included (e.g. the same subtitle as ASS and as SRT), with format,
   burning and the OCR editor in each tab.
 
-## 8. GPU-first video with rigaya's encoders, VapourSynth as standard (confirmed by the user)
+## 8. ✅ GPU-first video with rigaya's encoders, VapourSynth as standard (confirmed by the user)
 
-**Status**: done except the two points marked ⏳ below (see CHANGELOG): GPU filter translation and native reading with
-filters/trim/burned subtitles, the GPU/CPU pipeline with alternatives and "Use the GPU filter instead", scripts read by
-the encoder (--vpy/--avs/--vsdir), pure-GPU catalogue chains run without the script, the generated script shown,
-speed/quality profiles, starting values from the GPU, AV1 only with hardware AV1, optional mini benchmark.
-- ⏳ **Packages**: VapourSynth + the catalogue's plugins are still only in the Windows package; Linux and macOS need a
-  portable/relocatable build (CI work, not started — must be verified on real runners).
-- ⏳ **VapourSynth for every encode**: the script is always generated and shown, but it only *runs* when the job uses
-  script filters; KnA's own filters run as GPU filters (rigaya) or FFmpeg filters. Making VapourSynth execute every
-  encode depends on the point above (otherwise Linux/macOS packages would lack it, against the standalone rule).
+**Status**: done (see CHANGELOG). GPU filter translation and native reading with filters/trim/burned subtitles, the
+GPU/CPU pipeline with alternatives and "Use the GPU filter instead", scripts read by the encoder (--vpy/--avs/--vsdir on
+Windows), pure-GPU catalogue chains run without the script, the generated script shown, speed/quality profiles, starting
+values from the GPU, AV1 only with hardware AV1, optional mini benchmark; portable VapourSynth (Python 3.13 + R82 +
+vsjetpack + the catalogue's plugins) in every package and the Docker image; VapourSynth reads the video of CPU encodes.
+Still to check on real hardware/runners: the release workflow on the macOS / Windows / ARM runners, the rigaya
+commands on NVIDIA/Intel/AMD GPUs.
 
 Where StaxRip's speed comes from: the smart use of rigaya's parameters (NVEncC / QSVEncC / VCEEncC), not phase
 parallelism. KnA must be **GPU-first** for video whenever possible, CPU only as a fallback. OCR stays a separate step

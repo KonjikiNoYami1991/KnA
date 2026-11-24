@@ -6,7 +6,8 @@ A person downloads **one** package, extracts it and uses KnA: nothing else to in
 for programs. Every package of `.github/workflows/release.yml` must already contain everything the features need:
 
 - FFmpeg + FFprobe, fdkaac, Tesseract + the Italian and English OCR models, the archive engine (portable Python +
-  py7zr), dovi_tool / hdr10plus_tool, the GPU encoders where the platform has them, shaders and upscale models;
+  py7zr), dovi_tool / hdr10plus_tool, the GPU encoders where the platform has them, shaders and upscale models,
+  VapourSynth with the filter catalogue's plugins (component "vapoursynth": portable Python + wheels, every package);
 - macOS: the tools live inside `KnA.app` (Homebrew builds made relocatable with dylibbundler);
 - Linux: self-built static programs (fdkaac, Tesseract) so no system package is needed;
 - Windows on Arm: native where possible, x64 builds (emulated) otherwise.

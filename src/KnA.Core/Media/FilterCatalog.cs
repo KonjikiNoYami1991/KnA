@@ -226,7 +226,7 @@ public static class FilterCatalog
             {
                 "bs" => "clip = core.bs.VideoSource(source=r\"{source}\")",
                 "ffms2" => "clip = core.ffms2.Source(source=r\"{source}\")",
-                _ => "clip = core.lsmas.LWLibavSource(source=r\"{source}\")",
+                _ => "clip = core.lsmas.LWLibavSource(source=r\"{source}\", cachedir=r\"{cachedir}\")",
             });
             foreach (var f in chain) if (Line(fs.Kind, f) is { } l) lines.Add(l);
             lines.Add("clip.set_output(0)");

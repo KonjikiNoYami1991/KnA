@@ -1,5 +1,6 @@
 using System.Globalization;
 using KnA.Core.Encoding;
+using KnA.Core.Localization;
 using KnA.Core.Media;
 using KnA.Core.Processing;
 using KnA.Core.Queue;
@@ -582,6 +583,48 @@ public class CatalogueEncodeTests(FeatureFixture fx) : IClassFixture<FeatureFixt
         Assert.InRange(int.Parse(frames.StdOut.Trim().TrimEnd(','), System.Globalization.CultureInfo.InvariantCulture), 98, 102);   // 50 fields/s → 50 frames/s
         var m = await new MediaProber(fx.Tools.Ffprobe).ProbeAsync(job.OutputPath!);
         Assert.Single(m.Audio);
+    }
+}
+
+/// <summary>VapourSynth as the standard frameserver of CPU encodes (needs KnA's portable VapourSynth).</summary>
+public class StandardFrameserverTests(FeatureFixture fx) : IClassFixture<FeatureFixture>
+{
+    [Fact]
+    public async Task Cpu_encodes_read_the_video_through_vapoursynth()
+    {
+        var vspipe = Environment.GetEnvironmentVariable("KNA_VSPIPE");
+        if (fx.Tools is null || vspipe is null || VapourSynthRuntime.RootOf(vspipe) is null) return;
+        using var q = new QueueService(new SettingsStore(Path.Combine(fx.Dir, "data-standard")), restoreQueue: false);
+        await VapourSynthRuntime.ProbeAsync(q.Tools!.VsPipe, q.Store.TempDirectory);
+        var s = new JobSettings { Profile = ProfileKind.UniversalMkv, Codec = VideoCodec.H264, Quality = QualityLevel.Draft, Resolution = 0, Subtitles = SubtitleMode.None };
+        var job = Assert.Single(q.AddPaths([fx.Black], s));
+        var a = await q.AnalyzeAsync(job);
+        Assert.NotNull(job.FrameserverScript);
+        Assert.Contains("LWLibavSource", File.ReadAllText(job.FrameserverScript!));
+        Assert.Contains(a.Tracks, t => t.Kind == "video" && t.Include && t.File == job.FrameserverScript);
+        Assert.Contains(a.Tracks, t => t.Kind == "audio" && t.Include && t.File == fx.Black);   // audio still from the file
+        Assert.StartsWith("# " + L.T("VapourSynth reads the video"), a.Script);
+
+        var done = new TaskCompletionSource();
+        q.QueueChanged += () => { if (!q.IsRunning) done.TrySetResult(); };
+        q.Start();
+        await done.Task.WaitAsync(TimeSpan.FromMinutes(3));
+        Assert.True(job.Status is JobStatus.Done or JobStatus.Warning, job.Message + "\n" + job.Log);
+        Assert.Contains("VapourSynth reads the video", job.Log);
+        var src = await new MediaProber(fx.Tools.Ffprobe).ProbeAsync(fx.Black);
+        var m = await new MediaProber(fx.Tools.Ffprobe).ProbeAsync(job.OutputPath!);
+        Assert.Equal(src.Duration.TotalSeconds, m.Duration.TotalSeconds, 0.15);
+        Assert.Equal(src.PrimaryVideo!.FrameRate, m.PrimaryVideo!.FrameRate, 2);
+
+        // Turned off in the settings, or a GPU encoder: FFmpeg reads the file as before.
+        q.Settings.VapourSynthForEncodes = false;
+        await q.AnalyzeAsync(job);
+        Assert.Null(job.FrameserverScript);
+        q.Settings.VapourSynthForEncodes = true;
+        job.Settings = s with { Backend = EncoderBackend.Nvenc };
+        await q.AnalyzeAsync(job);
+        Assert.Null(job.FrameserverScript);
+        Assert.Contains("GPU", job.ScriptNote);
     }
 }
 

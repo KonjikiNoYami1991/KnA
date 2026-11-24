@@ -36,7 +36,8 @@ public static class JobRunner
             ctx.Changed(job);
             var prober = MediaProber.For(ctx.Tools);
             job.Media = await prober.ProbeAsync(job.SourcePath, ct);
-            EnsureFrameserverScript(job, ctx.Store);
+            EnsureFrameserverScript(job, ctx.Store, ctx.Settings);
+            if (job.ScriptNote is { } note) job.AppendLog(note);
             await ProbeExternalsAsync(job, prober, ct);
             job.AppendLog($"KnA {AppInfo.Version} · {DateTime.Now:yyyy-MM-dd HH:mm:ss}");
             job.AppendLog($"Source: {job.SourcePath}");
@@ -316,6 +317,9 @@ public static class JobRunner
         var caps = settings.Capabilities;
         var edit = job.Edit.Tracks is null && FrameserverMedia(job) is { } fs
             ? job.Edit with { Tracks = TrackPlanner.Default(job.Media!, job.Settings, frameserver: fs) }
+            // A plan made in the editor before the script existed (or without it): the script's video takes its place.
+            : job.Edit.Tracks is { } own
+            ? job.Edit with { Tracks = [.. EditorModel.ScriptTracks(job, job.Settings, own, automatic: false)] }
             : job.Edit;
         return new CompileContext
         {
@@ -459,10 +463,22 @@ public static class JobRunner
         return result;
     }
 
-    /// <summary>Writes the job's VapourSynth/AviSynth script (Frameserver settings) and remembers its path.</summary>
-    internal static void EnsureFrameserverScript(QueueJob job, SettingsStore store)
+    /// <summary>
+    /// Writes the job's VapourSynth/AviSynth script and remembers its path: the job's own frameserver settings, or the
+    /// standard VapourSynth script (<see cref="StandardFrameserver"/>) when VapourSynth reads the video of encodes.
+    /// </summary>
+    internal static void EnsureFrameserverScript(QueueJob job, SettingsStore store, AppSettings? settings = null)
     {
         var fs = job.Settings.Frameserver;
+        job.ScriptNote = null;
+        if (fs.Kind == FrameserverKind.None && settings?.VapourSynthForEncodes == true && VapourSynthRuntime.Has("lsmas") && VapourSynthRuntime.Available is not null)
+        {
+            var blocker = StandardFrameserver.Blocker(job.Settings, job.Media, job.SourcePath, job.Edit);
+            job.ScriptNote = blocker is null
+                ? L.T("VapourSynth reads the video (standard frameserver, like StaxRip); KnA's filters follow in FFmpeg.")
+                : L.T("FFmpeg reads the video instead of VapourSynth: {0}.", blocker);
+            if (blocker is null) fs = StandardFrameserver.Settings;
+        }
         if (fs.Kind == FrameserverKind.None || string.IsNullOrWhiteSpace(fs.EffectiveScript) || Frameserver.KindOf(job.SourcePath) != FrameserverKind.None
             || !job.Settings.ProfileDefinition.UsesVideoFilters)
         {

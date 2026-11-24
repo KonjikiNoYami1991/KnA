@@ -28,6 +28,8 @@ public sealed class QueueJob
     public string? HdrSummary { get; internal set; }
     /// <summary>Script generated from <see cref="JobSettings.Frameserver"/> (VapourSynth/AviSynth), when used.</summary>
     public string? FrameserverScript { get; internal set; }
+    /// <summary>Whether VapourSynth reads the video (standard frameserver) and, when not, why (log, editor).</summary>
+    public string? ScriptNote { get; internal set; }
     public JobStatus Status { get; internal set; } = JobStatus.Ready;
     public string? Message { get; internal set; }
     public string? Stage { get; internal set; }

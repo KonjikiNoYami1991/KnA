@@ -143,9 +143,44 @@ public static class Frameserver
         Directory.CreateDirectory(folder);
         var ext = fs.Kind == FrameserverKind.AviSynth ? ".avs" : ".vpy";
         var path = Path.Combine(folder, jobId.ToString("N") + ext);
-        var text = (fs.EffectiveScript ?? "").Replace("{source}", fs.Kind == FrameserverKind.AviSynth ? source.Replace("\"", "") : source);
+        // L-SMASH's index goes to KnA's folder, not next to the video (read-only shares, no clutter).
+        var cache = Path.Combine(folder, "cache");
+        Directory.CreateDirectory(cache);
+        var text = (fs.EffectiveScript ?? "").Replace("{source}", fs.Kind == FrameserverKind.AviSynth ? source.Replace("\"", "") : source)
+            .Replace("{cachedir}", cache);
         if (!File.Exists(path) || File.ReadAllText(path) != text) File.WriteAllText(path, text);
         return path;
+    }
+}
+
+/// <summary>
+/// VapourSynth as the standard frameserver of encodes (like StaxRip): the video of a CPU encode is read by a script
+/// KnA writes (L-SMASH source) instead of FFmpeg's own reader, and KnA's filters follow. Sources whose timing or
+/// metadata only FFmpeg's reader keeps, and GPU encoders (GPU decoding first), are read by FFmpeg as before.
+/// </summary>
+public static class StandardFrameserver
+{
+    public static FrameserverSettings Settings { get; } = new() { Kind = FrameserverKind.VapourSynth, Chain = [], Source = "lsmas" };
+
+    /// <summary>Why the standard script can't read this job's video (null = it can).</summary>
+    public static string? Blocker(JobSettings s, MediaInfo? media, string sourcePath, JobEdit edit)
+    {
+        var p = s.ProfileDefinition;
+        if (!p.EncodesVideo || p.IsImages || !p.UsesVideoFilters) return Localization.L.T("the video is not encoded");
+        if (Frameserver.KindOf(sourcePath) != FrameserverKind.None) return Localization.L.T("the source is already a script");
+        if (Discs.DiscSource.IsTitlePath(sourcePath)) return Localization.L.T("disc source");
+        if (RigayaEncoders.Wanted(s) || s.EffectiveBackend != EncoderBackend.Software) return Localization.L.T("GPU encoder: the GPU decodes the file (GPU first)");
+        if (media?.PrimaryVideo is not { } v) return Localization.L.T("no video");
+        if (v.Hdr.IsHdr) return Localization.L.T("HDR source (its metadata only travels with FFmpeg's reader)");
+        if (v.VariableFrameRate) return Localization.L.T("variable frame rate");
+        if (v.IsInterlaced) return Localization.L.T("interlaced source (deinterlaced by FFmpeg as it reads)");
+        if (v.Rotation != 0 || s.VideoFilters.OverridesOrientation) return Localization.L.T("rotation");
+        if (v.SampleAspectRatio > 0 && Math.Abs(v.SampleAspectRatio - 1) > 0.01) return Localization.L.T("non-square pixels (anamorphic)");
+        if (s.Upscale.Method == UpscaleMethod.Neural) return Localization.L.T("AI upscaler (it reads the file itself)");
+        if (Path.GetExtension(sourcePath).ToLowerInvariant() is ".ts" or ".m2ts" or ".mts" or ".vob" or ".mpg" or ".mpeg")
+            return Localization.L.T("MPEG stream (timestamps that don't start at 0)");
+        if (edit.Tracks?.Any(t => t.Kind == "video" && t.Include && t.CopyVideo) == true) return Localization.L.T("the video is copied");
+        return null;
     }
 }
 
