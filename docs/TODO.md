@@ -166,7 +166,52 @@ ExtractDolbyVisionMetadata, `Source/General/DolbyVisionMetadataFile.vb`).
   trim → keep only the kept frames (`dovi_tool editor` remove ranges), like StaxRip's DoViSplit step.
 - **Frame count changes** (QTGMC double rate, IVTC/decimate, fps changes, script trims): dynamic metadata (RPU /
   HDR10+) no longer matches frame by frame → say so and keep static HDR10 only; never drop metadata silently.
+- **HDR → SDR is part of it**: when the output is SDR (tone mapping: H.264/8-bit, "convert to SDR", DV profile 5…)
+  no HDR parameter reaches the encoder (no `--master-display`, `--max-cll`, `--dhdr10-info`, `--dolby-vision-*`,
+  no BT.2020/PQ/HLG tags): output tagged BT.709. The source's HDR data is still used *for the conversion*: the tone
+  mapping of a script's video must know the source is PQ/HLG BT.2020 (y4m from vspipe carries no colour data), so it
+  runs on the source before/inside the script or with the input colours set explicitly — never on frames assumed SDR.
 - **Same fix for FFmpeg / x265** when they read a script (x265 params from the source's HDR data + the extracted
   RPU/JSON).
 - Show in the editor's pipeline / log which HDR metadata is kept and how; tests with an HDR10 / DV sample through a
   catalogue chain.
+
+## 12. Autoencoder review: where the user still has to act, or loses something silently
+
+Found by reading the code (CLAUDE.md principle "it is an *auto*encoder"). Each point: KnA does it by itself, the user
+can still change it, and the log / editor say what happened.
+
+- **Dynamic HDR dropped in common cases** (only a warning today, `HdrPlanner`): Dolby Vision RPU / HDR10+ are dropped
+  with a trim, a crop, chunked (segmented) encoding, FFmpeg's GPU encoders (hevc_nvenc/qsv/amf…) and rigaya's encoders
+  when a filter forces the pipe. Like StaxRip's logic: edit the metadata instead of dropping it — RPU active area for
+  crop and frame ranges for trim (`dovi_tool editor`), HDR10+ JSON trimmed the same way — and inject it into the
+  finished HEVC when the encoder can't take it (`dovi_tool inject-rpu`, `hdr10plus_tool inject`, then remux), so
+  every HEVC path keeps DV/HDR10+. Check what dovi_tool / hdr10plus_tool support for AV1 before promising it there.
+  Only real frame-count changes (frame-rate change, double-rate deinterlace, IVTC) keep static HDR10 only, said
+  clearly. HDR → SDR outputs get no HDR metadata at all (see 11).
+- **GPU-first is not automatic**: the encoder program is FFmpeg unless the user picks NVEncC/QSVEncC/VCEEncC in the
+  Video tab. When the rigaya encoder of the chosen GPU is in the package and supports the codec, it should be the
+  default (FFmpeg's GPU encoder only as fallback), with its profile from the detected GPU.
+- **Stale hardware detection**: detection runs again only for a new detection schema or a new FFmpeg; after a GPU or
+  driver change the GPU encoders stay "not detected" / wrong until the user re-runs it. Re-detect by itself when the
+  GPUs, the driver versions or the encoder programs change (cheap fingerprint at start).
+- **Picture subtitles lost in MP4/WebM**: PGS/VobSub that the container can't hold are left out (warning) unless the
+  user enables OCR. When a picture subtitle would be dropped, OCR it automatically (Tesseract and the it/en models are
+  in every package; other languages download by themselves) and keep the text track.
+- **No telecine detection**: "Deinterlace: automatic" only looks at the field-order flag, so telecined film (NTSC DVD,
+  anime, 29.97 hard/soft telecine) is deinterlaced with Bwdif (judder, blended frames) instead of IVTC back to 23.976.
+  Analyse a few seconds (FFmpeg `idet` / repeat-field flags, like StaxRip / Hybrid detection) and choose IVTC
+  (`fieldmatch+decimate`, VIVTC in the script, `--vpp-ivtc`/`--vpp-decimate` on the GPU), deinterlace or nothing.
+- **Black borders**: crop only with the "Detect black borders" button. To decide with the user: automatic crop of
+  letterbox bars (constant over the film, safe margins, never for variable/partial bars), editable in the editor.
+- **qaac**: Apple's CoreAudioToolbox needs Settings → Components → qaac → Install; until then fdkaac is used (no
+  failure). Could be done by itself on first need, where the licence allows it (extracted on the user's machine).
+- **Optional by design** (fine as they are): GPU mini benchmark, PaddleOCR / PyTorch (CLAUDE.md exceptions, KnA says
+  when a feature needs them).
+
+## 13. Theme: Golden Darkness (last priority)
+
+A UI theme dedicated to Golden Darkness (Yami) from *To LOVE-Ru*: colours from the character (black, gold, deep
+red), suitable backgrounds, desktop and web, next to the current light/dark themes. Mind the artwork's rights: use
+images the user provides or that may be redistributed; nothing scraped. Last of the queue.
+
