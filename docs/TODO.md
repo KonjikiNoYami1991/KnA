@@ -139,3 +139,30 @@ one day match StaxRip (which doesn't exist for Linux/macOS; there the reference 
 - **Global "Pro" switch**: in quick mode the full editor, parameter pages and filter catalogue stay hidden.
 - Optional (Pro): **quality check** (VMAF/SSIM on a few sample seconds) to compare presets and filters with a number.
 - To evaluate, not a priority: importing Hybrid/StaxRip presets.
+
+## 11. HDR kept when the video comes from a script (confirmed by the user)
+
+Today a VapourSynth/AviSynth script (catalogue chain or hand-written) is probed without HDR data, so `HdrPlanner`
+treats it as SDR: HDR10 / HDR10+ / Dolby Vision metadata are lost silently with NVEncC/QSVEncC/VCEEncC (`--vpy`/`--avs`
+or the y4m pipe) and with FFmpeg/x265. rigaya's encoders accept every piece explicitly; `copy`/`auto` only work with
+the `--avhw`/`--avsw` readers (NVEncC 9.41, QSVEncC 8.38, VCEEncC 9.23 option documents). Do it like StaxRip
+(`Source/Encoding/NVEnc.vb` SetMetaData/BeforeEncoding, `Source/Forms/MainForm.vb` ExtractHdr10PlusMetadata /
+ExtractDolbyVisionMetadata, `Source/General/DolbyVisionMetadataFile.vb`).
+
+- **HDR from the source**: when the script derives from the job's source, `HdrPlanner` uses the source's HDR data
+  (primaries, transfer, matrix, range, mastering display, MaxCLL/MaxFALL, HDR10+, Dolby Vision), not the script's.
+- **Static metadata, explicit**: with a script, rigaya gets `--colorprim/--transfer/--colormatrix/--colorrange`,
+  `--master-display G(..)B(..)R(..)WP(..)L(max,min)`, `--max-cll MaxCLL,MaxFALL` (and `--chromaloc`), never `copy`.
+- **HDR10+**: extract the JSON (`hdr10plus_tool extract`, already used for x265) and pass `--dhdr10-info <json>`;
+  check that rigaya's `hdr10plus_gen` module it needs is in every package (CLAUDE.md standalone rule).
+- **Dolby Vision**: extract the RPU (`dovi_tool extract-rpu`, already used for x265) and pass
+  `--dolby-vision-rpu <rpu>` with `--dolby-vision-profile` derived from the RPU (5 → 5.0, 7/8 → 8.1, 8.1 on HLG → 8.4;
+  AV1 → 10.x).
+- **RPU edits**: crop → active-area offsets rewritten with `dovi_tool editor` (or `--dolby-vision-rpu-prm crop=true`);
+  trim → keep only the kept frames (`dovi_tool editor` remove ranges), like StaxRip's DoViSplit step.
+- **Frame count changes** (QTGMC double rate, IVTC/decimate, fps changes, script trims): dynamic metadata (RPU /
+  HDR10+) no longer matches frame by frame → say so and keep static HDR10 only; never drop metadata silently.
+- **Same fix for FFmpeg / x265** when they read a script (x265 params from the source's HDR data + the extracted
+  RPU/JSON).
+- Show in the editor's pipeline / log which HDR metadata is kept and how; tests with an HDR10 / DV sample through a
+  catalogue chain.
