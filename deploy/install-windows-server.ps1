@@ -126,5 +126,5 @@ Start-Service $Service
 $ip = (Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue | Where-Object { $_.IPAddress -notlike '127.*' -and $_.PrefixOrigin -ne 'WellKnown' } | Select-Object -First 1).IPAddress
 Log ((T 'Done!' 'Fatto!') + "  →  http://$(if ($ip) { $ip } else { 'localhost' }):$Port")
 Log ((T 'Video folders' 'Cartelle video') + ": $($envs['KNA_MEDIA_ROOTS'])")
-if (-not $envs.ContainsKey('KNA_PASSWORD')) { Log (T 'No password set: anyone on your network can use KnA (-Password "…").' 'Nessuna password: chiunque nella tua rete può usare KnA (-Password "…").') }
+if (-not $envs.ContainsKey('KNA_PASSWORD')) { Log (T 'No -Password: the first person who opens KnA creates the administrator account.' "Nessuna -Password: il primo che apre KnA crea l'account amministratore.") }
 Log (T 'Update: run this script again. Settings: run it again with other parameters.' 'Aggiornamento: riesegui lo script. Impostazioni: rieseguilo con altri parametri.')

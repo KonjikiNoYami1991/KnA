@@ -450,3 +450,31 @@ details.upscale[open] > summary { color: color-mix(in srgb, var(--accent) 80%, v
 .pipe-badge.cpu { background: color-mix(in srgb, var(--warn) 25%, transparent); }
 .script-preview { margin-top: 10px; }
 .script-preview pre { max-height: 320px; overflow: auto; background: var(--surface-2); border: 1px solid var(--border); border-radius: 6px; padding: 8px; white-space: pre; }
+
+/* ---------------------------------------------------------------- sign in, accounts */
+.auth { position: fixed; inset: 0; z-index: 100; display: grid; place-items: center; padding: 16px; overflow: auto;
+  background:
+    radial-gradient(900px 500px at 80% -10%, color-mix(in srgb, var(--accent-2) 18%, transparent), transparent 70%),
+    radial-gradient(700px 400px at -10% 110%, color-mix(in srgb, var(--accent) 12%, transparent), transparent 70%),
+    var(--bg); }
+.auth[hidden] { display: none; }
+.auth-card { width: min(380px, 100%); background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius);
+  box-shadow: var(--shadow); padding: 26px 24px 22px; display: flex; flex-direction: column; }
+.auth-card .logo { align-self: center; margin-bottom: 6px; }
+.auth-card h1 { font-size: 18px; text-align: center; margin: 4px 0 6px; }
+.auth-card > p.muted { text-align: center; font-size: 13px; margin: 0 0 16px; }
+.auth-card .btn.primary { height: 40px; margin-top: 6px; }
+.auth-card .check { margin: 0 0 4px; }
+.auth-error { color: var(--err); font-size: 13px; min-height: 18px; margin: 6px 0 0; }
+.acc-list { display: flex; flex-direction: column; gap: 6px; margin-bottom: 10px; }
+.acc-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 8px 10px; border: 1px solid var(--border);
+  border-radius: 10px; background: var(--bg-2); }
+.acc-row b { font-size: 14px; }
+.acc-row .grow { flex: 1; }
+.acc-row .note { flex-basis: 100%; font-size: 12px; color: var(--muted); }
+.acc-row.off { opacity: .6; }
+.acc-edit { margin-top: 12px; padding: 12px; border: 1px solid var(--border); border-radius: 10px; background: var(--bg-2); }
+.acc-edit h3 { margin: 0 0 10px; font-size: 14px; }
+.acc-edit .grow, #dlg-user .grow { flex: 1; }
+#dlg-user h3 { font-size: 14px; margin: 14px 0 8px; }
+@media (max-width: 560px) { #btn-user span { display: none; } }

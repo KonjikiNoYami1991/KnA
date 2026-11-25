@@ -14,7 +14,7 @@
 # Unattended settings (environment variables, all optional):
 #   KNA_VERSION        latest | 3.0.0 …                   KNA_PORT          8585
 #   KNA_MEDIA_ROOTS    read/write video folders, ';'      KNA_READONLY_ROOTS  read-only folders, ';'
-#   KNA_UPLOAD_DIR     browser uploads destination        KNA_PASSWORD      web UI password (no single quotes)
+#   KNA_UPLOAD_DIR     browser uploads destination        KNA_PASSWORD      first administrator's password (no single quotes)
 #   KNA_GPU            auto | none | "intel amd nvidia"   KNA_FFMPEG_SOURCE btbn | distro
 #   KNA_COMPONENTS     "anime4k fsrcnnx dovi_tool hdr10plus_tool nvencc qsvencc vceencc model:realesr-animevideov3 ai-runtime" (subset)
 #   KNA_RIGAYA         auto | no — auto adds NVEncC / QSVEncC / VCEEncC for the GPUs found (x86-64)
@@ -250,8 +250,8 @@ Bind mount e condivisioni di rete devono essere già montati qui.")" 13 78 "$KNA
     [[ -z $KNA_UPLOAD_DIR ]] || valid_paths "$KNA_UPLOAD_DIR" && break
   done
 
-  if wt --yesno "$(t "Protect the web UI with a password? (recommended when other people can reach this network)" \
-                    "Proteggere l'interfaccia web con una password? (consigliato se altre persone possono raggiungere questa rete)")" 9 70; then
+  if wt --yesno "$(t "Choose the password of the administrator account (admin) now? Otherwise the first person who opens KnA creates the administrator." \
+                    "Scegliere ora la password dell'account amministratore (admin)? Altrimenti il primo che apre KnA crea l'amministratore.")" 9 70; then
     while :; do
       p1=$(wt --passwordbox "$(t "Password (no single quotes):" "Password (senza apici singoli):")" 9 60) || cancelled
       p2=$(wt --passwordbox "$(t "Repeat the password:" "Ripeti la password:")" 9 60) || cancelled
@@ -320,7 +320,7 @@ Utile quando le cartelle dei video appartengono a un utente preciso, per esempio
   $(t "Video folders" "Cartelle video"):   $KNA_MEDIA_ROOTS
   $(t "Read-only" "Sola lettura"):       ${KNA_READONLY_ROOTS:--}
   Upload:          ${KNA_UPLOAD_DIR:--}
-  Password:        $([[ -n $KNA_PASSWORD ]] && t "yes" "sì" || t "no" "no")
+  $(t "Admin password" "Password admin"):  $([[ -n $KNA_PASSWORD ]] && t "yes" "sì" || t "no (chosen at the first visit)" "no (scelta alla prima visita)")
   GPU:             $KNA_GPU
   FFmpeg:          $KNA_FFMPEG_SOURCE
   $(t "Components" "Componenti"):      ${KNA_COMPONENTS:--}
@@ -599,8 +599,18 @@ fi
 EOF
 chmod 755 /usr/local/sbin/kna-update
 
+# Lost the administrator's password: kna-reset-password [name] (default admin), run as root.
+cat > /usr/local/sbin/kna-reset-password <<EOF
+#!/usr/bin/env bash
+# New password for a KnA account (default: admin); the account is enabled again and signed out everywhere.
+set -a; . "$ENV_FILE"; set +a
+exec runuser -u "$SERVICE_USER" -- "$INSTALL_DIR/kna-server" --reset-password "\${1:-admin}"
+EOF
+chmod 755 /usr/local/sbin/kna-reset-password
+
 # ---------------------------------------------------------------- start, components
-auth=(); [[ -n ${KNA_PASSWORD:-} ]] && auth=(-u "kna:$KNA_PASSWORD")
+# Before the first account exists KnA lets this machine install components; KNA_PASSWORD is the administrator's password.
+auth=(); [[ -n ${KNA_PASSWORD:-} ]] && auth=(-u "${KNA_ADMIN_USER:-admin}:$KNA_PASSWORD")
 api="http://127.0.0.1:$KNA_PORT"
 TEMP_PID=""
 if ((HAVE_SYSTEMD)); then
@@ -620,7 +630,8 @@ up=0
 ((HAVE_SYSTEMD)) || [[ -n $TEMP_PID ]] || up=-1
 for _ in $(seq 1 90); do
   ((up == 0)) || break
-  if curl -fsS "${auth[@]}" "$api/api/info" >/dev/null 2>&1; then up=1; break; fi
+  # Answers without signing in (the administrator may have changed the password since KNA_PASSWORD was set).
+  if curl -fsS "$api/api/auth/status" >/dev/null 2>&1; then up=1; break; fi
   sleep 1
 done
 if ((up < 0)); then

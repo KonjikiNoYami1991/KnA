@@ -6,17 +6,19 @@ right; optional controls are fine, a required manual step or a silent loss is a 
 
 ## 1. Web server: separate user accounts
 
-- **Accounts instead of the single shared password**: at first start KnA asks to create an **admin** account; the
-  admin creates, edits, disables and removes the other accounts.
-- Each user has their own queue, presets and settings; the admin sees and manages everything.
-- **Roles**: at least admin / user, plus per-user permissions: allowed folder roots and whether advanced mode is
-  allowed.
-- **Security**: passwords stored hashed (salted, slow hash); secure session cookies; brute-force throttling.
-- **Reverse-proxy compatible**: forwarded headers (X-Forwarded-For/Proto/Host) from trusted proxies only, a
-  configurable base path (e.g. `/kna`), correct cookie paths and redirects, WebSocket/SSE progress through the proxy;
-  documented examples for nginx, Caddy, Traefik and Nginx Proxy Manager.
+First part done (accounts, roles and permissions, security, migration from `KNA_PASSWORD`: see "Done" below).
+Still to do, in this order:
+
+- **Each user has their own queue, presets and settings**; the admin sees and manages everything. Until then the
+  queue is shared, users may add presets but only administrators replace or delete them, and users change only the
+  defaults of the quick form and the theme (everything else in Settings is the administrators').
+- Advanced mode in the editor: today the server refuses hand-written scripts / arguments of users without it with a
+  clear message; the editor should also hide or lock those fields for them (with point 3's Pro switch).
+- **Reverse-proxy compatible**: forwarded headers (X-Forwarded-For/Proto/Host) from trusted proxies only (the sign-in
+  throttle and the cookie's Secure flag must see the real client and scheme), a configurable base path (e.g. `/kna`),
+  correct cookie paths and redirects, WebSocket/SSE progress through the proxy; documented examples for nginx, Caddy,
+  Traefik and Nginx Proxy Manager.
 - **Proxy SSO**: accept an auth header from a trusted proxy (Authelia/Authentik style) as the logged-in user.
-- **Migration**: existing `KNA_PASSWORD` installs migrate smoothly (Docker, Linux, Windows service).
 
 ## 2. Filter presets and before/after preview
 
@@ -70,6 +72,12 @@ suitable backgrounds, desktop and web, next to the current light/dark themes. Mi
 the user provides or that may be redistributed; nothing scraped.
 
 ## Done (details in CHANGELOG)
+
+- Web server accounts, first part: administrator created at the first start (or from `KNA_PASSWORD`, which keeps old
+  HTTP Basic clients working until the password changes), users / administrators, per-user allowed folders and
+  advanced mode, PBKDF2 hashes, HttpOnly SameSite cookies, sign-in throttling, `--reset-password` /
+  `kna-reset-password`, `KNA_AUTH=off`; Settings → Accounts and the sign-in screen in the web UI (the desktop app is
+  single-user: nothing to add there).
 
 - mkvmerge in every package and the Docker image: the Dolby Vision configuration record is written when the encoder
   leaves it out; injected metadata is remuxed by mkvmerge (FFmpeg can't time a raw HEVC stream).

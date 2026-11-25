@@ -146,7 +146,7 @@ bash install-linux.sh --unattended
 | `KNA_MEDIA_ROOTS` | `/srv/kna/videos` | Cartelle video in lettura/scrittura, separate da `;` |
 | `KNA_READONLY_ROOTS` | – | Cartelle in sola lettura |
 | `KNA_UPLOAD_DIR` | cartella dati | Destinazione degli upload dal browser |
-| `KNA_PASSWORD` | – | Password dell'interfaccia web (senza apici singoli) |
+| `KNA_PASSWORD` | – | Password dell'amministratore `admin` creato al primo avvio (senza apici singoli) |
 | `KNA_GPU` | `auto` | `auto`, `none`, oppure uno o più tra `intel amd nvidia` |
 | `KNA_FFMPEG_SOURCE` | `btbn` | `btbn` (build statica più recente) o `distro` |
 | `KNA_COMPONENTS` | `anime4k fsrcnnx dovi_tool hdr10plus_tool` | Anche `ai-runtime` (Python + PyTorch, diversi GB: il Python 3.11–3.14 del container, oppure uno portabile che KnA scarica); vuoto per nessuno |
@@ -234,7 +234,7 @@ Il servizio le legge da `/etc/kna/kna.env`.
 | `KNA_UPLOAD_DIR` | cartella dati | Destinazione predefinita degli upload dal browser |
 | `KNA_MAX_UPLOAD_GB` | nessun limite | Upload più grande accettato |
 | `KNA_DATA_DIR` | `/var/lib/kna` | Impostazioni, log, file temporanei, componenti scaricati |
-| `KNA_PASSWORD` | – | Attiva l'autenticazione HTTP Basic (qualsiasi nome utente) |
+| `KNA_PASSWORD` | – | Solo al primo avvio: l'amministratore `admin` riceve questa password (poi: Impostazioni → Account) |
 | `KNA_FFMPEG` | auto | Percorso di un ffmpeg specifico |
 | `KNA_FDKAAC` | auto | Percorso dell'encoder `fdkaac` (incluso nel pacchetto) |
 | `KNA_VULKAN_DEVICE` | auto | GPU Vulkan per libplacebo / Anime4K (indice o parte del nome; `llvmpipe` = CPU) |

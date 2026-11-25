@@ -40,8 +40,24 @@
   <symbol id="i-disc" viewBox="0 0 24 24"><path d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20Zm0 7a3 3 0 1 1 0 6 3 3 0 0 1 0-6Zm0 2a1 1 0 1 0 0 2 1 1 0 0 0 0-2Z"/></symbol>
   <symbol id="i-eye" viewBox="0 0 24 24"><path d="M12 5c5 0 9 4.5 10 7-1 2.5-5 7-10 7S3 14.5 2 12c1-2.5 5-7 10-7Zm0 3a4 4 0 1 0 0 8 4 4 0 0 0 0-8Z"/></symbol>
   <symbol id="i-spark" viewBox="0 0 24 24"><path d="M12 2l1.9 5.6L19.5 9.5l-5.6 1.9L12 17l-1.9-5.6L4.5 9.5l5.6-1.9L12 2Zm7 12 .9 2.6 2.6.9-2.6.9L19 21l-.9-2.6-2.6-.9 2.6-.9L19 14ZM5 15l.7 1.8 1.8.7-1.8.7L5 20l-.7-1.8-1.8-.7 1.8-.7L5 15Z"/></symbol>
+  <symbol id="i-user" viewBox="0 0 24 24"><path d="M12 12a4.5 4.5 0 1 0 0-9 4.5 4.5 0 0 0 0 9Zm0 2c-4.4 0-8 2.2-8 5v2h16v-2c0-2.8-3.6-5-8-5Z"/></symbol>
   <symbol id="i-save" viewBox="0 0 24 24"><path d="M5 3h11l3 3v13a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2Zm2 2v5h8V5H7Zm5 9a2.5 2.5 0 1 0 0 5 2.5 2.5 0 0 0 0-5Z"/></symbol>
 </svg>
+
+<!-- Sign in / first start: create the administrator -->
+<div id="auth" class="auth" hidden>
+  <form class="auth-card" id="auth-form" novalidate>
+    <img class="logo" src="favicon.svg" alt="" width="64" height="64">
+    <h1>Konjiki no Autoencoder</h1>
+    <p class="muted" id="auth-intro"></p>
+    <label class="field"><span data-i18n>User name</span><input id="auth-name" autocomplete="username" autocapitalize="none" spellcheck="false" required></label>
+    <label class="field"><span data-i18n>Password</span><input id="auth-pw" type="password" autocomplete="current-password" required></label>
+    <label class="field" id="auth-pw2-row" hidden><span data-i18n>Repeat the password</span><input id="auth-pw2" type="password" autocomplete="new-password"></label>
+    <label class="check"><input type="checkbox" id="auth-remember"><span data-i18n>Stay signed in on this device</span></label>
+    <p class="auth-error" id="auth-error" role="alert"></p>
+    <button class="btn primary" id="auth-submit" type="submit"></button>
+  </form>
+</div>
 
 <header class="topbar">
   <div class="brand">
@@ -59,6 +75,7 @@
     <input type="file" id="upload-input" multiple hidden>
     <button class="btn primary" id="btn-start"><svg><use href="#i-play"/></svg><span data-i18n>Start</span></button>
     <button class="btn" id="btn-pause" disabled><svg><use href="#i-pause"/></svg><span data-i18n>Pause</span></button>
+    <button class="btn" id="btn-user" hidden><svg><use href="#i-user"/></svg><span id="user-name"></span></button>
     <button class="btn icon" id="btn-theme" data-i18n-title="Light / dark"><svg><use href="#i-moon"/></svg></button>
     <button class="btn icon" id="btn-settings" data-i18n-title="Settings"><svg><use href="#i-gear"/></svg><span class="dot-badge" id="update-badge" hidden></span></button>
   </div>
@@ -249,6 +266,7 @@
       <button type="button" data-tab="ai" data-i18n>AI</button>
       <button type="button" data-tab="advanced" data-i18n>Advanced</button>
       <button type="button" data-tab="updates" data-i18n>Updates &amp; components</button>
+      <button type="button" data-tab="accounts" id="s-tab-accounts" data-i18n>Accounts</button>
     </nav>
     <div class="dialog-body">
       <section data-pane="general">
@@ -356,11 +374,61 @@
           <div id="comp-list" class="comp-list"><span class="muted small" data-i18n>Loading…</span></div>
         </div>
       </section>
+      <section data-pane="accounts" hidden>
+        <p class="muted small" data-i18n>Each person signs in with their own account. Administrators manage the server and the accounts; users encode inside the folders they are given. Changes here are saved at once.</p>
+        <div id="acc-list" class="acc-list"></div>
+        <div class="row"><button class="btn sm" type="button" id="acc-add"><svg><use href="#i-plus"/></svg><span data-i18n>New account</span></button></div>
+        <div id="acc-edit" class="acc-edit" hidden>
+          <h3 id="acc-edit-title"></h3>
+          <div class="grid2">
+            <label class="field"><span data-i18n>User name</span><input id="acc-name" autocomplete="off" autocapitalize="none" spellcheck="false"></label>
+            <label class="field"><span data-i18n>Password</span><input id="acc-pw" type="password" autocomplete="new-password">
+              <small class="muted" id="acc-pw-note"></small></label>
+          </div>
+          <label class="field"><span data-i18n>Role</span><select id="acc-role"></select></label>
+          <label class="toggle"><input type="checkbox" id="acc-advanced"><span class="switch"></span><span data-i18n>Advanced mode: hand-written scripts and encoder or tool arguments (they run on the server)</span></label>
+          <label class="toggle"><input type="checkbox" id="acc-disabled"><span class="switch"></span><span data-i18n>Disabled (cannot sign in)</span></label>
+          <label class="field"><span data-i18n>Allowed folders (one per line)</span>
+            <textarea id="acc-roots" class="mono" rows="3"></textarea>
+            <small class="muted" id="acc-roots-note"></small></label>
+          <div class="row">
+            <div class="grow"></div>
+            <button class="btn sm" type="button" id="acc-cancel" data-i18n>Cancel</button>
+            <button class="btn sm primary" type="button" id="acc-save" data-i18n>Save account</button>
+          </div>
+        </div>
+      </section>
     </div>
     <footer class="dialog-foot">
       <div class="grow"></div>
       <button class="btn" value="cancel" data-i18n>Cancel</button>
       <button class="btn primary" type="button" id="btn-save-settings" data-i18n>Save</button>
+    </footer>
+  </form>
+</dialog>
+
+<!-- The signed-in account: own password, sign out -->
+<dialog id="dlg-user" class="dialog">
+  <form method="dialog" class="dialog-inner">
+    <header class="dialog-head">
+      <h2 id="user-title"></h2>
+      <button class="btn icon ghost" value="cancel" data-i18n-title="Close"><svg><use href="#i-x"/></svg></button>
+    </header>
+    <div class="dialog-body">
+      <p class="muted small" id="user-info"></p>
+      <h3 data-i18n>Change password</h3>
+      <input type="text" autocomplete="username" id="user-login" hidden>
+      <label class="field"><span data-i18n>Current password</span><input id="user-pw-old" type="password" autocomplete="current-password"></label>
+      <div class="grid2">
+        <label class="field"><span data-i18n>New password</span><input id="user-pw-new" type="password" autocomplete="new-password"></label>
+        <label class="field"><span data-i18n>Repeat the password</span><input id="user-pw-new2" type="password" autocomplete="new-password"></label>
+      </div>
+      <small class="muted" data-i18n>Your other devices are signed out when the password changes.</small>
+    </div>
+    <footer class="dialog-foot">
+      <button class="btn" type="button" id="btn-logout" data-i18n>Sign out</button>
+      <div class="grow"></div>
+      <button class="btn primary" type="button" id="btn-change-pw" data-i18n>Change password</button>
     </footer>
   </form>
 </dialog>

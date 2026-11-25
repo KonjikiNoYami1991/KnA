@@ -35,6 +35,32 @@ public sealed class FileBrowser
         Roots = [.. rw, .. ro];
     }
 
+    private FileBrowser(IReadOnlyList<string> writable, IReadOnlyList<string> all)
+    {
+        WritableRoots = writable;
+        Roots = all;
+    }
+
+    /// <summary>
+    /// The same server seen by an account limited to <paramref name="roots"/>: only those folders (inside this
+    /// browser's roots; any other is ignored), writable where this browser may write.
+    /// </summary>
+    public FileBrowser Restrict(IEnumerable<string> roots)
+    {
+        var all = new List<string>();
+        var rw = new List<string>();
+        foreach (var r in roots)
+        {
+            string full;
+            try { full = Normalize(r); }
+            catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException) { continue; }
+            if (!Directory.Exists(full) || !IsAllowed(full) || all.Contains(full)) continue;
+            all.Add(full);
+            if (IsWritable(full)) rw.Add(full);
+        }
+        return new FileBrowser(rw, [.. rw, .. all.Where(a => !rw.Contains(a))]);
+    }
+
     private static IEnumerable<string> DefaultRoots()
     {
         if (OperatingSystem.IsWindows())

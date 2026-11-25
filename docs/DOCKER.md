@@ -20,7 +20,7 @@ and Python for the AI upscaler. 32-bit ARM devices (armv7) are not supported.
 |---|---|---|
 | **Your video folder** | bind mount → `/media` | KnA reads the sources and writes the results there |
 | **PUID / PGID** | environment | KnA writes files as this user: they stay yours on the share |
-| **KNA_PASSWORD** | environment | without it anyone on your network can use KnA |
+| **KNA_PASSWORD** | environment | password of the administrator `admin` created at the first start; without it the first person who opens KnA creates the administrator |
 
 Find PUID/PGID: `id -u` and `id -g` on Linux; on a NAS, `id <your user>` in an SSH session (Synology: SSH must be
 enabled in Control Panel → Terminal & SNMP). Without PUID/PGID the container runs as root (files owned by root).
@@ -114,7 +114,7 @@ LXC works too but needs nesting and the device passthrough done twice.
 |---|---|
 | "Permission denied" writing outputs | PUID/PGID must be a user that can write the video share; check with `ls -ln` on the host |
 | No hardware encoder in the Hardware card | `/dev/dri` not passed (Intel/AMD), or `--gpus all` / nvidia-container-toolkit missing (NVIDIA) |
-| The page asks for a password you don't know | `KNA_PASSWORD` in the compose file (any user name) |
+| The page asks for a password you don't know | user `admin` and `KNA_PASSWORD` of the first start; lost: `docker exec -it kna dotnet /app/kna-server.dll --reset-password admin` |
 | `exec format error` | 32-bit ARM host: not supported |
 | Everything else | `docker logs kna` and the job's log (📄 in the queue) |
 

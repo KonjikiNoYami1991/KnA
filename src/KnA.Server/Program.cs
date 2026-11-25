@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Globalization;
 using System.Text;
+using KnA.Core.Accounts;
 using KnA.Core.Encoding;
 using KnA.Core.Localization;
 using KnA.Core.Queue;
@@ -20,6 +21,11 @@ if (KnA.Core.Queue.CommandLine.Handles(args))
     Console.CancelKeyPress += (_, e) => { e.Cancel = true; cliCts.Cancel(); };
     return await KnA.Core.Queue.CommandLine.RunAsync(args, Console.Out, cliCts.Token);
 }
+
+// Lost the administrator's password: kna-server --reset-password NAME (asks for the new one; an unknown NAME becomes a
+// new administrator). Run it as the service user, with the same KNA_DATA_DIR.
+if (args is ["--reset-password", var resetName, ..])
+    return ResetPassword(resetName);
 
 var builder = WebApplication.CreateBuilder(new WebApplicationOptions
 {
@@ -48,6 +54,8 @@ builder.Services.AddSingleton(uploadsService);
 builder.Services.AddSingleton<QueueService>();
 builder.Services.AddSingleton<EventHub>();
 builder.Services.AddSingleton(_ => new FileBrowser(AppEnv.Get("MEDIA_ROOTS"), AppEnv.Get("READONLY_ROOTS"), [uploadsService.DefaultFolder]));
+var accounts = new AccountStore(store.DataDirectory);
+var throttle = new LoginThrottle();
 builder.Services.AddSingleton<WatchFolderService>();
 
 var app = builder.Build();
@@ -55,6 +63,9 @@ var queue = app.Services.GetRequiredService<QueueService>();
 AutoUpdateResult autoUpdate = new(AutoUpdateState.UpToDate, "", new UpdateCheck(AppUpdater.CurrentVersion, null, false, null, ""));
 var hub = app.Services.GetRequiredService<EventHub>();
 var browser = app.Services.GetRequiredService<FileBrowser>();
+var userBrowsers = new UserBrowsers(browser);
+// The folders the signed-in account may use (administrators: all of the server's).
+FileBrowser B(HttpContext ctx) => userBrowsers.For(ctx.CurrentUser());
 var uploads = app.Services.GetRequiredService<UploadService>();
 var watch = app.Services.GetRequiredService<WatchFolderService>();
 watch.StatusChanged += st => hub.Broadcast("watch", st);
@@ -68,32 +79,14 @@ bool advancedAllowed = Env("KNA_ALLOW_ADVANCED");
 bool powerActionsAllowed = Env("KNA_ALLOW_POWER_ACTIONS");
 bool componentsLocked = Env("KNA_LOCK_COMPONENTS");
 
-// ---------------------------------------------------------------- optional password (HTTP Basic)
-var password = AppEnv.Get("PASSWORD");
-if (!string.IsNullOrEmpty(password))
-{
-    app.Use(async (ctx, next) =>
-    {
-        var header = ctx.Request.Headers.Authorization.ToString();
-        if (header.StartsWith("Basic ", StringComparison.OrdinalIgnoreCase))
-        {
-            try
-            {
-                var decoded = Encoding.UTF8.GetString(Convert.FromBase64String(header[6..]));
-                var pass = decoded[(decoded.IndexOf(':') + 1)..];
-                if (System.Security.Cryptography.CryptographicOperations.FixedTimeEquals(
-                        Encoding.UTF8.GetBytes(pass), Encoding.UTF8.GetBytes(password)))
-                {
-                    await next();
-                    return;
-                }
-            }
-            catch (FormatException) { }
-        }
-        ctx.Response.Headers.WWWAuthenticate = "Basic realm=\"KnA\", charset=\"UTF-8\"";
-        ctx.Response.StatusCode = 401;
-    });
-}
+// ---------------------------------------------------------------- accounts: migration of the old shared password
+// KNA_PASSWORD (HTTP Basic, any user name) becomes the first administrator; after that the variable is not used.
+if (Auth.Disabled)
+    log.LogWarning("KNA_AUTH=off: no sign-in, everybody who reaches KnA is an administrator.");
+else if (accounts.EnsureFromEnvironment(AppEnv.Get("PASSWORD"), AppEnv.Get("ADMIN_USER")) is { } migrated)
+    log.LogInformation("KNA_PASSWORD: administrator account \"{Name}\" created with that password. Accounts and passwords are now managed in Settings → Accounts.", migrated.Name);
+else if (AppEnv.Get("PASSWORD") is not null && !accounts.SetupRequired)
+    log.LogInformation("KNA_PASSWORD is set but accounts already exist: it is not used any more (Settings → Accounts).");
 
 // ---------------------------------------------------------------- language: Italian browsers get Italian
 app.Use(async (ctx, next) =>
@@ -117,8 +110,23 @@ app.Use(async (ctx, next) =>
     }
 });
 
+app.UseAccounts(accounts, throttle);
 app.UseDefaultFiles();
 app.UseStaticFiles();
+app.MapAuth(accounts, throttle, userBrowsers.For);
+
+// Hand-written scripts and arguments run on the server: an account without advanced mode may keep those already in
+// the presets, the defaults or the job, never bring in new ones.
+IResult? DenyAdvanced(HttpContext ctx, JobSettings? settings, JobEdit? edit = null, IEnumerable<QueueJob>? jobs = null, IEnumerable<string>? paths = null)
+{
+    if (ctx.CurrentUser().MayUseAdvanced) return null;
+    if (paths?.FirstOrDefault(AdvancedContent.IsScriptSource) is { } script)
+        return Results.Problem(AdvancedContent.Denied(new(L.T("a script as the source"), script)), statusCode: 403);
+    var allowed = queue.Presets.All.SelectMany(p => AdvancedContent.Of(p.Settings))
+        .Concat(AdvancedContent.Of(queue.Settings.Defaults))
+        .Concat((jobs ?? []).SelectMany(j => AdvancedContent.Of(j.Settings, j.Edit)));
+    return AdvancedContent.FirstNew(settings, edit, allowed) is { } item ? Results.Problem(AdvancedContent.Denied(item), statusCode: 403) : null;
+}
 
 // ---------------------------------------------------------------- state, i18n & events
 app.MapGet("/api/state", () => new StateDto(AppInfo.Version, Platform(), L.Language, Mapping.PublicSettings(queue.Settings, SettingsStore.Json), OptionsDto.Create(),
@@ -129,18 +137,25 @@ app.MapGet("/api/i18n", () => new { lang = L.Language, table = L.IsItalian() ? L
 app.MapGet("/api/events", (HttpContext ctx, CancellationToken ct) => hub.StreamAsync(ctx, ct));
 
 app.MapGet("/api/frameserver/templates", () => KnA.Core.Media.Frameserver.Templates.Select(t => new { t.Name, Kind = t.Kind.ToString(), t.Body }));
-app.MapGet("/api/info", () => new
+app.MapGet("/api/info", (HttpContext ctx) =>
 {
-    advancedAllowed, powerActionsAllowed, componentsLocked, roots = browser.Roots, writableRoots = browser.WritableRoots,
-    uploadDir = uploads.DefaultFolder, maxUploadBytes = uploads.MaxFileBytes == long.MaxValue ? (long?)null : uploads.MaxFileBytes,
-    vspipe = queue.Tools?.VsPipe, fdkaac = queue.Tools?.Fdkaac,
-    dataDirectory = queue.Store.DataDirectory, version = AppInfo.Version, platform = Platform(),
+    var user = ctx.CurrentUser();
+    var b = B(ctx);
+    return new
+    {
+        // advancedAllowed: the server's advanced settings (paths, commands), administrators only.
+        advancedAllowed = advancedAllowed && user.IsAdmin, powerActionsAllowed, componentsLocked, roots = b.Roots, writableRoots = b.WritableRoots,
+        uploadDir = uploads.DefaultFolder, maxUploadBytes = uploads.MaxFileBytes == long.MaxValue ? (long?)null : uploads.MaxFileBytes,
+        vspipe = queue.Tools?.VsPipe, fdkaac = queue.Tools?.Fdkaac,
+        dataDirectory = user.IsAdmin ? queue.Store.DataDirectory : null, version = AppInfo.Version, platform = Platform(),
+        user = new { user.Name, user.IsAdmin, advanced = user.MayUseAdvanced, user.AuthDisabled },
+    };
 });
 
 // ---------------------------------------------------------------- files
-app.MapGet("/api/browse", (string? path, bool? external, string? mode, bool? hidden) =>
+app.MapGet("/api/browse", (string? path, bool? external, string? mode, bool? hidden, HttpContext ctx) =>
 {
-    try { return Results.Ok(browser.Browse(path, mode ?? (external == true ? "external" : "video"), hidden ?? false)); }
+    try { return Results.Ok(B(ctx).Browse(path, mode ?? (external == true ? "external" : "video"), hidden ?? false)); }
     catch (UnauthorizedAccessException ex) { return Results.Problem(ex.Message, statusCode: 403); }
     catch (IOException ex) { return Results.Problem(ex.Message, statusCode: 400); }
 });
@@ -150,18 +165,18 @@ app.MapGet("/api/files/download", (string path, HttpContext ctx, CancellationTok
 app.MapGet("/api/jobs/{id:guid}/download", (Guid id, HttpContext ctx, CancellationToken ct) =>
     queue.Find(id)?.OutputPath is { } o ? Download(o, ctx, ct) : Task.FromResult(Results.NotFound()));
 
-app.MapPost("/api/files/mkdir", (FolderRequest req) =>
+app.MapPost("/api/files/mkdir", (FolderRequest req, HttpContext ctx) =>
 {
-    if (!browser.IsWritable(req.Path)) return Results.Problem(L.T("This folder is read-only for KnA."), statusCode: 403);
+    if (!B(ctx).IsWritable(req.Path)) return Results.Problem(L.T("This folder is read-only for KnA."), statusCode: 403);
     Directory.CreateDirectory(req.Path);
     return Results.Ok(new { path = Path.GetFullPath(req.Path) });
 });
 
 // ---------------------------------------------------------------- uploads (chunked, resumable)
-app.MapPost("/api/uploads", (UploadCreate req) =>
+app.MapPost("/api/uploads", (UploadCreate req, HttpContext ctx) =>
 {
     var folder = string.IsNullOrWhiteSpace(req.Folder) ? uploads.DefaultFolder : req.Folder;
-    if (!browser.IsWritable(folder)) return Results.Problem(L.T("This folder is read-only for KnA."), statusCode: 403);
+    if (!B(ctx).IsWritable(folder)) return Results.Problem(L.T("This folder is read-only for KnA."), statusCode: 403);
     var u = uploads.Create(req.Name, req.Size, folder);
     return Results.Ok(new { u.Id, u.Offset, u.Name, chunk = 16 << 20 });
 });
@@ -174,8 +189,9 @@ app.MapPut("/api/uploads/{id}", async (string id, long offset, HttpContext ctx, 
     return ok ? Results.Ok(new { offset = current }) : Results.Json(new { offset = current }, statusCode: 409);
 });
 app.MapDelete("/api/uploads/{id}", (string id) => { uploads.Cancel(id); return Results.Ok(); });
-app.MapPost("/api/uploads/{id}/complete", async (string id, UploadComplete req, CancellationToken ct) =>
+app.MapPost("/api/uploads/{id}/complete", async (string id, UploadComplete req, HttpContext ctx, CancellationToken ct) =>
 {
+    if (req.Enqueue && DenyAdvanced(ctx, req.Settings, paths: [uploads.Get(id)?.Name ?? ""]) is { } denied) return denied;
     var path = uploads.Complete(id);
     int added = 0;
     var target = req.AttachTo is { } jid ? queue.Find(jid)
@@ -199,16 +215,17 @@ app.MapPost("/api/uploads/{id}/complete", async (string id, UploadComplete req, 
 });
 
 // ---------------------------------------------------------------- smart drag & drop (server paths)
-app.MapPost("/api/drop/classify", (DropRequest req) =>
+app.MapPost("/api/drop/classify", (DropRequest req, HttpContext ctx) =>
 {
-    if (req.Paths.FirstOrDefault(p => !browser.IsAllowed(p)) is { } bad)
+    if (req.Paths.FirstOrDefault(p => !B(ctx).IsAllowed(p)) is { } bad)
         return Results.Problem(L.T("Outside the allowed media roots: {0}", bad), statusCode: 403);
     return Results.Ok(DropClassifier.Classify(req.Paths, queue, req.TargetJob));
 });
-app.MapPost("/api/drop/apply", async (DropRequest req, CancellationToken ct) =>
+app.MapPost("/api/drop/apply", async (DropRequest req, HttpContext ctx, CancellationToken ct) =>
 {
-    if (req.Paths.FirstOrDefault(p => !browser.IsAllowed(p)) is { } bad)
+    if (req.Paths.FirstOrDefault(p => !B(ctx).IsAllowed(p)) is { } bad)
         return Results.Problem(L.T("Outside the allowed media roots: {0}", bad), statusCode: 403);
+    if (DenyAdvanced(ctx, req.Settings, paths: req.Paths) is { } denied) return denied;
     var plan = DropClassifier.Classify(req.Paths, queue, req.TargetJob);
     var r = await DropClassifier.ApplyAsync(plan, queue, req.Settings ?? queue.Settings.Defaults, ct);
     if (r.Presets > 0) hub.Broadcast("presets", queue.Presets.All);
@@ -233,8 +250,8 @@ app.MapGet("/api/ai/setup/guide", (string provider) =>
     return Results.Ok(new { steps = KnA.Core.Ai.AiSetup.Install(provider), needsKey = KnA.Core.Ai.AiSetup.NeedsKey(provider), suggestedText = text, suggestedVision = vision,
         url = (KnA.Core.Ai.AiSettings.Providers.FirstOrDefault(p => p.Id == provider)?.DefaultUrl) });
 });
-app.MapPost("/api/ai/setup/check", async (KnA.Core.Ai.AiSettings ai, CancellationToken ct) => Results.Ok(await KnA.Core.Ai.AiSetup.CheckAsync(WithStoredKey(ai), ct)));
-app.MapPost("/api/ai/setup/test", async (AiTestRequest req, CancellationToken ct) => Results.Ok(new { error = await KnA.Core.Ai.AiSetup.TestAsync(WithStoredKey(req.Ai), req.Model, ct) }));
+app.MapPost("/api/ai/setup/check", async (KnA.Core.Ai.AiSettings ai, CancellationToken ct) => Results.Ok(await KnA.Core.Ai.AiSetup.CheckAsync(WithStoredKey(ai), ct))).AdminOnly();
+app.MapPost("/api/ai/setup/test", async (AiTestRequest req, CancellationToken ct) => Results.Ok(new { error = await KnA.Core.Ai.AiSetup.TestAsync(WithStoredKey(req.Ai), req.Model, ct) })).AdminOnly();
 app.MapPost("/api/ai/suggest", async (AiSuggestRequest req, CancellationToken ct) =>
 {
     var media = req.JobId is { } jid ? queue.Find(jid)?.Media : null;
@@ -265,10 +282,10 @@ app.MapGet("/api/ai/runtime", async (CancellationToken ct) =>
     var r = await KnA.Core.Processing.ProcessRunner.RunAsync(py, [script, "--check"], timeout: TimeSpan.FromMinutes(1), ct: ct);
     object? info = KnA.Core.Ai.LlmClient.ExtractJson(r.StdOut);
     return Results.Ok(new { python = py, script, info, error = r.ExitCode == 0 ? null : r.StdErr.Trim() });
-});
+}).AdminOnly();
 
 // ---------------------------------------------------------------- watch folders
-app.MapGet("/api/watch", () => new { folders = watch.Folders, status = watch.Status, doneFolder = WatchFolderService.DoneFolderName });
+app.MapGet("/api/watch", () => new { folders = watch.Folders, status = watch.Status, doneFolder = WatchFolderService.DoneFolderName }).AdminOnly();
 app.MapPut("/api/watch", (List<WatchFolder> folders) =>
 {
     foreach (var f in folders)
@@ -280,21 +297,27 @@ app.MapPut("/api/watch", (List<WatchFolder> folders) =>
     }
     watch.Save(folders);
     return Results.Ok(new { folders = watch.Folders, status = watch.Status });
-});
-app.MapPost("/api/watch/{id}/scan", (string id) => { watch.ScanNow(id); return Results.Ok(); });
+}).AdminOnly();
+app.MapPost("/api/watch/{id}/scan", (string id) => { watch.ScanNow(id); return Results.Ok(); }).AdminOnly();
 
 // ---------------------------------------------------------------- jobs
-app.MapPost("/api/jobs", (AddJobsRequest req) =>
+app.MapPost("/api/jobs", (AddJobsRequest req, HttpContext ctx) =>
 {
-    var denied = req.Paths.Where(p => !browser.IsAllowed(p)).ToList();
+    var denied = req.Paths.Where(p => !B(ctx).IsAllowed(p)).ToList();
     if (denied.Count > 0) return Results.Problem(L.T("Outside the allowed media roots: {0}", denied[0]), statusCode: 403);
+    if (DenyAdvanced(ctx, req.Settings, paths: req.Paths) is { } noAdvanced) return noAdvanced;
     var added = queue.AddPaths(req.Paths, req.Settings ?? new JobSettings(), req.Extensions);
     return Results.Ok(new { added = added.Count });
 });
 app.MapPost("/api/jobs/remove", (IdsRequest req) => { queue.Remove(req.Ids); return Results.Ok(); });
 app.MapPost("/api/jobs/clear", (ClearRequest req) => { queue.RemoveByStatus([.. req.Statuses]); return Results.Ok(); });
 app.MapPost("/api/jobs/reset", (IdsRequest req) => { queue.Reset(req.Ids); return Results.Ok(); });
-app.MapPost("/api/jobs/settings", (UpdateJobsRequest req) => { queue.UpdateSettings(req.Ids, _ => req.Settings); return Results.Ok(); });
+app.MapPost("/api/jobs/settings", (UpdateJobsRequest req, HttpContext ctx) =>
+{
+    if (DenyAdvanced(ctx, req.Settings, jobs: req.Ids.Select(queue.Find).OfType<QueueJob>()) is { } denied) return denied;
+    queue.UpdateSettings(req.Ids, _ => req.Settings);
+    return Results.Ok();
+});
 app.MapPost("/api/jobs/{id:guid}/move", (Guid id, MoveRequest req) => { queue.Move(id, req.Delta); return Results.Ok(); });
 app.MapGet("/api/jobs/{id:guid}/log", (Guid id) => queue.Find(id) is { } j ? Results.Text(j.Log) : Results.NotFound());
 app.MapGet("/api/jobs/{id:guid}/command", async (Guid id) =>
@@ -320,13 +343,13 @@ app.MapPost("/api/tools/options", async (ParameterOptionsRequest req, Cancellati
         categories = KnA.Core.Tools.ToolHelp.Categories.Select(c => new { value = c, label = L.T(c) }) });
 });
 // Editor: the profile's automatic choices written into the fields (on open, after a profile or preset import).
-app.MapPost("/api/jobs/{id:guid}/materialize", async (Guid id, MaterializeRequest req, CancellationToken ct) =>
+app.MapPost("/api/jobs/{id:guid}/materialize", async (Guid id, MaterializeRequest req, HttpContext ctx, CancellationToken ct) =>
 {
     var j = queue.Find(id) ?? throw new KeyNotFoundException();
     var settings = req.Settings ?? j.Settings;
     var edit = req.Edit ?? j.Edit;
     var files = edit.ExternalFiles.Concat(edit.Tracks?.Select(t => t.File) ?? []).Distinct().Where(f => f != j.SourcePath && KnA.Core.Media.Frameserver.KindOf(f) == KnA.Core.Media.FrameserverKind.None);
-    if (files.FirstOrDefault(f => !browser.IsAllowed(f)) is { } bad)
+    if (files.FirstOrDefault(f => !B(ctx).IsAllowed(f)) is { } bad)
         return Results.Problem(L.T("Outside the allowed media roots: {0}", bad), statusCode: 403);
     if (req.Profile is { } kind) (settings, edit) = EditorModel.ApplyProfile(settings, edit, kind);
     if (req.Preset is { Length: > 0 } name)
@@ -349,7 +372,7 @@ app.MapPost("/api/gpu/benchmark", async (GpuBenchmarkRequest req, CancellationTo
 {
     try { return Results.Ok(await KnA.Core.Encoding.GpuBenchmark.RunAsync(queue, req.Backend, req.Codec, null, ct)); }
     catch (InvalidOperationException ex) { return Results.Problem(ex.Message, statusCode: 400); }
-});
+}).AdminOnly();
 app.MapPost("/api/jobs/{id:guid}/rate", (Guid id, SizeRequest req) =>
 {
     var j = queue.Find(id) ?? throw new KeyNotFoundException();
@@ -357,8 +380,10 @@ app.MapPost("/api/jobs/{id:guid}/rate", (Guid id, SizeRequest req) =>
     return Results.Ok(EditorModel.ExplicitRate(queue, s, j.Media?.PrimaryVideo, s.Container ?? s.EffectiveContainer));
 });
 // Editor: a preset from this file (per-track choices become the job-wide ones for other files).
-app.MapPost("/api/jobs/{id:guid}/preset", (Guid id, PresetFromJobRequest req) =>
+app.MapPost("/api/jobs/{id:guid}/preset", (Guid id, PresetFromJobRequest req, HttpContext ctx) =>
 {
+    if (DenyPresetChange(ctx, req.Name) is { } locked) return locked;
+    if (DenyAdvanced(ctx, req.Settings, req.Edit, jobs: queue.Find(id) is { } pj ? [pj] : null) is { } denied) return denied;
     var saved = queue.Presets.Save(new Preset(req.Name, null, EditorModel.ForPreset(req.Settings, req.Edit) with { PresetName = req.Name }));
     hub.Broadcast("presets", queue.Presets.All);
     return Results.Ok(saved);
@@ -391,12 +416,12 @@ app.MapPost("/api/jobs/{id:guid}/size", (Guid id, SizeRequest req) =>
         : Results.Ok(new { text = (string?)null, VideoKbps = 0, TooSmall = false });
 });
 // Subtitle OCR of one picture track (PGS) into an SRT next to the source, outside the queue.
-app.MapPost("/api/jobs/{id:guid}/ocr", async (Guid id, OcrRequest req, CancellationToken ct) =>
+app.MapPost("/api/jobs/{id:guid}/ocr", async (Guid id, OcrRequest req, HttpContext ctx, CancellationToken ct) =>
 {
     var j = queue.Find(id) ?? throw new KeyNotFoundException();
-    if (!browser.IsAllowed(req.File)) return Results.Problem(L.T("Outside the allowed media roots: {0}", req.File), statusCode: 403);
+    if (!B(ctx).IsAllowed(req.File)) return Results.Problem(L.T("Outside the allowed media roots: {0}", req.File), statusCode: 403);
     var dir = Path.GetDirectoryName(j.SourcePath) ?? "";
-    if (!browser.IsWritable(dir)) return Results.Problem(L.T("Outside the allowed media roots: {0}", dir), statusCode: 403);
+    if (!B(ctx).IsWritable(dir)) return Results.Problem(L.T("Outside the allowed media roots: {0}", dir), statusCode: 403);
     try
     {
         var r = await queue.OcrTrackAsync(j, req.File, req.Stream, req.Language, null, null, ct);
@@ -406,10 +431,10 @@ app.MapPost("/api/jobs/{id:guid}/ocr", async (Guid id, OcrRequest req, Cancellat
 });
 // ---------------------------------------------------------------- OCR editor (Subtitle Edit's OCR window, in the browser)
 object OcrLineDto(KnA.Core.Ocr.OcrLine l) => new { l.Index, start = l.Start.TotalSeconds, end = l.End.TotalSeconds, l.Text, l.Confidence, l.Italic, l.Forced, l.Edited };
-app.MapPost("/api/ocr/sessions", async (OcrOpenRequest req, CancellationToken ct) =>
+app.MapPost("/api/ocr/sessions", async (OcrOpenRequest req, HttpContext ctx, CancellationToken ct) =>
 {
     var j = queue.Find(req.JobId) ?? throw new KeyNotFoundException();
-    if (!browser.IsAllowed(req.File)) return Results.Problem(L.T("Outside the allowed media roots: {0}", req.File), statusCode: 403);
+    if (!B(ctx).IsAllowed(req.File)) return Results.Problem(L.T("Outside the allowed media roots: {0}", req.File), statusCode: 403);
     var s = await KnA.Core.Ocr.OcrSession.OpenAsync(queue, j, req.File, req.Stream, ct, req.Copy);
     queue.OcrSessions[s.Id] = s;
     return Results.Ok(new { s.Id, count = s.Lines.Count, s.Language, s.Codec, options = queue.Settings.Ocr });
@@ -440,11 +465,11 @@ app.MapPost("/api/ocr/{sid:guid}/replace", (Guid sid, OcrReplaceRequest req) =>
     try { return Results.Ok(new { changed = s.Replace(req.Find, req.Replace ?? "", req.Regex, false) }); }
     catch (ArgumentException ex) { return Results.Problem(ex.Message, statusCode: 400); }
 });
-app.MapPost("/api/ocr/{sid:guid}/save", async (Guid sid, bool? use, CancellationToken ct) =>
+app.MapPost("/api/ocr/{sid:guid}/save", async (Guid sid, bool? use, HttpContext ctx, CancellationToken ct) =>
 {
     if (!queue.OcrSessions.TryGetValue(sid, out var s)) return Results.NotFound();
     var path = s.DefaultSrtPath();
-    if (!browser.IsWritable(Path.GetDirectoryName(path) ?? "")) return Results.Problem(L.T("Outside the allowed media roots: {0}", path), statusCode: 403);
+    if (!B(ctx).IsWritable(Path.GetDirectoryName(path) ?? "")) return Results.Problem(L.T("Outside the allowed media roots: {0}", path), statusCode: 403);
     if (use == true) await s.UseInJobAsync(queue, path, ct); else await s.SaveAsync(path, ct);
     return Results.Ok(new { path });
 });
@@ -461,14 +486,15 @@ app.MapPost("/api/jobs/{id:guid}/estimate", async (Guid id, SizeRequest req, Can
     }
     catch (InvalidOperationException ex) { return Results.Ok(new { text = ex.Message, Bytes = 0L }); }
 });
-app.MapPut("/api/jobs/{id:guid}/edit", async (Guid id, EditRequest req, CancellationToken ct) =>
+app.MapPut("/api/jobs/{id:guid}/edit", async (Guid id, EditRequest req, HttpContext ctx, CancellationToken ct) =>
 {
     var j = queue.Find(id) ?? throw new KeyNotFoundException();
     var files = req.Edit.ExternalFiles.Concat(req.Edit.Tracks?.Select(t => t.File) ?? []).Distinct().Where(f => f != j.SourcePath);
-    if (files.FirstOrDefault(f => !browser.IsAllowed(f)) is { } bad)
+    if (files.FirstOrDefault(f => !B(ctx).IsAllowed(f)) is { } bad)
         return Results.Problem(L.T("Outside the allowed media roots: {0}", bad), statusCode: 403);
-    if (req.Edit.OutputFolder is { Length: > 0 } of && !browser.IsWritable(of))
+    if (req.Edit.OutputFolder is { Length: > 0 } of && !B(ctx).IsWritable(of))
         return Results.Problem(L.T("Outside the allowed media roots: {0}", of), statusCode: 403);
+    if (DenyAdvanced(ctx, req.Settings, req.Edit, jobs: [j], paths: files) is { } denied) return denied;
     var a = await queue.SetEditAsync(id, req.Edit, ct, req.Settings);
     return Results.Ok(AnalysisDto.From(a, j.SourcePath));
 });
@@ -504,8 +530,14 @@ app.MapPost("/api/queue/resume", () => { queue.Resume(); return Results.Ok(); })
 
 // ---------------------------------------------------------------- presets & wizard
 app.MapGet("/api/presets", () => queue.Presets.All);
-app.MapPost("/api/presets", (Preset p) =>
+// Presets are shared until each user gets their own: users add new ones, administrators also replace and delete.
+IResult? DenyPresetChange(HttpContext ctx, string name) =>
+    !ctx.CurrentUser().IsAdmin && queue.Presets.Get(name) is not null
+        ? Results.Problem(L.T("A preset named \"{0}\" already exists: only an administrator can replace it.", name), statusCode: 403) : null;
+app.MapPost("/api/presets", (Preset p, HttpContext ctx) =>
 {
+    if (DenyPresetChange(ctx, p.Name) is { } locked) return locked;
+    if (DenyAdvanced(ctx, p.Settings) is { } denied) return denied;
     var saved = queue.Presets.Save(p);
     hub.Broadcast("presets", queue.Presets.All);
     return Results.Ok(saved);
@@ -515,7 +547,7 @@ app.MapDelete("/api/presets/{name}", (string name) =>
     var ok = queue.Presets.Delete(name);
     hub.Broadcast("presets", queue.Presets.All);
     return ok ? Results.Ok() : Results.NotFound();
-});
+}).AdminOnly();
 // Preset wizard: the questions that apply to the answers so far (with their defaults), and the resulting settings.
 app.MapPost("/api/presets/wizard/steps", (Dictionary<string, string> answers) =>
 {
@@ -538,9 +570,18 @@ app.MapPost("/api/presets/wizard/steps", (Dictionary<string, string> answers) =>
 app.MapPost("/api/presets/wizard", (Dictionary<string, string> answers) => PresetWizard.Build(answers, queue.Settings.Capabilities));
 
 // ---------------------------------------------------------------- settings
-app.MapPut("/api/settings", (SettingsUpdate u) =>
+app.MapPut("/api/settings", (SettingsUpdate u, HttpContext ctx) =>
 {
     var s = queue.Settings;
+    // Users: the defaults of the quick form and the theme; everything else is the administrators' (server-wide).
+    if (!ctx.CurrentUser().IsAdmin)
+    {
+        if (u.Defaults is not null && DenyAdvanced(ctx, u.Defaults) is { } denied) return denied;
+        if (u.Defaults is not null) s.Defaults = u.Defaults;
+        if (u.Theme is not null) s.Theme = u.Theme;
+        queue.SaveSettings();
+        return Results.Ok(new { settings = Mapping.PublicSettings(s, SettingsStore.Json), tools = Mapping.Tools(queue), advancedAllowed = false });
+    }
     if (u.OutputDirectory is not null)
     {
         if (u.OutputDirectory.Length > 0 && !browser.IsWritable(u.OutputDirectory))
@@ -601,7 +642,7 @@ app.MapPost("/api/hardware/detect", async (CancellationToken ct) =>
     var progress = new Progress<string>(line => hub.Broadcast("detect", new { line }));
     var caps = await queue.DetectHardwareAsync(progress, ct);
     return caps is null ? Results.Problem(L.T("FFmpeg was not found. Configure it in Settings."), statusCode: 409) : Results.Ok(caps);
-});
+}).AdminOnly();
 
 app.MapGet("/api/updates", async (CancellationToken ct) =>
 {
@@ -625,7 +666,7 @@ app.MapGet("/api/updates", async (CancellationToken ct) =>
     {
         return Results.Problem(L.T("Cannot reach GitHub: {0}", ex.Message), statusCode: 502);
     }
-});
+}).AdminOnly();
 
 app.MapGet("/api/components", async (CancellationToken ct) =>
 {
@@ -634,7 +675,7 @@ app.MapGet("/api/components", async (CancellationToken ct) =>
     {
         return Results.Ok(await queue.Components.CheckAsync(queue.Tools, online: false, ct));
     }
-});
+}).AdminOnly();
 
 app.MapPost("/api/components/{id}/install", async (string id, CancellationToken ct) =>
 {
@@ -654,7 +695,7 @@ app.MapPost("/api/components/{id}/install", async (string id, CancellationToken 
     queue.RefreshTools();
     if (id == "ffmpeg") await queue.DetectHardwareAsync(new Progress<string>(l => hub.Broadcast("detect", new { line = l })), ct);
     return Results.Ok(await queue.Components.CheckAsync(queue.Tools, online: false, ct));
-});
+}).AdminOnly();
 
 // ---------------------------------------------------------------- lifecycle
 queue.QueueCompleted += action =>
@@ -671,8 +712,10 @@ app.Lifetime.ApplicationStarted.Register(async () =>
     log.LogInformation("Data directory: {Dir}", queue.Store.DataDirectory);
     log.LogInformation("Media roots: {Roots}", string.Join(", ", browser.Roots));
     log.LogInformation("FFmpeg: {Ffmpeg}", queue.Tools?.Ffmpeg ?? "NOT FOUND");
-    if (string.IsNullOrEmpty(password) && browser.Roots.Any(r => r == Path.GetPathRoot(r)))
-        log.LogWarning("The whole file system is reachable from the browser and no password is set: set KNA_PASSWORD or KNA_MEDIA_ROOTS.");
+    if (Auth.Disabled && browser.Roots.Any(r => r == Path.GetPathRoot(r)))
+        log.LogWarning("The whole file system is reachable from the browser and accounts are switched off (KNA_AUTH=off): set KNA_MEDIA_ROOTS.");
+    if (accounts.SetupRequired && !Auth.Disabled)
+        log.LogWarning("No account yet: the first person who opens {Url} creates the administrator.", app.Urls.FirstOrDefault());
     if (queue.HardwareTestNeeded() is { } why)
     {
         log.LogInformation("Detecting hardware encoders ({Why})…", why);
@@ -732,6 +775,7 @@ static bool Env(string name) => AppEnv.Flag(name.StartsWith("KNA_") ? name[4..] 
 
 async Task<IResult> Download(string path, HttpContext ctx, CancellationToken ct)
 {
+    var browser = B(ctx);
     if (!browser.IsAllowed(path)) return Results.Problem(L.T("Outside the allowed media roots: {0}", path), statusCode: 403);
     if (File.Exists(path))
         return Results.File(path, "application/octet-stream", Path.GetFileName(path), enableRangeProcessing: true);
@@ -755,6 +799,49 @@ async Task<IResult> Download(string path, HttpContext ctx, CancellationToken ct)
         }
     }
     return Results.Empty;
+}
+
+static int ResetPassword(string name)
+{
+    var dataStore = new SettingsStore();
+    var pw = AppEnv.Get("NEW_PASSWORD");
+    if (pw is null)
+    {
+        Console.Write($"New password for \"{name}\": ");
+        pw = ReadSecret();
+        Console.Write("Again: ");
+        if (ReadSecret() != pw) { Console.Error.WriteLine("The two passwords differ."); return 1; }
+    }
+    try
+    {
+        var accountStore = new AccountStore(dataStore.DataDirectory);
+        var a = accountStore.ResetPassword(name, pw ?? "");
+        // Run as root (sudo, docker exec): give the files back to the owner of the data folder, the service user.
+        if (!OperatingSystem.IsWindows() && Environment.UserName == "root")
+            try
+            {
+                using var chown = Process.Start(new ProcessStartInfo("chown", ["--reference=" + dataStore.DataDirectory, accountStore.AccountsPath, accountStore.SessionsPath])
+                    { RedirectStandardError = true });
+                chown?.WaitForExit(10_000);
+            }
+            catch (System.ComponentModel.Win32Exception) { }
+        Console.WriteLine($"Password of \"{a.Name}\" ({a.Role}) set; its sessions were signed out. Data folder: {dataStore.DataDirectory}");
+        return 0;
+    }
+    catch (ArgumentException ex) { Console.Error.WriteLine(ex.Message); return 1; }
+
+    static string ReadSecret()
+    {
+        if (Console.IsInputRedirected) return Console.ReadLine() ?? "";
+        var sb = new StringBuilder();
+        while (true)
+        {
+            var k = Console.ReadKey(intercept: true);
+            if (k.Key == ConsoleKey.Enter) { Console.WriteLine(); return sb.ToString(); }
+            if (k.Key == ConsoleKey.Backspace) { if (sb.Length > 0) sb.Length--; }
+            else if (!char.IsControl(k.KeyChar)) sb.Append(k.KeyChar);
+        }
+    }
 }
 
 static bool IsContainer() => File.Exists("/.dockerenv") || Environment.GetEnvironmentVariable("DOTNET_RUNNING_IN_CONTAINER") == "true";

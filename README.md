@@ -356,6 +356,28 @@ dotnet run --project src/KnA.Server -c Release -- --open
 
 Frameserver decoding happens in the script, so it does not use hardware decoding; the encoder can still be a GPU one.
 
+## Accounts (web server)
+
+Every person signs in with their own account. At the first start KnA asks to create the **administrator**; the
+administrator then creates, edits, disables and removes the other accounts in **Settings → Accounts**.
+
+- **Roles**: *administrators* manage the server (settings, components, watch folders, accounts); *users* encode.
+  For each user: the **allowed folders** (inside the server's media roots; empty = all of them) and **advanced mode**
+  (hand-written VapourSynth/AviSynth scripts, extra encoder and tool arguments, custom FFmpeg filters: they run on the
+  server, so they are off for new users; scripts and arguments already in the presets or the defaults keep working).
+- **Security**: passwords are stored as salted PBKDF2-SHA256 hashes (600,000 iterations); the browser keeps an
+  HttpOnly, SameSite=Strict session cookie (Secure over HTTPS; "stay signed in" = 30 days, otherwise 12 idle hours);
+  after 5 wrong passwords each further attempt waits twice as long (per address and per user name, up to 15 minutes).
+  Changing a password signs the account out on its other devices.
+- **Scripts and curl** keep using HTTP Basic: `curl -u name:password http://server:8585/api/...`.
+- **From `KNA_PASSWORD`** (older installs, Docker, Linux and Windows services): at the first start of this version the
+  password becomes the administrator **`admin`** (`KNA_ADMIN_USER` to choose another name); HTTP Basic with any user
+  name and that password still works until the password is changed. After that the variable is not used any more.
+- **Lost password**: `sudo kna-reset-password` (Linux installer, Proxmox container), `docker exec -it kna dotnet /app/kna-server.dll
+  --reset-password admin` (Docker) or `kna-server --reset-password admin` with the service's `KNA_DATA_DIR` asks for a new
+  one and re-enables the account, also while KnA is running.
+- `KNA_AUTH=off` switches accounts off (everybody is an administrator): only on a trusted network.
+
 ## Environment variables
 
 | Variable | Use |
@@ -365,8 +387,9 @@ Frameserver decoding happens in the script, so it does not use hardware decoding
 | `KNA_MEDIA_ROOTS` | read/write roots, `;` separated (default: the whole file system; `/media` in Docker) |
 | `KNA_READONLY_ROOTS` | read-only roots |
 | `KNA_UPLOAD_DIR` · `KNA_MAX_UPLOAD_GB` | upload destination and limit |
-| `KNA_PASSWORD` | HTTP Basic password of the web UI |
-| `KNA_ALLOW_ADVANCED` | lets the browser edit FFmpeg paths, custom builds, extra arguments, Python |
+| `KNA_PASSWORD` · `KNA_ADMIN_USER` | first start only: creates the administrator (default name `admin`) with this password |
+| `KNA_AUTH` | `off` = no accounts, everybody is an administrator (trusted networks only) |
+| `KNA_ALLOW_ADVANCED` | lets administrators edit FFmpeg paths, custom builds, extra arguments, Python from the browser |
 | `KNA_FFMPEG` · `KNA_FDKAAC` · `KNA_VSPIPE` · `KNA_AI_SCRIPT` | program paths |
 | `KNA_VULKAN_DEVICE` | Vulkan GPU for libplacebo (index or name part; `llvmpipe` = CPU) |
 | `KNA_URLS` · `KNA_LANG` · `KNA_LOCK_COMPONENTS` · `KNA_ALLOW_POWER_ACTIONS` | as before |

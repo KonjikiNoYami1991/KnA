@@ -4,6 +4,7 @@ import { renderSettingsForm, cloneSettings } from "./form.js";
 import { openEditor, editorJobChanged } from "./editor.js";
 import { openFiles, pickFiles } from "./files.js";
 import { openAssistant, openAiSetup } from "./ai.js";
+import { signIn, initUserUi, loadAccounts } from "./accounts.js";
 
 // ---------------------------------------------------------------- theme
 function applyTheme(theme) {
@@ -394,6 +395,7 @@ $("#s-tabs").onclick = e => {
   $$("#s-tabs button").forEach(x => x.classList.toggle("on", x === b));
   $$("#dlg-settings [data-pane]").forEach(p => p.hidden = p.dataset.pane !== b.dataset.tab);
   if (b.dataset.tab === "updates") loadComponents();
+  if (b.dataset.tab === "accounts") loadAccounts().catch(e => toast(e.message, "err"));
 };
 function renderToolsBox(info) {
   const tl = state.tools;
@@ -660,10 +662,12 @@ async function load(first = true) {
   $("#jobs").innerHTML = "";
   renderForm(); renderHardware(); renderQueue();
   if (first && !s.tools.ffmpeg) toast(t("FFmpeg not found — open Settings."), "err");
-  if (first && s.settings.checkUpdatesOnStart) checkUpdates(true);
+  if (first && s.settings.checkUpdatesOnStart && state.user?.isAdmin) checkUpdates(true);
 }
 
 try { applyTheme(localStorage.getItem("kna-theme") ?? "System"); } catch { /* ignore */ }
 await loadI18n();
 translatePage();
+try { initUserUi(await signIn()); }
+catch (e) { toast(t("Cannot reach the KnA server: {0}", e.message), "err"); }
 load().then(connect).catch(e => toast(t("Cannot reach the KnA server: {0}", e.message), "err"));

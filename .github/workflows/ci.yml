@@ -50,7 +50,7 @@ jobs:
           mkdir -p /tmp/kna/config /tmp/kna/media
           docker run -d --name kna -p 8585:8585 \
             --mount type=bind,src=/tmp/kna/config,dst=/config --mount type=bind,src=/tmp/kna/media,dst=/media kna
-          for i in $(seq 1 60); do curl -fsS http://127.0.0.1:8585/api/info && break; sleep 2; done
+          for i in $(seq 1 60); do curl -fsS http://127.0.0.1:8585/api/auth/status && break; sleep 2; done
           docker exec kna ffmpeg -hide_banner -version | head -1
           docker exec kna /app/tools/fdkaac --help 2>&1 | head -1
           docker inspect kna --format '{{json .Mounts}}' | grep -v '"Type":"volume"'

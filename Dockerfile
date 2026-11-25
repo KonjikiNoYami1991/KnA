@@ -144,5 +144,5 @@ RUN mkdir -p /config /media
 EXPOSE 8585
 WORKDIR /app
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s \
-  CMD ["bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/8585 && printf 'GET /api/info HTTP/1.0\\r\\n\\r\\n' >&3 && grep -q 200 <&3"]
+  CMD ["bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/8585 && printf 'GET /api/auth/status HTTP/1.0\\r\\n\\r\\n' >&3 && grep -q 200 <&3"]
 ENTRYPOINT ["/usr/local/bin/kna-entrypoint"]

@@ -27,7 +27,8 @@ services:
       # Synology: id <user> over SSH). Remove both to run as root.
       PUID: "1000"
       PGID: "1000"
-      # Optional HTTP Basic password for the web UI (any user name). Strongly recommended.
+      # Password of the administrator account "admin", created at the first start (otherwise the first person who opens
+      # KnA creates it). Afterwards accounts and passwords are managed in Settings → Accounts.
       # KNA_PASSWORD: "change-me"
       # Read/write roots (browse, upload, outputs), ';' separated: the container side of the bind mounts below.
       KNA_MEDIA_ROOTS: /media

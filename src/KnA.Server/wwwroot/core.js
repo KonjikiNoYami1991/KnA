@@ -7,7 +7,7 @@ export const state = {
   options: null, settings: null, tools: null, queue: null, presets: [],
   jobs: new Map(), order: [], selected: new Set(), form: null,
   browse: { path: null, selected: new Set(), external: false, onPick: null },
-  advancedAllowed: false, powerActionsAllowed: false,
+  advancedAllowed: false, powerActionsAllowed: false, user: null,
 };
 
 // ---------------------------------------------------------------- i18n
@@ -41,6 +41,8 @@ export async function api(method, url, body) {
     headers: { ...(body ? { "Content-Type": "application/json" } : {}), "Accept-Language": browserLang },
     body: body ? JSON.stringify(body) : undefined,
   });
+  // Signed out (session expired, password changed elsewhere): back to the sign-in screen.
+  if (res.status === 401 && !url.startsWith("/api/auth/")) { location.reload(); return new Promise(() => {}); }
   if (!res.ok) {
     let msg = res.statusText;
     try { const j = await res.json(); msg = j.detail || j.title || msg; } catch { /* not json */ }

@@ -4,6 +4,24 @@
 
 ### English
 
+**User accounts on the web server** (replace the single shared password)
+- At the first start KnA asks to **create the administrator**; administrators create, edit, disable and remove the
+  other accounts in Settings → Accounts, and can sign an account out on every device.
+- **Roles**: administrators manage the server (settings, components, updates, watch folders, hardware test, accounts);
+  users encode. Per user: **allowed folders** (inside the server's media roots, for browsing, uploads, downloads and
+  jobs) and **advanced mode** (hand-written scripts, extra encoder / tool arguments, custom FFmpeg filters, a script as
+  the source: off for new users; what the presets and defaults already contain keeps working).
+- **Security**: passwords stored as salted PBKDF2-SHA256 hashes (600,000 iterations, upgraded at sign-in when the cost
+  rises); HttpOnly, SameSite=Strict session cookies (Secure over HTTPS), of which only a SHA-256 is stored; "stay
+  signed in" for 30 days, otherwise 12 idle hours; brute-force throttling per address and per user name (5 free
+  attempts, then 2 s, 4 s, 8 s… up to 15 min, before any hash is computed); a password change signs the other devices
+  out; account files readable only by the service user.
+- **Migration from `KNA_PASSWORD`** (Docker, Linux and Windows services): the password becomes the administrator
+  `admin` (`KNA_ADMIN_USER`); HTTP Basic with any user name and that password keeps working for scripts until it is
+  changed. Lost password: `kna-reset-password` (Linux), `kna-server --reset-password NAME`, also while KnA runs.
+  `KNA_AUTH=off` keeps an install without accounts. The Docker health check and the installers' checks no longer need
+  a password.
+
 **Fixes**
 - NVEncC / QSVEncC / VCEEncC with FFmpeg decoding: the size shown (and the final size estimated from it) was the raw
   frames sent to the encoder (~600 Mb/s at 1080p: a "394 GB" film); it is now the encoded file.
@@ -205,6 +223,25 @@
   (deploy/install-windows-server.ps1).
 
 ### Italiano
+
+**Account utente nel server web** (al posto dell'unica password condivisa)
+- Al primo avvio KnA chiede di **creare l'amministratore**; gli amministratori creano, modificano, disattivano ed
+  eliminano gli altri account in Impostazioni → Account, e possono disconnettere un account su tutti i dispositivi.
+- **Ruoli**: gli amministratori gestiscono il server (impostazioni, componenti, aggiornamenti, cartelle monitorate,
+  test hardware, account); gli utenti codificano. Per utente: **cartelle consentite** (dentro le radici del server, per
+  sfogliare, caricare, scaricare e codificare) e **modalità avanzata** (script scritti a mano, argomenti extra di
+  encoder / programmi, filtri FFmpeg personalizzati, uno script come sorgente: spenta per i nuovi utenti; ciò che preset
+  e predefiniti già contengono continua a funzionare).
+- **Sicurezza**: password salvate come hash PBKDF2-SHA256 con salt (600.000 iterazioni, aggiornati all'accesso se il
+  costo aumenta); cookie di sessione HttpOnly, SameSite=Strict (Secure in HTTPS), di cui si salva solo lo SHA-256;
+  "resta connesso" per 30 giorni, altrimenti 12 ore di inattività; limite ai tentativi per indirizzo e per nome utente
+  (5 tentativi liberi, poi 2 s, 4 s, 8 s… fino a 15 min, prima di calcolare qualsiasi hash); cambiare password
+  disconnette gli altri dispositivi; file degli account leggibili solo dall'utente del servizio.
+- **Migrazione da `KNA_PASSWORD`** (Docker, servizi Linux e Windows): la password diventa quella dell'amministratore
+  `admin` (`KNA_ADMIN_USER`); HTTP Basic con qualsiasi nome utente e quella password continua a funzionare per gli
+  script finché non viene cambiata. Password persa: `kna-reset-password` (Linux), `kna-server --reset-password NOME`,
+  anche con KnA in esecuzione. `KNA_AUTH=off` mantiene un'installazione senza account. L'health check Docker e i
+  controlli degli installer non richiedono più una password.
 
 **Correzioni**
 - NVEncC / QSVEncC / VCEEncC con decodifica FFmpeg: la dimensione mostrata (e quella finale stimata) era dei fotogrammi

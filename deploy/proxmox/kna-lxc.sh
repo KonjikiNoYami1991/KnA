@@ -629,7 +629,7 @@ edit_kna() {
     [[ $v =~ ^[0-9]+$ ]] && ((v >= 1 && v <= 65535)) && { KNA_PORT=$v; break; }; oops "1 – 65535"
   done
   local nopw=(); [[ -n ${KNA_PASSWORD:-} ]] || nopw=(--defaultno)
-  if wt "${nopw[@]}" --yesno "$(t "Protect the web UI with a password?" "Proteggere l'interfaccia web con una password?")" 8 60; then
+  if wt "${nopw[@]}" --yesno "$(t "Choose the administrator's password (user admin) now?" "Scegliere ora la password dell'amministratore (utente admin)?")" 8 60; then
     while :; do
       p1=$(wt --passwordbox "$(t "Password (no single quotes):" "Password (senza apici singoli):")" 9 60) || break
       p2=$(wt --passwordbox "$(t "Repeat the password:" "Ripeti la password:")" 9 60) || break
