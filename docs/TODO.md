@@ -13,14 +13,40 @@ Still to do, in this order:
   queue is shared, users may add presets but only administrators replace or delete them, and users change only the
   defaults of the quick form and the theme (everything else in Settings is the administrators').
 - Advanced mode in the editor: today the server refuses hand-written scripts / arguments of users without it with a
-  clear message; the editor should also hide or lock those fields for them (with point 3's Pro switch).
+  clear message; the editor should also hide or lock those fields for them (with point 4's Pro switch).
 - **Reverse-proxy compatible**: forwarded headers (X-Forwarded-For/Proto/Host) from trusted proxies only (the sign-in
   throttle and the cookie's Secure flag must see the real client and scheme), a configurable base path (e.g. `/kna`),
   correct cookie paths and redirects, WebSocket/SSE progress through the proxy; documented examples for nginx, Caddy,
   Traefik and Nginx Proxy Manager.
 - **Proxy SSO**: accept an auth header from a trusted proxy (Authelia/Authentik style) as the logged-in user.
 
-## 2. Filter presets and before/after preview
+## 2. Desktop app on a KnA server (client mode)
+
+When the user asks for it, the desktop app uses a KnA server as its engine instead of the local one: e.g. a powerful
+PC (or homelab server) runs kna-server, and a laptop or an older PC runs the desktop app. Not a bare remote control:
+the desktop app stays the same program with the same features, only the work (analysis, previews, encodes,
+components, GPU) happens on the server.
+
+- **Connection**: Settings → "Encode on a KnA server": address, account (the accounts of point 1), "remember";
+  servers on the local network found by themselves (e.g. mDNS / a broadcast answer of kna-server), typed by hand
+  otherwise. The password is kept in the system's keychain (Windows Credential Manager, macOS Keychain, libsecret),
+  never in plain text. Switching back to "This computer" is always one click.
+- **Same features as local**: queue, editor (tracks, trim, filters, parameter pages), previews and waveforms, OCR,
+  presets, wizard, AI assistant — through the server's API (the same one the web UI uses), with live progress (SSE).
+  The editor's options and the hardware shown are the server's (its GPU, its encoders, its components).
+- **Autoencoder rule, no manual transfers**: a file of the laptop is uploaded by itself (chunked, resumable, already
+  in the server) and the result comes back by itself into the output folder chosen on the laptop; files the server
+  can already reach (the same NAS share) are used in place, without copying (KnA recognises them — path mapping
+  found automatically, e.g. same size and checksum — never a path to type). Files of the server can be browsed and
+  added too, like in the web UI.
+- **Clear when it can't**: server unreachable, signed out, wrong version (API version check, with the update
+  offered), a folder the account may not use — KnA says so plainly and offers to encode on this computer instead;
+  jobs already sent keep running on the server and are picked up again at the next connection (the queue lives
+  there).
+- **Security**: HTTPS when the server has it (reverse proxy of point 1), a self-signed certificate accepted once
+  and pinned; HTTP only on the local network, with a warning.
+
+## 3. Filter presets and before/after preview
 
 - Every VapourSynth/AviSynth catalogue filter and every GPU filter (`--vpp-*`) gets **many sensible presets**: quality
   levels (light / medium / strong…) **and** content types (clean anime, grainy film, old VHS, noisy phone video…).
@@ -28,7 +54,7 @@ Still to do, in this order:
   numbers stay editable under "Advanced".
 - **Before/after preview** of a frame right in the filter's box, to choose by looking.
 
-## 3. Quick use first, "Pro" for the rest
+## 4. Quick use first, "Pro" for the rest
 
 Users often just want something fast ("compress this for WhatsApp, done"), but KnA must also have a Pro side that can
 one day match StaxRip (which doesn't exist for Linux/macOS; there the reference is Hybrid).
@@ -40,7 +66,7 @@ one day match StaxRip (which doesn't exist for Linux/macOS; there the reference 
 - Optional (Pro): **quality check** (VMAF/SSIM on a few sample seconds) to compare presets and filters with a number.
 - To evaluate, not a priority: importing Hybrid/StaxRip presets.
 
-## 4. Checks on real hardware and runners
+## 5. Checks on real hardware and runners
 
 Not verifiable in the development container; do them when a test release (workflow input `test_package`) or the
 user's machines are available.
@@ -65,7 +91,7 @@ user's machines are available.
   package with its libraries (needs the runner's glibc: check on older distributions), macOS from Homebrew with
   dylibbundler (Qt frameworks); package sizes.
 
-## 5. Theme: Golden Darkness (last of the queue)
+## 6. Theme: Golden Darkness (last of the queue)
 
 A UI theme dedicated to Golden Darkness (Yami) from *To LOVE-Ru*: colours from the character (black, gold, deep red),
 suitable backgrounds, desktop and web, next to the current light/dark themes. Mind the artwork's rights: use images
