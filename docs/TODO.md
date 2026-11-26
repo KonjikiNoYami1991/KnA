@@ -39,10 +39,31 @@ components, GPU) happens on the server.
   can already reach (the same NAS share) are used in place, without copying (KnA recognises them — path mapping
   found automatically, e.g. same size and checksum — never a path to type). Files of the server can be browsed and
   added too, like in the web UI.
+- **The laptop can be switched off**: once sent (files uploaded), the jobs belong to the server; the results wait
+  there in the account's outbox and, at the next connection, come back by themselves into the chosen output folders
+  (resumable downloads, a notification when they are home), then are removed from the server. Outbox kept for a set
+  time / up to a quota, said in Settings; the web UI shows it too.
+- **Server with little space: streaming mode.** Only the server's engine (GPU, encoders) is used and it keeps
+  nothing: the source is read from the client while it encodes and the encoded streams are sent back as they come
+  out, written on the client. Notes for the design:
+  - the source must be seekable (analysis, previews, two passes, chunked encoding, keyframe search, Dolby Vision /
+    HDR10+ extraction): the client serves it with range requests (FFmpeg and the other readers open it as a URL) or
+    through a small virtual file, not a one-way pipe;
+  - the server sends back the elementary streams / an MKV written as it goes; what needs the whole file (MP4 index,
+    mkvmerge, metadata injection, remux) runs on the client, which has the same tools in its package;
+  - a dropped connection resumes from the last finished segment (the resumable / chunked encoding already there),
+    never from scratch;
+  - a middle way for long jobs: segments sent ahead and deleted on the server as soon as they are encoded and
+    returned, so the server holds only a few at a time;
+  - bandwidth: fine on wired gigabit even for UHD Blu-ray remuxes, Wi-Fi may be the bottleneck — KnA measures it and
+    says the expected time.
+- **KnA chooses by itself** (autoencoder rule), the user may override: full upload when the server has room for the
+  source and the estimated output (so the laptop may then be switched off), streaming or segment-by-segment when it
+  hasn't; streaming means the client must stay on and connected, and KnA says so before starting (and keeps the PC
+  awake meanwhile).
 - **Clear when it can't**: server unreachable, signed out, wrong version (API version check, with the update
-  offered), a folder the account may not use — KnA says so plainly and offers to encode on this computer instead;
-  jobs already sent keep running on the server and are picked up again at the next connection (the queue lives
-  there).
+  offered), a folder the account may not use, not enough space even for streaming — KnA says so plainly and offers to
+  encode on this computer instead.
 - **Security**: HTTPS when the server has it (reverse proxy of point 1), a self-signed certificate accepted once
   and pinned; HTTP only on the local network, with a warning.
 
