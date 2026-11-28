@@ -64,7 +64,7 @@ public sealed class ServerPage : StackPanel
             },
         };
         Children.Add(Ui.Card(form));
-        Children.Add(Ui.Muted(L.T("In this version on a server: the queue (add, start, stop, pause, order, settings of the side panel, presets of this computer), uploads, results back home, logs and the server's hardware. The editor, previews, OCR and the AI assistant of a server's file open in its web page for now.")));
+        Children.Add(Ui.Muted(L.T("On a server everything works as here: queue, editor, previews, OCR, AI assistant, the server's presets and wizard, its own files (\"Server files\"); what runs, runs there. Files of this computer are uploaded by themselves (subtitles, audio and fonts too) and the results come back.")));
         Refresh();
         ShowWarning();
     }

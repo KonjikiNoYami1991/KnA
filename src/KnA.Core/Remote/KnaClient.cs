@@ -139,13 +139,20 @@ public sealed class KnaClient : IDisposable
     public static string Pretty(string fingerprint) =>
         string.Join(':', Enumerable.Range(0, fingerprint.Length / 2).Select(i => fingerprint.Substring(i * 2, 2)));
 
-    private async Task<T> GetAsync<T>(string path, CancellationToken ct)
+    internal async Task<T> GetAsync<T>(string path, CancellationToken ct)
     {
         using var res = await SendAsync(new HttpRequestMessage(HttpMethod.Get, path), ct);
-        return (await res.Content.ReadFromJsonAsync<T>(SettingsStore.Json, ct))!;
+        return await ReadAsync<T>(res, ct);
     }
 
-    private async Task<JsonElement> PostAsync(string path, object? body, CancellationToken ct, HttpMethod? method = null)
+    /// <summary>The answer as <typeparamref name="T"/>; an empty answer (no content, "null") is the default value.</summary>
+    private static async Task<T> ReadAsync<T>(HttpResponseMessage res, CancellationToken ct)
+    {
+        var text = await res.Content.ReadAsStringAsync(ct);
+        return string.IsNullOrWhiteSpace(text) ? default! : JsonSerializer.Deserialize<T>(text, SettingsStore.Json)!;
+    }
+
+    internal async Task<JsonElement> PostAsync(string path, object? body, CancellationToken ct, HttpMethod? method = null)
     {
         var req = new HttpRequestMessage(method ?? HttpMethod.Post, path) { Content = body is null ? null : JsonContent.Create(body, options: SettingsStore.Json) };
         using var res = await SendAsync(req, ct);
@@ -220,6 +227,14 @@ public sealed class KnaClient : IDisposable
         r.ValueKind == JsonValueKind.Object && r.TryGetProperty("jobs", out var j) && j.ValueKind == JsonValueKind.Array
             ? j.EnumerateArray().Select(x => x.GetGuid()).ToList() : [];
 
+    /// <summary>A folder of the server (null: its roots), videos and folders only.</summary>
+    public Task<ServerFolder> BrowseAsync(string? path, CancellationToken ct = default) =>
+        GetAsync<ServerFolder>("api/browse?mode=video" + (path is null ? "" : "&path=" + Uri.EscapeDataString(path)), ct);
+
+    /// <summary>The server's smart drop with its own paths: externals join their job (or the video with the same name).</summary>
+    public Task<Queue.DropResult> DropAsync(IReadOnlyList<string> serverPaths, Guid? targetJob, JobSettings settings, CancellationToken ct = default) =>
+        SendJsonAsync<Queue.DropResult>(HttpMethod.Post, "api/drop/apply", new { paths = serverPaths, targetJob, settings }, ct);
+
     public Task RemoveAsync(IEnumerable<Guid> ids, CancellationToken ct = default) => PostAsync("api/jobs/remove", new { ids = ids.ToList() }, ct);
     public Task ResetAsync(IEnumerable<Guid> ids, CancellationToken ct = default) => PostAsync("api/jobs/reset", new { ids = ids.ToList() }, ct);
     public Task MoveAsync(Guid id, int delta, CancellationToken ct = default) => PostAsync($"api/jobs/{id}/move", new { delta }, ct);
@@ -229,6 +244,32 @@ public sealed class KnaClient : IDisposable
     public Task StopAsync(CancellationToken ct = default) => PostAsync("api/queue/stop", null, ct);
     public Task PauseAsync(CancellationToken ct = default) => PostAsync("api/queue/pause", null, ct);
     public Task ResumeAsync(CancellationToken ct = default) => PostAsync("api/queue/resume", null, ct);
+
+    /// <summary>A JSON answer as <typeparamref name="T"/> (the engine's own types: the server and the app share them).</summary>
+    internal async Task<T> SendJsonAsync<T>(HttpMethod method, string path, object? body, CancellationToken ct)
+    {
+        var req = new HttpRequestMessage(method, path) { Content = body is null ? null : JsonContent.Create(body, options: SettingsStore.Json) };
+        using var res = await SendAsync(req, ct);
+        return await ReadAsync<T>(res, ct);
+    }
+
+    /// <summary>Saves a GET answer into <paramref name="file"/> (previews), written whole or not at all.</summary>
+    internal async Task<string> SaveToFileAsync(string path, string file, CancellationToken ct)
+    {
+        using var res = await SendAsync(new HttpRequestMessage(HttpMethod.Get, path), ct);
+        Directory.CreateDirectory(Path.GetDirectoryName(file)!);
+        var tmp = file + "." + Guid.NewGuid().ToString("N")[..8] + ".tmp";
+        await using (var output = File.Create(tmp))
+            await res.Content.CopyToAsync(output, ct);
+        File.Move(tmp, file, overwrite: true);
+        return file;
+    }
+
+    internal async Task<Stream> OpenStreamAsync(string path, CancellationToken ct)
+    {
+        var res = await SendAsync(new HttpRequestMessage(HttpMethod.Get, path), ct);
+        return await res.Content.ReadAsStreamAsync(ct);
+    }
 
     public async Task<string> TextAsync(string path, CancellationToken ct = default)
     {
@@ -250,6 +291,20 @@ public sealed class KnaClient : IDisposable
     /// </summary>
     public async Task<Guid?> UploadAsync(string localPath, JobSettings settings, Action<string> uploadStarted, string? uploadId,
         IProgress<long>? progress = null, CancellationToken ct = default)
+    {
+        var done = await UploadCoreAsync(localPath, new { enqueue = true, settings }, uploadStarted, uploadId, progress, ct);
+        return Ids(done).FirstOrDefault() is var id && id != Guid.Empty ? id : null;
+    }
+
+    /// <summary>Uploads a file the job uses (subtitle, audio, font…) without queueing it; returns its path on the server.</summary>
+    public async Task<string> UploadFileAsync(string localPath, CancellationToken ct = default)
+    {
+        var done = await UploadCoreAsync(localPath, new { enqueue = false }, _ => { }, null, null, ct);
+        return done.GetProperty("path").GetString() ?? throw new RemoteException(L.T("Upload of {0} refused: HTTP {1}", Path.GetFileName(localPath), 500));
+    }
+
+    private async Task<JsonElement> UploadCoreAsync(string localPath, object complete, Action<string> uploadStarted, string? uploadId,
+        IProgress<long>? progress, CancellationToken ct)
     {
         var size = new FileInfo(localPath).Length;
         long offset = 0;
@@ -307,8 +362,7 @@ public sealed class KnaClient : IDisposable
                 offset = st.GetProperty("offset").GetInt64();
             }
         }
-        var done = await PostAsync($"api/uploads/{uploadId}/complete", new { enqueue = true, settings }, ct);
-        return Ids(done).FirstOrDefault() is var id && id != Guid.Empty ? id : null;
+        return await PostAsync($"api/uploads/{uploadId}/complete", complete, ct);
     }
 
     // ------------------------------------------------------------------ downloads

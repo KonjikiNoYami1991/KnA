@@ -1,3 +1,4 @@
+using KnA.Core.Tools;
 using KnA.Core.Encoding;
 using KnA.Core.Media;
 using KnA.Core.Ocr;
@@ -159,7 +160,11 @@ public static class EditorModel
     }
 
     /// <summary>"Quality level" made visible: the constant-quality value and the speed preset KnA would use.</summary>
-    public static EncoderOverrides ExplicitRate(QueueService q, JobSettings s, VideoStream? video, string container)
+    public static EncoderOverrides ExplicitRate(QueueService q, JobSettings s, VideoStream? video, string container) =>
+        ExplicitRate(q.Settings.Capabilities, s, video, container);
+
+    /// <summary>The same with the capabilities of the machine that encodes (a KnA server's in client mode).</summary>
+    public static EncoderOverrides ExplicitRate(FfmpegCapabilities? capabilities, JobSettings s, VideoStream? video, string container)
     {
         var o = s.Encoder;
         var p = s.ProfileDefinition;
@@ -167,10 +172,10 @@ public static class EditorModel
         if (RigayaEncoders.Wanted(s) && RigayaEncoders.ToolId(s.Backend) is { } rid)
         {
             // Speed, tune, lookahead and the profile's options from the GPU the hardware test found.
-            if (o.Speed is null) o = RigayaProfiles.Apply(o, RigayaProfiles.Recommended(s.Backend, s.EffectiveCodec, s.Quality, q.Settings.Capabilities));
+            if (o.Speed is null) o = RigayaProfiles.Apply(o, RigayaProfiles.Recommended(s.Backend, s.EffectiveCodec, s.Quality, capabilities));
             return o with { RateControl = RateControl.Quality, QualityValue = RigayaEncoders.DefaultQuality(rid, s.EffectiveCodec, s.Quality) };
         }
-        var caps = q.Settings.Capabilities;
+        var caps = capabilities;
         var req = new VideoEncodeRequest(s.EffectiveCodec, s.EffectiveBackend, s.Quality, s.EffectiveTenBit, s.Profile,
             s.VideoFilters.Fps ?? video?.FrameRate ?? 25, container is "mp4" or "mov")
         {

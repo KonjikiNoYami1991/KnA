@@ -11,12 +11,10 @@ queue, presets and settings, advanced fields locked in the editor; reverse-proxy
 
 ## 2. Desktop app on a KnA server (client mode)
 
-First part done (see "Done" below): connection, discovery, keychain, version check, certificate pinning, the server's
-queue in the main window, uploads and results back home (also after the laptop was off). Still to do, in this order:
+First and second part done (see "Done" below): connection, discovery, keychain, version check, certificate pinning,
+the server's queue in the main window, uploads and results back home (also after the laptop was off); editor, previews,
+OCR, AI assistant, presets, wizard and the server's own files through the server. Still to do, in this order:
 
-- **The rest through the server**: editor (tracks, trim, filters, parameter pages), previews and waveforms, OCR, AI
-  assistant, the server's presets and the wizard, browsing and adding the server's own files; today they open in the
-  server's web page.
 - **Files the server reaches in place** (same NAS share): recognised by themselves, no upload.
 - **Outbox** time / quota in Settings, shown in the web UI too; a notification when results are home.
 - **Streaming and segment-by-segment** modes for servers with little space, chosen by KnA (keeping the PC awake,
@@ -123,6 +121,13 @@ suitable backgrounds, desktop and web, next to the current light/dark themes. Mi
 the user provides or that may be redistributed; nothing scraped.
 
 ## Done (details in CHANGELOG)
+
+- Desktop app on a KnA server, second part: `IEditorEngine` (`LocalEditorEngine` / `RemoteEditorEngine`) for the
+  editor, wizard, AI assistant and OCR editor (`IOcrSession`); `?full=true` analysis, `/api/engine`, `/api/ocr/{id}/images`;
+  the server's presets in the side panel (the preset manager points to the web page); "Server files" window; local
+  externals uploaded (editor, drag and drop) and removed with the job. Checked live in the container: analysis,
+  parameter pages, rate, size planner and estimate, previews, crop, command, external upload, presets, OCR read on the
+  server with a correction used in the job; headless editor screenshots on a server's file.
 
 - Desktop app on a KnA server, first part: Settings → KnA server (UDP discovery on 8585, address completed by itself,
   account, password in the system's keychain, `/api/version` check, self-signed certificate pinned, plain HTTP outside

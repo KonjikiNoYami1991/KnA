@@ -15,7 +15,7 @@ namespace KnA.App.Views;
 /// </summary>
 public sealed class AiAssistantWindow : Window
 {
-    private readonly QueueService _queue;
+    private readonly IEditorEngine _engine;
     private readonly JobSettings _current;
     private readonly QueueJob? _job;
     private readonly StackPanel _result = new() { Spacing = 8 };
@@ -24,13 +24,13 @@ public sealed class AiAssistantWindow : Window
     /// <summary>The accepted settings (null when the window was closed without applying).</summary>
     public JobSettings? Accepted { get; private set; }
 
-    public AiAssistantWindow(QueueService queue, JobSettings current, QueueJob? job = null, bool analyse = false)
+    public AiAssistantWindow(IEditorEngine engine, JobSettings current, QueueJob? job = null, bool analyse = false)
     {
-        _queue = queue; _current = current; _job = job;
+        _engine = engine; _current = current; _job = job;
         Title = L.T("AI assistant");
         Width = 640; Height = 600; MinWidth = 480; MinHeight = 400;
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
-        var ai = queue.Settings.Ai;
+        var ai = engine.Ai;
         var prompt = new TextBox
         {
             AcceptsReturn = true, TextWrapping = TextWrapping.Wrap, Height = 80,
@@ -39,7 +39,7 @@ public sealed class AiAssistantWindow : Window
         var ask = Ui.Button(L.T("Suggest settings"), async () =>
         {
             if (string.IsNullOrWhiteSpace(prompt.Text)) return;
-            await RunAsync(() => new Assistant(_queue.Settings.Ai, _queue.Settings.Capabilities).SuggestAsync(prompt.Text!, _current, _job?.Media));
+            await RunAsync(() => _engine.SuggestAsync(prompt.Text!, _current, _job));
         }, primary: true);
         var page = new StackPanel
         {
@@ -54,13 +54,15 @@ public sealed class AiAssistantWindow : Window
         };
         if (job is not null)
             page.Children.Insert(3, Ui.Button(L.T("Analyse frames with AI"), AnalyseAsync));
-        if (ai.Model is null)
+        if (ai.Model is null && engine is LocalEditorEngine local)
             page.Children.Insert(1, Ui.Button(L.T("Set up the AI assistant"), async () =>
             {
-                var w = new AiSetupWindow(_queue) { Icon = Icon };
+                var w = new AiSetupWindow(local.Queue) { Icon = Icon };
                 await w.ShowDialog(this);
-                if (w.Saved) ((TextBlock)page.Children[0]).Text = $"{_queue.Settings.Ai.Provider} · {_queue.Settings.Ai.Model}";
+                if (w.Saved) ((TextBlock)page.Children[0]).Text = $"{local.Queue.Settings.Ai.Provider} · {local.Queue.Settings.Ai.Model}";
             }, primary: true));
+        else if (ai.Model is null)
+            page.Children.Insert(1, Ui.Note(L.T("The KnA server's AI assistant is not set up: an administrator sets it up in its web page (Settings → AI).")));
         Content = new ScrollViewer { Content = page };
         if (analyse && job is not null) Opened += async (_, _) => await AnalyseAsync();
     }
@@ -71,11 +73,7 @@ public sealed class AiAssistantWindow : Window
         await RunAsync(async () =>
         {
             _status.Text = L.T("Extracting frames and asking the vision model… (this can take a minute on a local model)");
-            var a = await _queue.AnalyzeAsync(_job);
-            var frames = new List<byte[]>();
-            foreach (var f in new[] { 0.12, 0.37, 0.62, 0.87 })
-                frames.Add(await File.ReadAllBytesAsync(await _queue.Preview.ThumbnailAsync(_job.Id, a.Source.Duration.TotalSeconds * f, 768)));
-            return await new Assistant(_queue.Settings.Ai, _queue.Settings.Capabilities).AnalyzeAsync(a.Source, _current, frames);
+            return await _engine.AnalyzeFramesAsync(_job, _current);
         });
     }
 

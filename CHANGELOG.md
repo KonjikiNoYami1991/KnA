@@ -63,7 +63,13 @@
 - Local files are uploaded by themselves (resumable, smaller pieces through a strict proxy) and their results come back
   by themselves into the output folder or next to the source (resumable, never overwriting), then the server deletes
   the upload and its result. Once uploaded, the laptop may be switched off: results come home at the next connection.
-- The editor, previews, OCR and the AI assistant of a server's file open in its web page for now.
+- Second part: the desktop editor works on a server's files through its API (`IEditorEngine`: the whole analysis
+  travels, previews and waveforms are downloaded into a cache, parameter pages, size estimate and planner, rate
+  control from the server's hardware, segments split there); the OCR editor reads on the server (all pictures in one
+  stream, corrections sent as they are made, "Use in the job" there, "Save as" here); the AI assistant and the wizard
+  use the server's AI and hardware; the side panel's presets are the server's; "Server files" browses and queues the
+  server's own files; subtitles, audio, fonts and attachments of this computer are uploaded by themselves (editor and
+  drag and drop) and removed from the server with the job.
 
 **Fixes**
 - NVEncC / QSVEncC / VCEEncC with FFmpeg decoding: the size shown (and the final size estimated from it) was the raw
@@ -332,7 +338,13 @@
   soli nella cartella di uscita o accanto alla sorgente (con ripresa, senza mai sovrascrivere), poi il server cancella
   il caricamento e il suo risultato. Una volta caricato, il portatile si può spegnere: i risultati tornano al
   collegamento successivo.
-- Editor, anteprime, OCR e assistente AI di un file del server per ora si aprono nella sua pagina web.
+- Seconda parte: l'editor desktop lavora sui file del server tramite la sua API (`IEditorEngine`: l'analisi viaggia
+  intera, anteprime e forme d'onda vengono scaricate in una cache, pagine dei parametri, stima e pianificazione della
+  dimensione, controllo del bitrate dall'hardware del server, segmenti divisi lì); l'editor OCR legge sul server (tutte
+  le immagini in un solo flusso, correzioni inviate man mano, "Usa nel job" lì, "Salva come" qui); assistente AI e
+  wizard usano l'AI e l'hardware del server; i preset del pannello laterale sono quelli del server; "File del server"
+  sfoglia e mette in coda i file del server; sottotitoli, audio, font e allegati di questo computer vengono caricati da
+  soli (editor e trascinamento) e tolti dal server insieme al job.
 
 **Correzioni**
 - NVEncC / QSVEncC / VCEEncC con decodifica FFmpeg: la dimensione mostrata (e quella finale stimata) era dei fotogrammi

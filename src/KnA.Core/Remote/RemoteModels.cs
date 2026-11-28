@@ -18,6 +18,10 @@ public sealed record RemoteServerSettings
     public string? PinnedCertificate { get; init; }
 }
 
+/// <summary>A folder of the server (its own files: browse and queue them without uploading).</summary>
+public sealed record ServerFolder(string? Path, string? Parent, List<ServerEntry> Entries, List<string> Roots);
+public sealed record ServerEntry(string Name, string Path, bool IsDirectory, long Size, string Kind = "other");
+
 /// <summary>/api/version: what a server is and which API it speaks.</summary>
 public sealed record ServerInfo(string App, string Version, int ApiVersion, string Platform, string Name)
 {

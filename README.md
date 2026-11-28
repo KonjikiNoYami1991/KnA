@@ -394,15 +394,17 @@ address), then the account of the server; the password stays in the system's key
 macOS Keychain, Secret Service through `secret-tool` on Linux). The top bar shows where the files are encoded; back to
 this computer is one click.
 
-- The queue is the server's: add files and folders, start, stop, pause, order, the side panel's settings and presets,
-  logs; the hardware panel shows the server's.
-- Files of the laptop are **uploaded by themselves** (resumable) and the **results come back by themselves** into the
+- Everything works as on this computer, and runs there: the queue (start, stop, pause, order, logs), the editor
+  (tracks, trim, filters, parameter pages, previews and waveforms, size estimate), the OCR editor, the AI assistant, the
+  server's presets (shared and your own) and the wizard; the hardware panel shows the server's. "Server files" queues
+  the server's own files where they are.
+- Files of the laptop are **uploaded by themselves** (resumable; subtitles, audio and fonts added in the editor or
+  dropped on a job too) and the **results come back by themselves** into the
   output folder (or next to the source), then the server deletes what it kept for them. Once a file is uploaded the
   laptop may be switched off: the result comes home at the next connection.
 - If the server can't be reached, KnA says why and encodes on this computer meanwhile.
 - HTTPS through a reverse proxy works; a self-signed certificate is shown with its fingerprint and pinned once trusted.
   Plain HTTP outside the local network is flagged.
-- First version: the editor, previews, OCR and the AI assistant of a server's file open in its web page.
 
 Discovery answers on UDP port 8585 (`KNA_DISCOVERY_PORT`, `KNA_DISCOVERY=off`; `KNA_PUBLIC_URL` = the address to
 announce). Broadcasts don't cross subnets, VPNs or Docker bridge networks: type the address there.

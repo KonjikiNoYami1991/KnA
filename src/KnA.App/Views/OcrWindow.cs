@@ -38,8 +38,8 @@ public sealed class OcrWindow : Window
         public string Score => Line.Confidence < 0 ? "" : $"{Line.Confidence:0}";
     }
 
-    private readonly QueueService _queue;
-    private readonly OcrSession _s;
+    private readonly IEditorEngine _engine;
+    private readonly IOcrSession _s;
     private readonly ObservableCollection<Row> _rows = [];
     private readonly ListBox _list = new() { SelectionMode = SelectionMode.Multiple };
     private readonly Image _picture = new() { Stretch = Stretch.Uniform, StretchDirection = StretchDirection.DownOnly };
@@ -54,11 +54,13 @@ public sealed class OcrWindow : Window
     private OcrOptions _opt;
     private bool _loading;
 
-    public OcrWindow(QueueService queue, OcrSession session)
+    public OcrWindow(IEditorEngine editorEngine, IOcrSession session)
     {
-        _queue = queue;
+        _engine = editorEngine;
         _s = session;
-        _opt = queue.Settings.Ocr ?? new OcrOptions();
+        _opt = editorEngine.OcrDefaults;
+        // PaddleOCR's presence is checked here only on this computer; a server says it when the reading starts.
+        var localData = (editorEngine as LocalEditorEngine)?.Queue.Store.DataDirectory;
         Title = $"OCR — {Path.GetFileName(session.Job.SourcePath)} #{session.Stream} {session.Language} — KnA";
         Width = 1200; Height = 820; MinWidth = 900; MinHeight = 600;
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
@@ -66,8 +68,8 @@ public sealed class OcrWindow : Window
         // ---------------------------------------------------------------- engine bar
         // PaddleOCR is not in the packages (about 1 GB): when chosen and missing, one click installs it here
         var paddleInstall = new Button { Content = L.T("Install PaddleOCR (about 1 GB)"), Classes = { "primary" }, IsVisible = false };
-        void PaddleCheck() => paddleInstall.IsVisible = _opt.Engine == "paddleocr"
-            && (PaddleOcr.Locate(queue.Store.DataDirectory) is null || !PaddleOcr.ModelsInstalled(queue.Store.DataDirectory));
+        void PaddleCheck() => paddleInstall.IsVisible = _opt.Engine == "paddleocr" && localData is not null
+            && (PaddleOcr.Locate(localData) is null || !PaddleOcr.ModelsInstalled(localData));
         paddleInstall.Click += async (_, _) =>
         {
             paddleInstall.IsEnabled = false;
@@ -76,8 +78,8 @@ public sealed class OcrWindow : Window
                 var log = new Progress<string>(l => _status.Text = l);
                 var pr = new Progress<double>(v => { _bar.IsVisible = true; _bar.Value = v; });
                 foreach (var id in new[] { "paddleocr", "paddleocr-models" })
-                    if (id == "paddleocr" ? PaddleOcr.Locate(queue.Store.DataDirectory) is null : !PaddleOcr.ModelsInstalled(queue.Store.DataDirectory))
-                        await Task.Run(() => queue.Components.InstallAsync(id, pr, log));
+                    if (id == "paddleocr" ? PaddleOcr.Locate(localData!) is null : !PaddleOcr.ModelsInstalled(localData!))
+                        await Task.Run(() => _engine.InstallComponentAsync(id, pr, log));
                 _status.Text = L.T("Installed {0}.", "PaddleOCR");
             }
             catch (Exception ex) { _status.Text = ex.Message; }
@@ -262,8 +264,7 @@ public sealed class OcrWindow : Window
         if (_s.Busy) return;
         Commit();
         _cts = new CancellationTokenSource();
-        _queue.Settings.Ocr = _opt with { Language = null };   // the engine and switches chosen here become the default
-        _queue.SaveSettings();
+        _s.RememberOptions(_opt);   // the engine and switches chosen here become the default
         int total = only?.Count ?? _s.Lines.Count(l => !l.Edited);
         _bar.IsVisible = true;
         _bar.Value = 0;
@@ -272,7 +273,7 @@ public sealed class OcrWindow : Window
         try
         {
             var progress = new Progress<int>(n => { _bar.Value = n * 100.0 / Math.Max(1, total); _status.Text = $"{n} / {total}"; });
-            await Task.Run(() => _s.RecognizeAsync(_queue, _opt, only, progress, _cts.Token));
+            await Task.Run(() => _s.RecognizeAsync(_opt, only, progress, _cts.Token));
             _status.Text = L.T("Done in {0} s: {1} lines to check.", (int)sw.Elapsed.TotalSeconds, _s.Lines.Count(_s.ToCheck));
         }
         catch (OperationCanceledException) { _status.Text = L.T("Stopped."); }
@@ -302,12 +303,11 @@ public sealed class OcrWindow : Window
         Commit();
         try
         {
-            var path = _s.DefaultSrtPath();
-            await _s.UseInJobAsync(_queue, path);
+            await _s.UseInJobAsync();
             UsedInJob = true;
             Close();
         }
-        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException) { _status.Text = ex.Message; }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or InvalidOperationException or KnA.Core.Remote.RemoteException) { _status.Text = ex.Message; }
     }
 
     private static WriteableBitmap ToBitmap(SubtitleImage img)

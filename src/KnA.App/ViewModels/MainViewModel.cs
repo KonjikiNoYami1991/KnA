@@ -35,6 +35,9 @@ public sealed partial class MainViewModel : ObservableObject
     /// <summary>The queue shown: the server's in client mode, this computer's otherwise.</summary>
     public IQueueEngine Engine => (IQueueEngine?)Remote ?? Queue;
     public bool IsRemote => Remote is not null;
+    private readonly LocalEditorEngine _localEditor;
+    /// <summary>What the editor, wizard, AI assistant and OCR editor work with: this computer or the server.</summary>
+    public IEditorEngine Editor { get; private set; }
     private readonly Action<QueueJob> _onJob;
     private readonly Action<Guid> _onRemoved;
     private readonly Action _onQueue;
@@ -47,7 +50,8 @@ public sealed partial class MainViewModel : ObservableObject
     /// <summary>Settings of the side panel form (used for new files and "apply to selected").</summary>
     public JobSettings FormSettings { get; set; }
 
-    public IReadOnlyList<Preset> Presets => Queue.Presets.All;
+    /// <summary>The presets of the side panel: this computer's, or the server's (shared and the account's own).</summary>
+    public IReadOnlyList<Preset> Presets => Editor.Presets;
 
     [ObservableProperty] private string? _updateBanner;
     [ObservableProperty] private bool _isRunning;
@@ -75,6 +79,7 @@ public sealed partial class MainViewModel : ObservableObject
     public MainViewModel(QueueService queue)
     {
         Queue = queue;
+        Editor = _localEditor = new LocalEditorEngine(queue);
         _onJob = j => Dispatcher.UIThread.Post(() => OnJobChanged(j));
         _onRemoved = id => Dispatcher.UIThread.Post(() => OnJobRemoved(id));
         _onQueue = () => Dispatcher.UIThread.Post(OnQueueChanged);
@@ -112,15 +117,16 @@ public sealed partial class MainViewModel : ObservableObject
     {
         if (p.BuiltIn || Dialogs is null) return;
         if (!await Dialogs.ConfirmAsync(L.T("Delete preset"), L.T("Delete the preset \"{0}\"?", p.Name))) return;
-        Queue.Presets.Delete(p.Name);
+        try { await Editor.DeletePresetAsync(p.Name); }
+        catch (RemoteException ex) { await Dialogs.ShowTextAsync(L.T("Error"), ex.Message); return; }
         FormSettings = FormSettings with { PresetName = null };
         OnPropertyChanged(nameof(Presets));
         FormReloaded?.Invoke();
     }
 
-    public void SaveAsPreset(string name)
+    public async Task SaveAsPresetAsync(string name)
     {
-        var p = Queue.Presets.Save(new Preset(name.Trim(), null, FormSettings with { PresetName = name.Trim() }));
+        var p = await Editor.SavePresetAsync(new Preset(name.Trim(), null, FormSettings with { PresetName = name.Trim() }));
         OnPropertyChanged(nameof(Presets));
         ApplyPreset(p);
     }
@@ -147,7 +153,7 @@ public sealed partial class MainViewModel : ObservableObject
 
     public void AddPaths(IEnumerable<string> paths, string? preset = null)
     {
-        var settings = preset is not null && Queue.Presets.Get(preset) is { } p ? p.Settings with { PresetName = p.Name } : CurrentSettings();
+        var settings = preset is not null && Editor.GetPreset(preset) is { } p ? p.Settings with { PresetName = p.Name } : CurrentSettings();
         // On a server: the files are uploaded by themselves and their results come back into the output folder.
         if (Remote is { } remote) remote.AddLocalPaths(paths, settings, Queue.Settings.FolderExtensions, Queue.Settings.OutputDirectory);
         else Queue.AddPaths(paths, settings, Queue.Settings.FolderExtensions);
@@ -159,15 +165,20 @@ public sealed partial class MainViewModel : ObservableObject
     /// </summary>
     public async Task DropAsync(IReadOnlyList<string> paths, Guid? targetJob = null)
     {
-        if (Remote is not null)
+        if (Remote is { } remote)
         {
-            // Client mode, first version: videos and folders are sent to the server; subtitles, audio and fonts are
-            // attached in the server's web page for now.
-            var others = paths.Where(p => !Directory.Exists(p) && !MediaExtensions.IsVideo(p)).ToList();
-            AddPaths(paths.Except(others));
-            if (others.Count > 0 && Dialogs is not null)
-                await Dialogs.ShowTextAsync("KnA", L.T("On a KnA server this version sends videos and folders; attach subtitles, audio and fonts in the server's web page for now:") + "\n\n"
-                    + string.Join("\n", others.Take(20).Select(Path.GetFileName)));
+            // On a server: videos and folders are uploaded and queued; subtitles, audio and fonts are uploaded and join
+            // the job they were dropped on (or the server's video with the same name).
+            var externals = paths.Where(DropClassifier.IsExternal).ToList();
+            AddPaths(paths.Where(p => Directory.Exists(p) || MediaExtensions.IsVideo(p)));
+            if (externals.Count == 0) return;
+            try
+            {
+                var onServer = await Editor.ExternalFilesAsync(externals);
+                var dropped = await remote.Client.DropAsync(onServer, targetJob, CurrentSettings());
+                if (dropped.Messages.Count > 0 && Dialogs is not null) await Dialogs.ShowTextAsync("KnA", string.Join("\n", dropped.Messages));
+            }
+            catch (RemoteException ex) { if (Dialogs is not null) await Dialogs.ShowTextAsync(L.T("Error"), ex.Message); }
             return;
         }
         var plan = DropClassifier.Classify(paths, Queue, targetJob);
@@ -195,11 +206,10 @@ public sealed partial class MainViewModel : ObservableObject
     public async Task OpenEditorAsync(JobViewModel j, string tab = "tracks")
     {
         if (Dialogs is null) return;
-        if (Remote is { } remote)
+        // On a server the same editor works through its API (analysis, previews, OCR, AI run there).
+        if (Remote is { } remote && !remote.OnServer(j.Job))
         {
-            // The editor on a server's job comes with the next part of client mode: its web page has it meanwhile.
-            if (await Dialogs.ConfirmAsync(L.T("Editor"), L.T("This file is on the KnA server: in this version its editor opens in the server's web page. Open it?")))
-                OpenInBrowser(remote.Client.BaseUri.ToString());
+            await Dialogs.ShowTextAsync(L.T("Editor"), L.T("This file is still on this computer: it can be edited once it is uploaded to the server."));
             return;
         }
         await Dialogs.ShowEditorAsync(this, j.Job, tab);
@@ -384,14 +394,18 @@ public sealed partial class MainViewModel : ObservableObject
     {
         var client = new KnaClient(server.Url ?? "", server.User ?? "", password, server.PinnedCertificate);
         var remote = new RemoteQueue(client, Queue.Store.DataDirectory);
-        try { await remote.ConnectAsync(ct); }
+        var editor = new RemoteEditorEngine(client, Path.Combine(Queue.Store.DataDirectory, "remote-cache"));
+        try { await remote.ConnectAsync(ct); await editor.RefreshAsync(ct); }
         catch { await remote.DisposeAsync(); throw; }
         remote.Notice += (text, _) => Dispatcher.UIThread.Post(() => { RemoteNotice = text; UpdateQueueStatus(); UpdateEngineLabel(); RefreshHardware(); });
         await DisconnectAsync(keepSetting: true);
         Detach(Queue);
         Remote = remote;
+        Editor = editor;
         Attach(remote);
         ReloadJobs();
+        OnPropertyChanged(nameof(Presets));
+        FormReloaded?.Invoke();
     }
 
     /// <summary>Back to this computer (one click): the server keeps its jobs; results come back at the next connection.</summary>
@@ -400,9 +414,13 @@ public sealed partial class MainViewModel : ObservableObject
         if (Remote is not { } remote) return;
         Detach(remote);
         Remote = null;
+        (Editor as RemoteEditorEngine)?.ClearCache();
+        Editor = _localEditor;
         Attach(Queue);
         await remote.DisposeAsync();
         ReloadJobs();
+        OnPropertyChanged(nameof(Presets));
+        FormReloaded?.Invoke();
         if (!keepSetting)
         {
             Queue.Settings.Remote = Queue.Settings.Remote with { Enabled = false };

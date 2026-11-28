@@ -74,6 +74,20 @@ public class ClientModeTests
         await Pump(() => vm.Jobs.Count > 0, 5000);
         Assert.Contains("🌐", vm.EngineLabel);
         Shot(window, "main-on-server.png");
+
+        // The same editor on a server's file: analysis, previews and parameter pages through the API.
+        Assert.True(vm.Editor.IsRemote);
+        var job = vm.Jobs.Select(j => j.Job).First(j => vm.Remote!.OnServer(j));
+        foreach (var tab in new[] { "video", "audio", "preview" })
+        {
+            var editor = new JobEditorWindow(vm.Editor, job, tab) { Width = 1280, Height = 860 };
+            editor.Show();
+            await Pump(() => job.Media is not null && !editor.GetVisualDescendants().OfType<TextBlock>().Any(t => t.Text == KnA.Core.Localization.L.T("Loading…")), 20000);
+            await Pump(() => false, 2500);
+            Assert.DoesNotContain(editor.GetVisualDescendants().OfType<TextBlock>(), t => t.Text?.StartsWith("✖") == true);
+            Shot(editor, $"editor-on-server-{tab}.png");
+            editor.Close();
+        }
         await vm.DisconnectAsync();
         Assert.False(vm.IsRemote);
         Assert.Contains(queue.Settings.Remote.Enabled ? "x" : "🖥", vm.EngineLabel);

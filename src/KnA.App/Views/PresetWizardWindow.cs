@@ -14,7 +14,7 @@ namespace KnA.App.Views;
 /// </summary>
 public sealed class PresetWizardWindow : Window
 {
-    private readonly QueueService _queue;
+    private readonly IEditorEngine _engine;
     /// <summary>Answers the user gave; the others are the steps' defaults (recomputed when an earlier answer changes).</summary>
     private readonly Dictionary<string, string> _given = [];
     private int _step;
@@ -27,9 +27,9 @@ public sealed class PresetWizardWindow : Window
 
     public Preset? Result { get; private set; }
 
-    public PresetWizardWindow(QueueService queue)
+    public PresetWizardWindow(IEditorEngine engine)
     {
-        _queue = queue;
+        _engine = engine;
         Title = L.T("Preset wizard");
         Width = 660; Height = 640; CanResize = false;
         WindowStartupLocation = WindowStartupLocation.CenterOwner;
@@ -56,8 +56,8 @@ public sealed class PresetWizardWindow : Window
     /// <summary>The answers given plus the defaults of the steps that apply to them.</summary>
     private (IReadOnlyList<WizardStep> Steps, Dictionary<string, string> Answers) Resolve()
     {
-        var caps = _queue.Settings.Capabilities;
-        var audio = JobRunner.AudioEncodersFor(caps, _queue.Tools);
+        var caps = _engine.Capabilities;
+        var audio = JobRunner.AudioEncodersFor(caps, _engine.Tools);
         var answers = new Dictionary<string, string>(_given);
         IReadOnlyList<WizardStep> steps = [];
         // Defaults can make more steps apply (e.g. the rate step decides the next one): a few rounds settle it.
@@ -121,7 +121,7 @@ public sealed class PresetWizardWindow : Window
                 box.AttachedToVisualTree += (_, _) => box.Focus();
                 break;
             case WizardStepKind.Summary:
-                var settings = PresetWizard.Build(answers, _queue.Settings.Capabilities);
+                var settings = PresetWizard.Build(answers, _engine.Capabilities);
                 var summary = new StackPanel { Spacing = 3 };
                 foreach (var line in PresetWizard.Summary(settings)) summary.Children.Add(new TextBlock { Text = "• " + line, TextWrapping = TextWrapping.Wrap });
                 panel.Children.Add(Ui.Muted(s.Help ?? ""));
@@ -139,7 +139,7 @@ public sealed class PresetWizardWindow : Window
         _body.Content = panel;
     }
 
-    private void Next()
+    private async void Next()
     {
         var (steps, answers) = Resolve();
         if (_step < steps.Count - 1)
@@ -153,12 +153,12 @@ public sealed class PresetWizardWindow : Window
         var name = _given.GetValueOrDefault("name", "").Trim();
         try
         {
-            var settings = PresetWizard.Build(answers, _queue.Settings.Capabilities);
+            var settings = PresetWizard.Build(answers, _engine.Capabilities);
             var description = _given.GetValueOrDefault("description", "").Trim();
-            Result = _queue.Presets.Save(new Preset(name, description.Length > 0 ? description : null, settings with { PresetName = name }));
+            Result = await _engine.SavePresetAsync(new Preset(name, description.Length > 0 ? description : null, settings with { PresetName = name }));
             Close();
         }
-        catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or IOException)
+        catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or IOException or KnA.Core.Remote.RemoteException)
         {
             _error.Text = ex.Message;
         }

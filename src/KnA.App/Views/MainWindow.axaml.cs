@@ -100,7 +100,7 @@ public partial class MainWindow : Window, IDialogService
         ToolTip.SetTip(aiButton, L.T("Ask the AI assistant"));
         aiButton.Click += async (_, _) =>
         {
-            var w = new AiAssistantWindow(vm.Queue, vm.FormSettings) { Icon = Icon };
+            var w = new AiAssistantWindow(vm.Editor, vm.FormSettings) { Icon = Icon };
             await w.ShowDialog(this);
             if (w.Accepted is { } s) { vm.FormSettings = s with { PresetName = null }; BuildQuickPanel(vm); }
         };
@@ -110,8 +110,8 @@ public partial class MainWindow : Window, IDialogService
         {
             if (await PromptAsync(L.T("Save as preset"), L.T("Preset name"), vm.FormSettings.PresetName ?? "") is { Length: > 0 } name)
             {
-                try { vm.SaveAsPreset(name); }
-                catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or IOException) { await ShowTextAsync(L.T("Error"), ex.Message); }
+                try { await vm.SaveAsPresetAsync(name); }
+                catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or IOException or KnA.Core.Remote.RemoteException) { await ShowTextAsync(L.T("Error"), ex.Message); }
             }
         };
         var current = presets.FirstOrDefault(p => p.Name == vm.FormSettings.PresetName);
@@ -124,6 +124,13 @@ public partial class MainWindow : Window, IDialogService
         ToolTip.SetTip(manage, L.T("Manage presets: edit everything, apply parts to the selected files, import/export"));
         manage.Click += async (_, _) =>
         {
+            if (vm.Remote is { } remote)
+            {
+                // The preset manager works on this computer's presets: a server's are managed in its web page.
+                if (await ConfirmAsync(L.T("Presets"), L.T("On a KnA server the presets are managed in its web page (the side panel saves and deletes them here too). Open it?")))
+                    MainViewModel.OpenInBrowser(remote.Client.BaseUri.ToString());
+                return;
+            }
             var w = new PresetManagerWindow(vm.Queue, () => vm.FormSettings,
                 () => vm.Jobs.Where(j => j.IsSelected).Select(j => j.Id).ToList(), vm.FormSettings.PresetName) { Icon = Icon };
             await w.ShowDialog(this);
@@ -243,14 +250,25 @@ public partial class MainWindow : Window, IDialogService
 
     public Task ShowSettingsAsync(MainViewModel vm, string tab = "general") => new SettingsWindow(vm.Queue, tab, vm.Watch, vm) { Icon = Icon }.ShowDialog(this);
 
-    public Task ShowEditorAsync(MainViewModel vm, QueueJob job, string tab) => new JobEditorWindow(vm.Queue, job, tab) { Icon = Icon }.ShowDialog(this);
+    public Task ShowEditorAsync(MainViewModel vm, QueueJob job, string tab) => new JobEditorWindow(vm.Editor, job, tab) { Icon = Icon }.ShowDialog(this);
 
     public async Task<Preset?> ShowWizardAsync(MainViewModel vm)
     {
-        var w = new PresetWizardWindow(vm.Queue) { Icon = Icon };
+        var w = new PresetWizardWindow(vm.Editor) { Icon = Icon };
         await w.ShowDialog(this);
         return w.Result;
     }
 
     public void CloseApp() => Close();
+
+    /// <summary>Client mode: the server's own files, queued where they are (no upload).</summary>
+    private async void OnServerFiles(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    {
+        if (DataContext is not MainViewModel { Remote: { } remote } vm) return;
+        var w = new ServerFilesWindow(remote.Client) { Icon = Icon };
+        await w.ShowDialog(this);
+        if (w.Picked.Count == 0) return;
+        try { await remote.Client.AddServerPathsAsync(w.Picked, vm.CurrentSettings()); }
+        catch (KnA.Core.Remote.RemoteException ex) { await ShowTextAsync(L.T("Error"), ex.Message); }
+    }
 }

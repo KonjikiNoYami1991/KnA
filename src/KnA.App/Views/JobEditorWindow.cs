@@ -30,7 +30,7 @@ public static class JobEditorTabs
 /// </summary>
 public sealed class JobEditorWindow : Window
 {
-    private readonly QueueService _queue;
+    private readonly IEditorEngine _engine;
     private readonly QueueJob _job;
     private JobSettings _settings;
     private JobEdit _edit;
@@ -54,9 +54,9 @@ public sealed class JobEditorWindow : Window
     private readonly DispatcherTimer _debounce = new() { Interval = TimeSpan.FromMilliseconds(450) };
     private bool _rerenderAfterSave;
 
-    public JobEditorWindow(QueueService queue, QueueJob job, string tab = "video")
+    public JobEditorWindow(IEditorEngine engine, QueueJob job, string tab = "video")
     {
-        _queue = queue;
+        _engine = engine;
         _job = job;
         _settings = job.Settings;
         _edit = job.Edit;
@@ -100,7 +100,7 @@ public sealed class JobEditorWindow : Window
         try
         {
             // The profile's automatic choices become visible values: from here on the fields are what runs.
-            (_settings, _edit, _a) = await Task.Run(() => EditorModel.MaterializeAsync(_queue, _job.Id, _settings, _edit));
+            (_settings, _edit, _a) = await Task.Run(() => _engine.MaterializeAsync(_job, _settings, _edit));
             var d = _a.Source.Duration.TotalSeconds;
             _playhead = _edit.IsMultiSegment ? _edit.KeptParts(d).FirstOrDefault().Start : _edit.TrimStart ?? Math.Min(d / 3, 60);
             RenderIssues();
@@ -119,7 +119,7 @@ public sealed class JobEditorWindow : Window
         _saving.Text = L.T("Saving…");
         try
         {
-            (_settings, _edit, _a) = await Task.Run(() => EditorModel.MaterializeAsync(_queue, _job.Id, _settings, _edit));
+            (_settings, _edit, _a) = await Task.Run(() => _engine.MaterializeAsync(_job, _settings, _edit));
             _saving.Text = L.T("Saved");
         }
         catch (Exception ex) { _saving.Text = ""; _issues.Children.Insert(0, Ui.Note("✖ " + ex.Message, true)); }
@@ -144,7 +144,7 @@ public sealed class JobEditorWindow : Window
         try
         {
             var edit = _edit; var settings = _settings;
-            var a = await Task.Run(() => _queue.SetEditAsync(_job.Id, edit, cts.Token, settings));
+            var a = await Task.Run(() => _engine.SetEditAsync(_job, edit, settings, cts.Token));
             if (cts.IsCancellationRequested) return;
             _a = a;
             if (_edit.Tracks is not null) _edit = _edit with { Tracks = [.. a.Tracks] };
@@ -217,7 +217,7 @@ public sealed class JobEditorWindow : Window
         return d;
     }
 
-    private AudioEncoderSet Encoders => JobRunner.AudioEncodersFor(_queue.Settings.Capabilities, _queue.Tools);
+    private AudioEncoderSet Encoders => JobRunner.AudioEncodersFor(_engine.Capabilities, _engine.Tools);
 
     private static string Details(StreamBase? s) => s switch
     {
@@ -485,6 +485,7 @@ public sealed class JobEditorWindow : Window
         var files = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions { Title = L.T("Add attachments…"), AllowMultiple = true });
         var paths = files.Select(f => f.TryGetLocalPath()).OfType<string>().Where(p => p != _job.SourcePath).ToList();
         if (paths.Count == 0) return;
+        paths = [.. await UsableAsync(paths)];
         var l = Materialize();
         foreach (var path in paths.Where(path => !l.Any(t => TrackPlanner.IsStandaloneFile(t) && t.File == path)))
         {
@@ -499,9 +500,19 @@ public sealed class JobEditorWindow : Window
         var files = await StorageProvider.OpenFilePickerAsync(new FilePickerOpenOptions { Title = L.T("Add external files"), AllowMultiple = true });
         var paths = files.Select(f => f.TryGetLocalPath()).OfType<string>().Where(p => !_edit.ExternalFiles.Contains(p) && p != _job.SourcePath).ToList();
         if (paths.Count == 0) return;
+        paths = [.. await UsableAsync(paths)];
         _edit = _edit with { ExternalFiles = [.. _edit.ExternalFiles, .. paths] };
         await SaveNowAsync(true);
         _issues.Children.Add(Ui.Note(L.T("{0} file(s) added: tick the tracks to use.", paths.Count)));
+    }
+
+    /// <summary>Files of this computer as the machine that encodes sees them (on a server: uploaded first).</summary>
+    private async Task<IReadOnlyList<string>> UsableAsync(IReadOnlyList<string> paths)
+    {
+        var status = new Progress<string>(t => _saving.Text = t);
+        try { return await _engine.ExternalFilesAsync(paths, status); }
+        catch (KnA.Core.Remote.RemoteException ex) { _issues.Children.Add(Ui.Note(ex.Message, true)); return []; }
+        finally { _saving.Text = ""; }
     }
 
     private void MoveTrack(int i, int delta)
@@ -520,16 +531,16 @@ public sealed class JobEditorWindow : Window
     /// <summary>The settings form for one part of a tab, wired to this job (size budget, program parameters, rate values).</summary>
     private SettingsForm Form(FormSection section)
     {
-        var form = new SettingsForm(_settings, () => _queue.Settings.Capabilities, full: true, () => _queue.Tools, section)
+        var form = new SettingsForm(_settings, () => _engine.Capabilities, full: true, () => _engine.Tools, section)
         {
             AllowedContainers = _a!.AllowedContainers,
             SizeInfo = SizeText,
-            ParameterOptions = (tool, s, ct) => _queue.ParameterOptionsAsync(tool, s, ct),
-            AiRuntimeInstalled = () => File.Exists(KnA.Core.Tools.ComponentManager.VenvPython(_queue.Store.DataDirectory)),
-            InstallComponent = id => Task.Run(() => _queue.Components.InstallAsync(id)),
-            AutoRate = s => EditorModel.ExplicitRate(_queue, s, _a?.Source.PrimaryVideo, s.Container ?? _a?.Container ?? s.EffectiveContainer),
-            GpuEstimate = s => _a is null ? null : GpuBenchmark.EstimateFor(s, _a.Source, _edit, _queue.Settings.GpuBenchmarks),
-            RunGpuBenchmark = s => Task.Run(() => GpuBenchmark.RunAsync(_queue, s.Backend, s.EffectiveCodec)),
+            ParameterOptions = (tool, s, ct) => _engine.ParameterOptionsAsync(tool, s, ct),
+            AiRuntimeInstalled = () => _engine.AiRuntimeInstalled,
+            InstallComponent = id => Task.Run(() => _engine.InstallComponentAsync(id)),
+            AutoRate = s => _engine.ExplicitRate(s, _a?.Source.PrimaryVideo, s.Container ?? _a?.Container ?? s.EffectiveContainer),
+            GpuEstimate = s => _a is null ? null : GpuBenchmark.EstimateFor(s, _a.Source, _edit, _engine.GpuBenchmarks),
+            RunGpuBenchmark = s => Task.Run(() => _engine.RunGpuBenchmarkAsync(s.Backend, s.EffectiveCodec)),
         };
         form.Rebuild();   // the properties above are set after the constructor's first build
         form.Changed += OnFormChanged;
@@ -547,7 +558,7 @@ public sealed class JobEditorWindow : Window
         {
             var e = s.Encoder with { Speed = null, Tune = null, Extra = null, GpuFilters = s.Encoder.Program == old.Encoder.Program && s.EffectiveBackend == old.EffectiveBackend ? s.Encoder.GpuFilters : null };
             if (e.RateControl is RateControl.Quality or RateControl.Auto) e = e with { RateControl = RateControl.Auto, QualityValue = null };
-            s = s with { Encoder = EditorModel.ExplicitRate(_queue, s with { Encoder = e }, _a?.Source.PrimaryVideo, s.Container ?? _a?.Container ?? s.EffectiveContainer) };
+            s = s with { Encoder = _engine.ExplicitRate(s with { Encoder = e }, _a?.Source.PrimaryVideo, s.Container ?? _a?.Container ?? s.EffectiveContainer) };
         }
         _settings = s;
         Save(true);
@@ -570,7 +581,7 @@ public sealed class JobEditorWindow : Window
     /// <summary>What a target size leaves for each stream of this file, with the current tracks and trim.</summary>
     private string? SizeText(JobSettings s)
     {
-        if (_queue.SizeBudget(_job, s, _edit) is not { } b) return null;
+        if (_engine.SizeBudget(_job, s, _edit) is not { } b) return null;
         var text = SizePlanner.Describe(b);
         return b.TooSmall ? "⚠ " + text + "\n" + L.T("Too small for this duration: the video gets the minimum and the file will be bigger.") : text;
     }
@@ -579,7 +590,7 @@ public sealed class JobEditorWindow : Window
 
     private Control PresetTab()
     {
-        var presets = _queue.Presets.All;
+        var presets = _engine.Presets;
         Preset? pick = presets.FirstOrDefault(x => x.Name == _settings.PresetName) ?? presets.FirstOrDefault();
         var parts = PresetParts.All;
         var partsPanel = new WrapPanel();
@@ -614,17 +625,17 @@ public sealed class JobEditorWindow : Window
 
         var name = new TextBox { Text = _settings.PresetName ?? "", Watermark = L.T("Preset name") };
         var presetMsg = Ui.Muted(L.T("Saves the settings of this file (not the tracks or the trim) for reuse."));
-        var savePreset = Ui.Button(L.T("Save as preset"), () =>
+        var savePreset = Ui.Button(L.T("Save as preset"), async () =>
         {
             try
             {
                 var n = (name.Text ?? "").Trim();
-                _queue.Presets.Save(new Preset(n, null, EditorModel.ForPreset(_settings, _edit) with { PresetName = n }));
+                await _engine.SavePresetAsync(new Preset(n, null, EditorModel.ForPreset(_settings, _edit) with { PresetName = n }));
                 _settings = _settings with { PresetName = n };
                 presetMsg.Text = L.T("Preset \"{0}\" saved", n);
                 Save();
             }
-            catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or IOException) { presetMsg.Text = ex.Message; }
+            catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or IOException or KnA.Core.Remote.RemoteException) { presetMsg.Text = ex.Message; }
         });
         var row = new DockPanel();
         DockPanel.SetDock(savePreset, Dock.Right);
@@ -668,7 +679,7 @@ public sealed class JobEditorWindow : Window
             info.Children.Add(Ui.Button(L.T("Encoder command"), async () =>
             {
                 await SaveNowAsync(false);
-                var cmd = _a?.CommandLine ?? await _queue.PreviewCommandAsync(_job);
+                var cmd = _a?.CommandLine ?? await _engine.CommandAsync(_job);
                 await TextWindow.ShowAsync(this, L.T("Encoder command"), cmd);
             }));
             // Compressibility check: a few short samples encoded exactly as the job will be predict the final size.
@@ -680,7 +691,7 @@ public sealed class JobEditorWindow : Window
                 try
                 {
                     var settings = _settings; var edit = _edit;
-                    var e = await Task.Run(() => SizeEstimator.EstimateAsync(_queue, _job, settings, edit, ct: _previewCts.Token));
+                    var e = await Task.Run(() => _engine.EstimateSizeAsync(_job, settings, edit, _previewCts.Token));
                     estimate.Text = e.Describe();
                 }
                 catch (OperationCanceledException) { }
@@ -695,7 +706,7 @@ public sealed class JobEditorWindow : Window
             Page("rate", L.T("Quality and speed"), g);
             // Every parameter of the encoder that will run, one sub-tab per group, read from its own help.
             var pages = new ParamPages(new CommandLineModel(_settings.Encoder.Extra, x => { _settings = _settings with { Encoder = _settings.Encoder with { Extra = x } }; Save(); }),
-                ct => _queue.ParameterOptionsAsync(QueueService.ParameterTools.Video, _settings, ct),
+                ct => _engine.ParameterOptionsAsync(QueueService.ParameterTools.Video, _settings, ct),
                 example: RigayaEncoders.Wanted(_settings) ? "--aq-temporal --bref-mode each" : "-x265-params psy-rd=2:aq-strength=0.8", host: sub);
             pages.PagesAdded += () => { foreach (var it in sub.Items.OfType<TabItem>()) if ((string?)it.Tag == _videoSub) sub.SelectedItem = it; };
             root.Children.Add(pages);
@@ -762,7 +773,7 @@ public sealed class JobEditorWindow : Window
                 var enc = t.Encoder is { } te && encoders.Has(te) ? te : first;
                 box.Children.Add(Ui.H2(L.T("All {0} parameters", enc)));
                 box.Children.Add(new ParamPages(new CommandLineModel(t.Arguments, x => UpdateTrack(idx, y => y with { Arguments = x })),
-                    ct => _queue.ParameterOptionsAsync(QueueService.ParameterTools.AudioEncoder + enc, _settings, ct), tabs: false,
+                    ct => _engine.ParameterOptionsAsync(QueueService.ParameterTools.AudioEncoder + enc, _settings, ct), tabs: false,
                     example: enc is AudioEncoderSet.Fdkaac ? "--afterburner 1" : enc is AudioEncoderSet.Qaac ? "--quality 2" : "-aac_coder twoloop"));
             }
         }
@@ -835,7 +846,7 @@ public sealed class JobEditorWindow : Window
                 var enc = cur == "srt" ? "srt" : cur;
                 box.Children.Add(Ui.H2(L.T("All {0} parameters", enc)));
                 box.Children.Add(new ParamPages(new CommandLineModel(t.Arguments, x => UpdateTrack(idx, y => y with { Arguments = x })),
-                    ct => _queue.ParameterOptionsAsync(QueueService.ParameterTools.SubtitleEncoder + enc, _settings, ct), tabs: false, example: "-alignment 1"));
+                    ct => _engine.ParameterOptionsAsync(QueueService.ParameterTools.SubtitleEncoder + enc, _settings, ct), tabs: false, example: "-alignment 1"));
             }
         }
         if (st is { CodecName: var cn } && KnA.Core.Ocr.SubtitleOcr.CanRead(cn))
@@ -851,8 +862,8 @@ public sealed class JobEditorWindow : Window
                 try
                 {
                     await SaveNowAsync(false);
-                    var session = await Task.Run(() => KnA.Core.Ocr.OcrSession.OpenAsync(_queue, _job, track.File, track.Stream, default, track.Copy));
-                    var w = new OcrWindow(_queue, session) { Icon = Icon };
+                    var session = await Task.Run(() => _engine.OpenOcrAsync(_job, track.File, track.Stream, track.Copy));
+                    var w = new OcrWindow(_engine, session) { Icon = Icon };
                     await w.ShowDialog(this);
                     if (w.UsedInJob)
                     {
@@ -1001,7 +1012,7 @@ public sealed class JobEditorWindow : Window
             try
             {
                 var t = _playhead; var fin = _final;
-                var path = await Task.Run(() => _queue.Preview.FrameAsync(_job.Id, t, fin, 1280, mine.Token), mine.Token);
+                var path = await Task.Run(() => _engine.FrameAsync(_job.Id, t, fin, 1280, mine.Token), mine.Token);
                 if (!mine.IsCancellationRequested) img.Source = Load(path);
             }
             catch (Exception ex) when (ex is not OperationCanceledException) { stamp.Text = ex.Message; }
@@ -1078,11 +1089,11 @@ public sealed class JobEditorWindow : Window
                     await SaveNowAsync(false);
                     try
                     {
-                        var jobs = _queue.SplitSegments(_job.Id);
+                        var jobs = await _engine.SplitSegmentsAsync(_job);
                         _issues.Children.Add(Ui.Note(L.T("{0} jobs created: one per segment.", jobs.Count)));
                         Close();
                     }
-                    catch (Exception ex) when (ex is InvalidOperationException or KeyNotFoundException) { _issues.Children.Add(Ui.Note(ex.Message, true)); }
+                    catch (Exception ex) when (ex is InvalidOperationException or KeyNotFoundException or KnA.Core.Remote.RemoteException) { _issues.Children.Add(Ui.Note(ex.Message, true)); }
                 });
                 row.Children.Add(split);
             }
@@ -1203,7 +1214,7 @@ public sealed class JobEditorWindow : Window
             try
             {
                 var t = (i + 0.5) * dur / tl.ThumbCount;
-                var p = await Task.Run(() => _queue.Preview.ThumbnailAsync(_job.Id, t, 192, ct), ct);
+                var p = await Task.Run(() => _engine.ThumbnailAsync(_job.Id, t, 192, ct), ct);
                 if (!ct.IsCancellationRequested) tl.SetThumb(i, Load(p));
             }
             catch (OperationCanceledException) { }
@@ -1215,7 +1226,7 @@ public sealed class JobEditorWindow : Window
             {
                 var audio = Tracks.FirstOrDefault(t => t.Kind == "audio" && t.Include);
                 if (audio is null) { tl.SetWave(null); return; }
-                var w = await Task.Run(() => _queue.Preview.WaveformAsync(_job.Id, audio.File, audio.Stream, 1600, 100, ct), ct);
+                var w = await Task.Run(() => _engine.WaveformAsync(_job.Id, audio.File, audio.Stream, 1600, 100, ct), ct);
                 if (!ct.IsCancellationRequested) tl.SetWave(Load(w));
             }
             catch (OperationCanceledException) { }
@@ -1268,7 +1279,7 @@ public sealed class JobEditorWindow : Window
                 await SaveNowAsync(false);
                 try
                 {
-                    var c = await Task.Run(() => _queue.Preview.DetectCropAsync(_job.Id));
+                    var c = await Task.Run(() => _engine.DetectCropAsync(_job.Id));
                     if (c is null) { _saving.Text = L.T("No black borders found."); return; }
                     SetVideo(f => f with { Crop = c }, true);
                     RenderTab();
@@ -1303,7 +1314,7 @@ public sealed class JobEditorWindow : Window
                 if (_a?.Gpu is { } pipeline) gpu.Children.Add(PipelineView(pipeline));
                 gpu.Children.Add(Ui.Muted(L.T("{0}'s own filters (--vpp-*): the filters on the left become them by themselves; add others here (they run after KnA's).", RigayaEncoders.DisplayName(backend))));
                 gpu.Children.Add(new ParamPages(new CommandLineModel(_settings.Encoder.GpuFilters, x => { _settings = _settings with { Encoder = _settings.Encoder with { GpuFilters = x } }; Save(); }),
-                    ct => _queue.ParameterOptionsAsync(QueueService.ParameterTools.Vpp, _settings, ct), tabs: false, example: "--vpp-resize spline36 --vpp-nlmeans"));
+                    ct => _engine.ParameterOptionsAsync(QueueService.ParameterTools.Vpp, _settings, ct), tabs: false, example: "--vpp-resize spline36 --vpp-nlmeans"));
             }
             else if (backend == EncoderBackend.Software)
                 gpu.Children.Add(Ui.Muted(L.T("The video is encoded on the CPU: choose a GPU encoder in the Video tab to use its filters.")));
@@ -1312,7 +1323,7 @@ public sealed class JobEditorWindow : Window
             else
             {
                 gpu.Children.Add(Ui.Muted(L.T("FFmpeg filters of {0}: the frames are uploaded to the GPU after the filters on the left and filtered there, right before the encoder.", backend.Display())));
-                gpu.Children.Add(new GpuFilterEditor(_settings.VideoFilters.Gpu, (tool, ct) => _queue.ParameterOptionsAsync(tool, _settings, ct),
+                gpu.Children.Add(new GpuFilterEditor(_settings.VideoFilters.Gpu, (tool, ct) => _engine.ParameterOptionsAsync(tool, _settings, ct),
                     x => SetVideo(f => f with { Gpu = x })));
             }
             right.Children.Add(Ui.Card(gpu));
@@ -1344,7 +1355,7 @@ public sealed class JobEditorWindow : Window
 
         var aiAnalyse = Ui.Button(L.T("Analyse frames with AI"), async () =>
         {
-            var w = new AiAssistantWindow(_queue, _settings, _job, analyse: true) { Icon = Icon };
+            var w = new AiAssistantWindow(_engine, _settings, _job, analyse: true) { Icon = Icon };
             await w.ShowDialog(this);
             if (w.Accepted is { } accepted) { _settings = accepted with { PresetName = null }; await MaterializeNowAsync(); }
         });
@@ -1430,6 +1441,9 @@ public sealed class JobEditorWindow : Window
             var r = await StorageProvider.OpenFolderPickerAsync(new FolderPickerOpenOptions());
             if (r.FirstOrDefault()?.TryGetLocalPath() is { } path) folder.Text = path;
         });
+        // On a server this is a folder of the server; files sent from this computer come back into its output folder anyway.
+        browse.IsVisible = !_engine.IsRemote;
+        if (_engine.IsRemote) folder.Watermark = L.T("A folder of the server (empty: the server's setting)");
         var dp = new DockPanel();
         DockPanel.SetDock(browse, Dock.Right);
         browse.Margin = new Thickness(6, 0, 0, 0);
@@ -1438,7 +1452,7 @@ public sealed class JobEditorWindow : Window
         right.Children.Add(Ui.Button(L.T("FFmpeg command"), async () =>
         {
             await SaveNowAsync(false);
-            var cmd = _a?.CommandLine ?? await _queue.PreviewCommandAsync(_job);
+            var cmd = _a?.CommandLine ?? await _engine.CommandAsync(_job);
             await TextWindow.ShowAsync(this, L.T("FFmpeg command"), cmd);
         }));
         right.Children[^1].HorizontalAlignment = HorizontalAlignment.Left;
@@ -1471,7 +1485,7 @@ public sealed class JobEditorWindow : Window
             try
             {
                 var t = _playhead;
-                var path = await Task.Run(() => _queue.Preview.FrameAsync(_job.Id, t, true, 1600, mine.Token), mine.Token);
+                var path = await Task.Run(() => _engine.FrameAsync(_job.Id, t, true, 1600, mine.Token), mine.Token);
                 if (!mine.IsCancellationRequested) { img.Source = Load(path); status.Text = $"{L.T("Position")}: {Ui.Stamp(t)}"; }
             }
             catch (OperationCanceledException) { }
@@ -1498,7 +1512,7 @@ public sealed class JobEditorWindow : Window
             {
                 await SaveNowAsync(false);
                 var t = _playhead;
-                var clip = await Task.Run(() => _queue.Preview.ClipAsync(_job.Id, t, 6, ct), ct);
+                var clip = await Task.Run(() => _engine.ClipAsync(_job.Id, t, 6, ct), ct);
                 Process.Start(new ProcessStartInfo(clip) { UseShellExecute = true });
                 status.Text = clip;
             }

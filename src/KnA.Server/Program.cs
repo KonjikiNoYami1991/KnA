@@ -191,6 +191,26 @@ IResult? DenyAdvanced(HttpContext ctx, JobSettings? settings, JobEdit? edit = nu
     return AdvancedContent.FirstNew(settings, edit, allowed) is { } item ? Results.Problem(AdvancedContent.Denied(item), statusCode: 403) : null;
 }
 
+// ---------------------------------------------------------------- the desktop app in client mode: the engine it works with
+// Which programs there are (names only: the windows only check that each one is there), the hardware test, the GPU
+// benchmarks, the AI runtime, the AI and OCR defaults (never the AI key).
+app.MapGet("/api/engine", () =>
+{
+    var t = queue.Tools;
+    string? N(string? path) => path is null ? null : Path.GetFileName(path);
+    var tools = t is null ? null : new FfmpegTools(N(t.Ffmpeg)!, N(t.Ffprobe)!, N(t.Scxvid), N(t.DoviTool), N(t.Hdr10PlusTool), N(t.VsPipe))
+    {
+        Fdkaac = N(t.Fdkaac), Qaac = N(t.Qaac), NvencC = N(t.NvencC), QsvencC = N(t.QsvencC), VceencC = N(t.VceencC), Mkvmerge = N(t.Mkvmerge),
+    };
+    var ai = queue.Settings.Ai;
+    return Results.Ok(new
+    {
+        tools, capabilities = queue.Settings.Capabilities, gpuBenchmarks = queue.Settings.GpuBenchmarks,
+        aiRuntime = File.Exists(ComponentManager.VenvPython(queue.Store.DataDirectory)),
+        ai = ai with { ApiKey = null }, ocr = queue.Settings.Ocr,
+    });
+});
+
 // ---------------------------------------------------------------- state, i18n & events
 app.MapGet("/api/state", (HttpContext ctx) =>
 {
@@ -415,10 +435,12 @@ app.MapGet("/api/jobs/{id:guid}/command", async (Guid id) =>
 });
 
 // Editor: analysis and edits (tracks, external files, trim, settings of this file).
-app.MapGet("/api/jobs/{id:guid}/analysis", async (Guid id, CancellationToken ct) =>
+// full=true: the whole analysis (media, tracks, plan) for the desktop app in client mode, which shares the engine's types.
+app.MapGet("/api/jobs/{id:guid}/analysis", async (Guid id, bool? full, CancellationToken ct) =>
 {
     var j = queue.Find(id) ?? throw new KeyNotFoundException();
-    return Results.Ok(AnalysisDto.From(await queue.AnalyzeAsync(j, ct), j.SourcePath));
+    var analysis = await queue.AnalyzeAsync(j, ct);
+    return full == true ? Results.Ok(analysis) : Results.Ok(AnalysisDto.From(analysis, j.SourcePath));
 });
 // Every option of the program that runs for a stream (read from its own help), for the parameter editors.
 // "Use the GPU filter instead" (editor, Filters tab): a script filter replaced by the encoder's --vpp-* filter.
@@ -430,7 +452,7 @@ app.MapPost("/api/tools/options", async (ParameterOptionsRequest req, Cancellati
         categories = KnA.Core.Tools.ToolHelp.Categories.Select(c => new { value = c, label = L.T(c) }) });
 });
 // Editor: the profile's automatic choices written into the fields (on open, after a profile or preset import).
-app.MapPost("/api/jobs/{id:guid}/materialize", async (Guid id, MaterializeRequest req, HttpContext ctx, CancellationToken ct) =>
+app.MapPost("/api/jobs/{id:guid}/materialize", async (Guid id, MaterializeRequest req, bool? full, HttpContext ctx, CancellationToken ct) =>
 {
     var j = queue.Find(id) ?? throw new KeyNotFoundException();
     var settings = req.Settings ?? j.Settings;
@@ -446,7 +468,8 @@ app.MapPost("/api/jobs/{id:guid}/materialize", async (Guid id, MaterializeReques
         (settings, edit) = EditorModel.ApplyPreset(settings, edit, preset, parts == PresetParts.None ? PresetParts.All : parts);
     }
     var (s2, e2, a) = await EditorModel.MaterializeAsync(queue, id, settings, edit, ct);
-    return Results.Ok(new { settings = s2, edit = e2, analysis = AnalysisDto.From(a, j.SourcePath) });
+    return full == true ? Results.Ok(new { settings = s2, edit = e2, full = a })
+        : Results.Ok(new { settings = s2, edit = e2, analysis = AnalysisDto.From(a, j.SourcePath) });
 });
 // Editor: the constant-quality value and speed KnA uses for the settings' quality level (rate control fields).
 // Editor (rigaya encoders): expected time of the job with each profile, from the optional GPU benchmark.
@@ -562,6 +585,23 @@ app.MapPost("/api/ocr/{sid:guid}/save", async (Guid sid, bool? use, HttpContext 
     if (use == true) await s.UseInJobAsync(queue, path, ct); else await s.SaveAsync(path, ct);
     return Results.Ok(new { path });
 });
+// The desktop app's OCR editor: every picture of the session in one stream (width, height, length, RGBA — little endian).
+app.MapGet("/api/ocr/{sid:guid}/images", async (Guid sid, HttpContext ctx, CancellationToken ct) =>
+{
+    if (!queue.OcrSessions.TryGetValue(sid, out var s)) return Results.NotFound();
+    ctx.Response.ContentType = "application/octet-stream";
+    var body = ctx.Response.Body;
+    var head = new byte[12];
+    foreach (var l in s.Lines)
+    {
+        BitConverter.TryWriteBytes(head.AsSpan(0, 4), l.Image.Width);
+        BitConverter.TryWriteBytes(head.AsSpan(4, 4), l.Image.Height);
+        BitConverter.TryWriteBytes(head.AsSpan(8, 4), l.Image.Rgba.Length);
+        await body.WriteAsync(head, ct);
+        await body.WriteAsync(l.Image.Rgba, ct);
+    }
+    return Results.Empty;
+});
 app.MapDelete("/api/ocr/{sid:guid}", (Guid sid) => { queue.OcrSessions.TryRemove(sid, out _); return Results.Ok(); });
 
 // Compressibility check: short samples encoded with these settings predict the final size.
@@ -571,11 +611,11 @@ app.MapPost("/api/jobs/{id:guid}/estimate", async (Guid id, SizeRequest req, Can
     try
     {
         var e = await SizeEstimator.EstimateAsync(queue, j, req.Settings, req.Edit ?? j.Edit, ct: ct);
-        return Results.Ok(new { text = e.Describe(), e.Bytes });
+        return Results.Ok(new { text = e.Describe(), e.Bytes, estimate = e });
     }
     catch (InvalidOperationException ex) { return Results.Ok(new { text = ex.Message, Bytes = 0L }); }
 });
-app.MapPut("/api/jobs/{id:guid}/edit", async (Guid id, EditRequest req, HttpContext ctx, CancellationToken ct) =>
+app.MapPut("/api/jobs/{id:guid}/edit", async (Guid id, EditRequest req, bool? full, HttpContext ctx, CancellationToken ct) =>
 {
     var j = queue.Find(id) ?? throw new KeyNotFoundException();
     var files = req.Edit.ExternalFiles.Concat(req.Edit.Tracks?.Select(t => t.File) ?? []).Distinct().Where(f => f != j.SourcePath);
@@ -585,7 +625,7 @@ app.MapPut("/api/jobs/{id:guid}/edit", async (Guid id, EditRequest req, HttpCont
         return Results.Problem(L.T("Outside the allowed media roots: {0}", of), statusCode: 403);
     if (DenyAdvanced(ctx, req.Settings, req.Edit, jobs: [j], paths: files) is { } denied) return denied;
     var a = await queue.SetEditAsync(id, req.Edit, ct, req.Settings);
-    return Results.Ok(AnalysisDto.From(a, j.SourcePath));
+    return full == true ? Results.Ok(a) : Results.Ok(AnalysisDto.From(a, j.SourcePath));
 });
 
 // Desktop app in client mode: the result is home. The server forgets the job and deletes what it kept only for that
@@ -607,6 +647,10 @@ app.MapPost("/api/jobs/{id:guid}/collected", (Guid id, HttpContext ctx) =>
                 else if (Directory.Exists(o)) Directory.Delete(o, recursive: true);
             }
             if (File.Exists(j.SourcePath)) File.Delete(j.SourcePath);
+            // Subtitles, audio and fonts uploaded for it by the client too.
+            foreach (var x in j.Edit.ExternalFiles.Where(x => Path.GetFullPath(x).StartsWith(uploadsRoot, StringComparison.Ordinal)
+                                                              && !queue.Jobs.Any(o => o.Edit.ExternalFiles.Contains(x))))
+                if (File.Exists(x)) File.Delete(x);
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { log.LogWarning("Collected job {Id}: {Message}", id, ex.Message); }
     }

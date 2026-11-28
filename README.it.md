@@ -399,15 +399,17 @@ scrivi l'indirizzo), poi l'account del server; la password resta nel portachiavi
 Windows, Portachiavi di macOS, Secret Service tramite `secret-tool` su Linux). La barra in alto mostra dove si
 codificano i file; tornare a questo computer è un clic.
 
-- La coda è quella del server: aggiungi file e cartelle, avvia, ferma, pausa, ordine, impostazioni e preset del
-  pannello laterale, log; il pannello hardware mostra quello del server.
-- I file del portatile vengono **caricati da soli** (con ripresa) e i **risultati tornano da soli** nella cartella di
+- Tutto funziona come su questo computer, e gira lì: la coda (avvia, ferma, pausa, ordine, log), l'editor (tracce,
+  taglio, filtri, pagine dei parametri, anteprime e forme d'onda, stima della dimensione), l'editor OCR, l'assistente
+  AI, i preset del server (condivisi e i tuoi) e il wizard; il pannello hardware mostra quello del server. "File del
+  server" mette in coda i file del server dove sono.
+- I file del portatile vengono **caricati da soli** (con ripresa; anche sottotitoli, audio e font aggiunti nell'editor
+  o trascinati su un job) e i **risultati tornano da soli** nella cartella di
   uscita (o accanto alla sorgente), poi il server cancella ciò che aveva tenuto per loro. Una volta caricato un file il
   portatile si può spegnere: il risultato torna al collegamento successivo.
 - Se il server non è raggiungibile, KnA dice perché e intanto codifica su questo computer.
 - HTTPS tramite reverse proxy funziona; un certificato autofirmato viene mostrato con la sua impronta e, una volta
   accettato, fissato. L'HTTP semplice fuori dalla rete locale viene segnalato.
-- Prima versione: editor, anteprime, OCR e assistente AI di un file del server si aprono nella sua pagina web.
 
 La scoperta risponde sulla porta UDP 8585 (`KNA_DISCOVERY_PORT`, `KNA_DISCOVERY=off`; `KNA_PUBLIC_URL` = l'indirizzo da
 annunciare). I broadcast non attraversano sottoreti, VPN o reti bridge di Docker: lì scrivi l'indirizzo.

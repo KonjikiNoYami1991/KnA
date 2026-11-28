@@ -69,7 +69,7 @@ public class MainWindowTests
         var job = queue.AddPaths([mkv], new JobSettings()).Single();
         await Pump(() => job.Media is not null);
         var session = await KnA.Core.Ocr.OcrSession.OpenAsync(queue, job, mkv, job.Media!.Subtitles[0].Index);
-        var w = new OcrWindow(queue, session) { Width = 1200, Height = 760 };
+        var w = new OcrWindow(new LocalEditorEngine(queue), new KnA.Core.Ocr.LocalOcrSession(queue, session)) { Width = 1200, Height = 760 };
         w.Show();
         App.ApplyTheme("Dark");
         await Pump(() => session.Lines.All(l => l.Confidence >= 0), 60000);
@@ -113,7 +113,7 @@ public class MainWindowTests
         Shot(w, "app-02-queue-dark.png");
 
         // editor: every tab renders (trim loads thumbnails and frames through the preview service)
-        var editor = new JobEditorWindow(queue, vm.Jobs[0].Job, "video") { Width = 1280, Height = 860 };
+        var editor = new JobEditorWindow(new LocalEditorEngine(queue), vm.Jobs[0].Job, "video") { Width = 1280, Height = 860 };
         editor.Show();
         foreach (var (tab, wait) in new[] { ("preset", 3000), ("trim", 9000), ("video", 3000), ("audio", 3000), ("subtitles", 1500), ("filters", 1500), ("output", 2500), ("preview", 6000) })
         {
@@ -147,7 +147,7 @@ public class MainWindowTests
         int copy = TrackTabs.Duplicate(planned, ai);
         planned[copy] = TrackTabs.Retitle(planned[copy], planned[copy] with { Output = "Aac", Encoder = "aac", Filters = null });
         await queue.SetEditAsync(job0.Id, keep with { Tracks = planned });
-        var tabsEditor = new JobEditorWindow(queue, job0, "audio") { Width = 1280, Height = 860 };
+        var tabsEditor = new JobEditorWindow(new LocalEditorEngine(queue), job0, "audio") { Width = 1280, Height = 860 };
         tabsEditor.Show();
         await Pump(() => false, 3000);
         Shot(tabsEditor, "app-05-editor-audio-copies.png");
@@ -163,7 +163,7 @@ public class MainWindowTests
             Codec = VideoCodec.HEVC, Backend = EncoderBackend.Nvenc, Encoder = new EncoderOverrides { Program = EncoderProgram.Rigaya },
             VideoFilters = new VideoFilterSettings { Denoise = FilterStrength.Light, Sharpen = FilterStrength.Light },
         });
-        var gpuEditor = new JobEditorWindow(queue, job0, "filters") { Width = 1280, Height = 900 };
+        var gpuEditor = new JobEditorWindow(new LocalEditorEngine(queue), job0, "filters") { Width = 1280, Height = 900 };
         gpuEditor.Show();
         await Pump(() => false, 3000);
         Shot(gpuEditor, "app-05-editor-gpu-filters.png");
@@ -179,7 +179,7 @@ public class MainWindowTests
         await queue.SetEditAsync(job0.Id, keep);
 
         // standalone trim on a small window: only the cut, and the frame fits the visible area
-        var trim = new JobEditorWindow(queue, vm.Jobs[0].Job, JobEditorTabs.TrimOnly) { Width = 960, Height = 640 };
+        var trim = new JobEditorWindow(new LocalEditorEngine(queue), vm.Jobs[0].Job, JobEditorTabs.TrimOnly) { Width = 960, Height = 640 };
         trim.Show();
         await Pump(() => false, 9000);
         Shot(trim, "app-05-trim-only.png");
@@ -192,7 +192,7 @@ public class MainWindowTests
         Shot(settings, "app-06-settings.png");
         settings.Close();
 
-        var wizard = new PresetWizardWindow(queue);
+        var wizard = new PresetWizardWindow(new LocalEditorEngine(queue));
         wizard.Show();
         await Pump(() => false, 500);
         Shot(wizard, "app-07-wizard.png");

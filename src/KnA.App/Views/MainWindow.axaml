@@ -32,6 +32,9 @@
           <Button Classes="ghost" Command="{Binding OpenServerSettingsCommand}" ToolTip.Tip="{v:T 'Where the files are encoded: this computer or a KnA server'}">
             <TextBlock Text="{Binding EngineLabel}" FontSize="12.5" />
           </Button>
+          <Button Click="OnServerFiles" IsVisible="{Binding IsRemote}" ToolTip.Tip="{v:T 'Files of the KnA server: queued where they are, without uploading'}">
+            <StackPanel Orientation="Horizontal" Spacing="7"><PathIcon Data="{StaticResource IconFolder}" /><TextBlock Text="{v:T 'Server files'}" /></StackPanel>
+          </Button>
           <Button Command="{Binding AddFilesCommand}" ToolTip.Tip="{v:T 'Add video files'}">
             <StackPanel Orientation="Horizontal" Spacing="7"><PathIcon Data="{StaticResource IconPlus}" /><TextBlock Text="{v:T 'Files'}" /></StackPanel>
           </Button>
