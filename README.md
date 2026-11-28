@@ -386,6 +386,27 @@ administrator then creates, edits, disables and removes the other accounts in **
   [docs/REVERSE-PROXY.md](docs/REVERSE-PROXY.md); with **single sign-on** (Authelia, Authentik, oauth2-proxy) KnA takes
   the user the proxy signed in, creates the account at the first visit and follows the admin group.
 
+## Desktop app on a KnA server
+
+The desktop app can use a KnA server as its engine: a powerful PC or a homelab server runs kna-server, a laptop runs
+the desktop app. **Settings → KnA server**: "Search the local network" finds the servers by themselves (or type the
+address), then the account of the server; the password stays in the system's keychain (Windows Credential Manager,
+macOS Keychain, Secret Service through `secret-tool` on Linux). The top bar shows where the files are encoded; back to
+this computer is one click.
+
+- The queue is the server's: add files and folders, start, stop, pause, order, the side panel's settings and presets,
+  logs; the hardware panel shows the server's.
+- Files of the laptop are **uploaded by themselves** (resumable) and the **results come back by themselves** into the
+  output folder (or next to the source), then the server deletes what it kept for them. Once a file is uploaded the
+  laptop may be switched off: the result comes home at the next connection.
+- If the server can't be reached, KnA says why and encodes on this computer meanwhile.
+- HTTPS through a reverse proxy works; a self-signed certificate is shown with its fingerprint and pinned once trusted.
+  Plain HTTP outside the local network is flagged.
+- First version: the editor, previews, OCR and the AI assistant of a server's file open in its web page.
+
+Discovery answers on UDP port 8585 (`KNA_DISCOVERY_PORT`, `KNA_DISCOVERY=off`; `KNA_PUBLIC_URL` = the address to
+announce). Broadcasts don't cross subnets, VPNs or Docker bridge networks: type the address there.
+
 ## Environment variables
 
 | Variable | Use |
@@ -399,6 +420,7 @@ administrator then creates, edits, disables and removes the other accounts in **
 | `KNA_AUTH` | `off` = no accounts, everybody is an administrator (trusted networks only) |
 | `KNA_TRUSTED_PROXIES` | reverse proxies whose `X-Forwarded-*` headers are believed: addresses, networks (`172.18.0.0/16`) or `private`; this machine always ([guide](docs/REVERSE-PROXY.md)) |
 | `KNA_BASE_PATH` | path KnA is published under behind a reverse proxy, e.g. `/kna` |
+| `KNA_DISCOVERY` · `KNA_DISCOVERY_PORT` · `KNA_PUBLIC_URL` | desktop apps find the server on the local network (UDP 8585; `off` to switch it off; the address to announce) |
 | `KNA_SSO` · `KNA_SSO_ADMIN_GROUP` · `KNA_SSO_USER_GROUP` · `KNA_SSO_SECRET` · … | single sign-on from the proxy: `authelia`, `authentik` or a header name ([guide](docs/REVERSE-PROXY.md#single-sign-on-authelia-authentik-oauth2-proxy)) |
 | `KNA_ALLOW_ADVANCED` | lets administrators edit FFmpeg paths, custom builds, extra arguments, Python from the browser |
 | `KNA_FFMPEG` · `KNA_FDKAAC` · `KNA_VSPIPE` · `KNA_AI_SCRIPT` | program paths |

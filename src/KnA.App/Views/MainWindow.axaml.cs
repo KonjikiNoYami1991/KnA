@@ -241,7 +241,7 @@ public partial class MainWindow : Window, IDialogService
         return result;
     }
 
-    public Task ShowSettingsAsync(MainViewModel vm, string tab = "general") => new SettingsWindow(vm.Queue, tab, vm.Watch) { Icon = Icon }.ShowDialog(this);
+    public Task ShowSettingsAsync(MainViewModel vm, string tab = "general") => new SettingsWindow(vm.Queue, tab, vm.Watch, vm) { Icon = Icon }.ShowDialog(this);
 
     public Task ShowEditorAsync(MainViewModel vm, QueueJob job, string tab) => new JobEditorWindow(vm.Queue, job, tab) { Icon = Icon }.ShowDialog(this);
 

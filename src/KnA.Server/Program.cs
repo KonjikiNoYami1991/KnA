@@ -199,6 +199,9 @@ app.MapGet("/api/state", (HttpContext ctx) =>
         Mapping.Tools(queue), Mapping.QueueState(queue, u.Sees), queue.Jobs.Where(u.Sees).Select(JobDto.From).ToList(), powerActionsAllowed, PresetsFor(u));
 });
 
+// What this server is (the desktop app checks it before signing in: API version, name, platform).
+app.MapGet("/api/version", () => new KnA.Core.Remote.ServerInfo("KnA", AppInfo.Version, ApiVersion, Platform(), Environment.MachineName));
+
 app.MapGet("/api/i18n", () => new { lang = L.Language, table = L.IsItalian() ? L.ItalianTable : new Dictionary<string, string>() });
 
 app.MapGet("/api/events", (HttpContext ctx, CancellationToken ct) => hub.StreamAsync(ctx, ct));
@@ -277,7 +280,8 @@ app.MapPost("/api/uploads/{id}/complete", async (string id, UploadComplete req, 
     {
         var settings = req.Preset is { Length: > 0 } pn && PresetOf(user, pn) is { } preset
             ? preset.Settings with { PresetName = preset.Name } : req.Settings ?? DefaultsFor(user);
-        added = queue.AddPaths([path], settings, null, null, user.OwnerId).Count;
+        var jobs = queue.AddPaths([path], settings, null, null, user.OwnerId);
+        return Results.Ok(new { path, added = jobs.Count, jobs = jobs.Select(j => j.Id) });
     }
     return Results.Ok(new { path, added });
 });
@@ -379,7 +383,7 @@ app.MapPost("/api/jobs", (AddJobsRequest req, HttpContext ctx) =>
     if (denied.Count > 0) return Results.Problem(L.T("Outside the allowed media roots: {0}", denied[0]), statusCode: 403);
     if (DenyAdvanced(ctx, req.Settings, paths: req.Paths) is { } noAdvanced) return noAdvanced;
     var added = queue.AddPaths(req.Paths, req.Settings ?? new JobSettings(), req.Extensions, null, ctx.CurrentUser().OwnerId);
-    return Results.Ok(new { added = added.Count });
+    return Results.Ok(new { added = added.Count, jobs = added.Select(j => j.Id) });
 });
 app.MapPost("/api/jobs/remove", (IdsRequest req, HttpContext ctx) => { queue.Remove(OwnIds(ctx, req.Ids)); return Results.Ok(); });
 app.MapPost("/api/jobs/clear", (ClearRequest req, HttpContext ctx) =>
@@ -582,6 +586,31 @@ app.MapPut("/api/jobs/{id:guid}/edit", async (Guid id, EditRequest req, HttpCont
     if (DenyAdvanced(ctx, req.Settings, req.Edit, jobs: [j], paths: files) is { } denied) return denied;
     var a = await queue.SetEditAsync(id, req.Edit, ct, req.Settings);
     return Results.Ok(AnalysisDto.From(a, j.SourcePath));
+});
+
+// Desktop app in client mode: the result is home. The server forgets the job and deletes what it kept only for that
+// client: the uploaded source and its result (files of the server's own folders stay).
+app.MapPost("/api/jobs/{id:guid}/collected", (Guid id, HttpContext ctx) =>
+{
+    var j = JobOf(ctx, id) ?? throw new KeyNotFoundException();
+    if (j == queue.CurrentJob) return Results.Problem(L.T("The file is being processed."), statusCode: 409);
+    var uploadsRoot = Path.GetFullPath(uploads.DefaultFolder).TrimEnd(Path.DirectorySeparatorChar) + Path.DirectorySeparatorChar;
+    bool uploaded = Path.GetFullPath(j.SourcePath).StartsWith(uploadsRoot, OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);
+    queue.Remove([id]);
+    if (uploaded && !queue.Jobs.Any(o => o.SourcePath == j.SourcePath))
+    {
+        try
+        {
+            if (j.OutputPath is { } o && B(ctx).IsWritable(Path.GetDirectoryName(o) ?? o))
+            {
+                if (File.Exists(o)) File.Delete(o);
+                else if (Directory.Exists(o)) Directory.Delete(o, recursive: true);
+            }
+            if (File.Exists(j.SourcePath)) File.Delete(j.SourcePath);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { log.LogWarning("Collected job {Id}: {Message}", id, ex.Message); }
+    }
+    return Results.Ok();
 });
 
 app.MapPost("/api/jobs/{id:guid}/split-segments", (Guid id) =>
@@ -819,6 +848,25 @@ app.MapPost("/api/components/{id}/install", async (string id, CancellationToken 
     return Results.Ok(await queue.Components.CheckAsync(queue.Tools, online: false, ct));
 }).AdminOnly();
 
+// ---------------------------------------------------------------- discovery: desktop apps on the local network find this server
+// UDP port 8585 whatever the HTTP port (KNA_DISCOVERY_PORT), the answer carries the address; KNA_DISCOVERY=off switches it
+// off, KNA_PUBLIC_URL is the address to announce (e.g. behind a reverse proxy).
+if (AppEnv.Get("DISCOVERY")?.Trim().ToLowerInvariant() is not ("off" or "false" or "0"))
+    app.Lifetime.ApplicationStarted.Register(() =>
+    {
+        var first = app.Urls.Select(u => Uri.TryCreate(u.Replace("0.0.0.0", "localhost").Replace("[::]", "localhost").Replace("*", "localhost").Replace("+", "localhost"), UriKind.Absolute, out var x) ? x : null)
+            .OfType<Uri>().FirstOrDefault();
+        if (first is null) return;
+        var answer = KnA.Core.Remote.ServerDiscovery.AnswerFor(System.Text.Encoding.ASCII.GetBytes(KnA.Core.Remote.ServerDiscovery.Question), Environment.MachineName,
+            AppInfo.Version, Platform(), first.Port, first.Scheme, AppEnv.Get("PUBLIC_URL"))!;
+        _ = Task.Run(async () =>
+        {
+            var udpPort = AppEnv.Int("DISCOVERY_PORT", KnA.Core.Remote.ServerDiscovery.DefaultPort);
+            try { await KnA.Core.Remote.ServerDiscovery.RespondAsync(udpPort, () => answer, app.Lifetime.ApplicationStopping); }
+            catch (System.Net.Sockets.SocketException ex) { log.LogInformation("Network discovery off: UDP port {Port} not available ({Message}).", udpPort, ex.Message); }
+        });
+    });
+
 // ---------------------------------------------------------------- lifecycle
 queue.QueueCompleted += action =>
 {
@@ -972,4 +1020,8 @@ static string Platform() =>
     (OperatingSystem.IsWindows() ? "Windows" : OperatingSystem.IsMacOS() ? "macOS" : "Linux") + (IsContainer() ? " (container)" : "")
     + " · " + KnA.Core.Tools.CpuFeatures.Description;
 
-public partial class Program;
+public partial class Program
+{
+    /// <summary>The API the desktop app speaks with this server (raised when it changes incompatibly).</summary>
+    public const int ApiVersion = 1;
+}

@@ -11,6 +11,21 @@ queue, presets and settings, advanced fields locked in the editor; reverse-proxy
 
 ## 2. Desktop app on a KnA server (client mode)
 
+First part done (see "Done" below): connection, discovery, keychain, version check, certificate pinning, the server's
+queue in the main window, uploads and results back home (also after the laptop was off). Still to do, in this order:
+
+- **The rest through the server**: editor (tracks, trim, filters, parameter pages), previews and waveforms, OCR, AI
+  assistant, the server's presets and the wizard, browsing and adding the server's own files; today they open in the
+  server's web page.
+- **Files the server reaches in place** (same NAS share): recognised by themselves, no upload.
+- **Outbox** time / quota in Settings, shown in the web UI too; a notification when results are home.
+- **Streaming and segment-by-segment** modes for servers with little space, chosen by KnA (keeping the PC awake,
+  bandwidth measured).
+- **Linux keyring without secret-tool**: talk to the Secret Service over D-Bus directly (the package must not need a
+  system tool); Windows Credential Manager and macOS Keychain to be checked on real machines (point 5).
+
+The original request, for reference:
+
 When the user asks for it, the desktop app uses a KnA server as its engine instead of the local one: e.g. a powerful
 PC (or homelab server) runs kna-server, and a laptop or an older PC runs the desktop app. Not a bare remote control:
 the desktop app stays the same program with the same features, only the work (analysis, previews, encodes,
@@ -108,6 +123,13 @@ suitable backgrounds, desktop and web, next to the current light/dark themes. Mi
 the user provides or that may be redistributed; nothing scraped.
 
 ## Done (details in CHANGELOG)
+
+- Desktop app on a KnA server, first part: Settings → KnA server (UDP discovery on 8585, address completed by itself,
+  account, password in the system's keychain, `/api/version` check, self-signed certificate pinned, plain HTTP outside
+  the LAN flagged); the main window shows the server's queue live (`IQueueEngine`: `QueueService` or `RemoteQueue`);
+  local files uploaded by themselves, results downloaded into the output folder and collected (`/api/jobs/{id}/collected`
+  deletes the upload and its result on the server), also at the next connection. Checked end to end in the container
+  (upload, encode, result home, laptop switched off in between).
 
 - Proxy single sign-on: `KNA_SSO` (`authelia`, `authentik` or a header name) believed only from
   `KNA_TRUSTED_PROXIES`, optional shared secret, accounts created at the first visit, roles from `KNA_SSO_ADMIN_GROUP`,

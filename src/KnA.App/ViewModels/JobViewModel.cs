@@ -47,7 +47,7 @@ public sealed partial class JobViewModel(QueueJob job, MainViewModel owner) : Ob
         ShowProgress = IsRunning || IsPaused || j.Percent > 0;
         IsIndeterminate = j.StageIndeterminate;
         Message = j.Message;
-        Media = j.Media?.Summary ?? j.ProbeError ?? KnA.Core.Localization.L.T("Analysing…");
+        Media = j.Media?.Summary ?? j.RemoteSummary ?? j.ProbeError ?? KnA.Core.Localization.L.T("Analysing…");
         Chips = BuildChips(j.Settings, j.Edit);
 
         if (IsRunning || IsPaused)
@@ -109,10 +109,10 @@ public sealed partial class JobViewModel(QueueJob job, MainViewModel owner) : Ob
     [RelayCommand] private Task Edit() => owner.OpenEditorAsync(this);
     /// <summary>Quick trim: only the cut (keep a part, drop openings/endings), without the advanced editor.</summary>
     [RelayCommand] private Task Trim() => owner.OpenEditorAsync(this, "trim-only");   // JobEditorTabs.TrimOnly
-    [RelayCommand] private void Remove() => owner.Queue.Remove([Id]);
-    [RelayCommand] private void Retry() => owner.Queue.Reset([Id]);
-    [RelayCommand] private void MoveUp() => owner.Queue.Move(Id, -1);
-    [RelayCommand] private void MoveDown() => owner.Queue.Move(Id, 1);
+    [RelayCommand] private void Remove() => owner.Engine.Remove([Id]);
+    [RelayCommand] private void Retry() => owner.Engine.Reset([Id]);
+    [RelayCommand] private void MoveUp() => owner.Engine.Move(Id, -1);
+    [RelayCommand] private void MoveDown() => owner.Engine.Move(Id, 1);
     [RelayCommand] private Task ShowLog() => owner.ShowLogAsync(this);
     [RelayCommand] private Task ShowCommand() => owner.ShowCommandAsync(this);
 }

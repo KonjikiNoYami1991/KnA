@@ -47,7 +47,7 @@ public static class Auth
     private const string UserKey = "kna.user";
 
     // The sign-in screen and its texts must work before anybody signs in.
-    private static readonly string[] Anonymous = ["/api/auth/status", "/api/auth/login", "/api/auth/setup", "/api/auth/logout", "/api/i18n"];
+    private static readonly string[] Anonymous = ["/api/auth/status", "/api/auth/login", "/api/auth/setup", "/api/auth/logout", "/api/i18n", "/api/version"];
 
     public static bool Disabled => AppEnv.Get("AUTH")?.Trim().ToLowerInvariant() is "off" or "none" or "false" or "0" or "disabled";
 

@@ -115,6 +115,12 @@ dentro un LXC funziona ma richiede il nesting e il passaggio dei dispositivi fat
 nginx, Caddy, Traefik o Nginx Proxy Manager davanti a KnA (su un dominio o sotto `/kna`): imposta
 `KNA_TRUSTED_PROXIES` sulla rete Docker del proxy (oppure `private`), vedi [REVERSE-PROXY.it.md](REVERSE-PROXY.it.md).
 
+## App desktop su questo server
+
+L'app desktop trova kna-server nella rete locale con un broadcast UDP sulla porta 8585: i broadcast non arrivano a un
+container su una rete bridge, quindi con Docker scrivi l'indirizzo del server in Impostazioni → Server KnA (oppure usa
+`network_mode: host`).
+
 ## Problemi comuni
 
 | Sintomo | Soluzione |

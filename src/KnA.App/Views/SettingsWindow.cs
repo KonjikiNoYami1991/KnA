@@ -43,9 +43,12 @@ public sealed class SettingsWindow : Window
     private List<WatchFolder> _watch;
     private readonly WatchFolderService? _watchService;
 
-    public SettingsWindow(QueueService queue, string tab = "general", WatchFolderService? watch = null)
+    private readonly KnA.App.ViewModels.MainViewModel? _vm;
+
+    public SettingsWindow(QueueService queue, string tab = "general", WatchFolderService? watch = null, KnA.App.ViewModels.MainViewModel? vm = null)
     {
         _queue = queue;
+        _vm = vm;
         _watchService = watch;
         _s = queue.Settings;
         _language = _s.Language; _theme = _s.Theme; _template = _s.OutputNameTemplate;
@@ -74,6 +77,7 @@ public sealed class SettingsWindow : Window
         Add("ai", "AI", AiPage());
         Add("advanced", "Advanced", Advanced());
         Add("updates", "Updates & components", Updates());
+        if (vm is not null) Add("server", "KnA server", new ServerPage(vm, this));
         tabs.SelectedItem = tabs.Items.OfType<TabItem>().FirstOrDefault(t => (string?)t.Tag == tab) ?? tabs.Items[0];
 
         var save = Ui.Button(L.T("Save"), () => { Save(); Close(); }, primary: true);

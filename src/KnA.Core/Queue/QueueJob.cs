@@ -12,7 +12,7 @@ public sealed class QueueJob
     private readonly StringBuilder _log = new();
     private const int MaxLogChars = 400_000;
 
-    public Guid Id { get; } = Guid.NewGuid();
+    public Guid Id { get; init; } = Guid.NewGuid();
     public required string SourcePath { get; init; }
     /// <summary>The web server account that queued the job (null: desktop app, command line, watch folders, older queues).</summary>
     public Guid? Owner { get; set; }
@@ -36,6 +36,8 @@ public sealed class QueueJob
     public string? Message { get; internal set; }
     public string? Stage { get; internal set; }
     public MediaInfo? Media { get; internal set; }
+    /// <summary>A KnA server's job (desktop app in client mode): the server's one-line description of the media.</summary>
+    public string? RemoteSummary { get; internal set; }
     public string? ProbeError { get; internal set; }
     public string? OutputPath { get; internal set; }
     public string? CommandLine { get; internal set; }

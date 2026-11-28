@@ -113,6 +113,12 @@ LXC works too but needs nesting and the device passthrough done twice.
 nginx, Caddy, Traefik or Nginx Proxy Manager in front of KnA (on a domain or under `/kna`): set
 `KNA_TRUSTED_PROXIES` to the proxy's Docker network (or `private`), see [REVERSE-PROXY.md](REVERSE-PROXY.md).
 
+## Desktop app on this server
+
+The desktop app finds kna-server on the local network by a UDP broadcast on port 8585: broadcasts don't reach a
+container on a bridge network, so in Docker type the server's address in Settings → KnA server (or use
+`network_mode: host`).
+
 ## Troubleshooting
 
 | Symptom | Fix |

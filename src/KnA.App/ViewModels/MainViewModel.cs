@@ -7,6 +7,7 @@ using KnA.Core.Queue;
 using KnA.Core.Localization;
 using KnA.Core.Settings;
 using KnA.Core.Tools;
+using KnA.Core.Remote;
 
 namespace KnA.App.ViewModels;
 
@@ -27,7 +28,16 @@ public sealed partial class MainViewModel : ObservableObject
 {
     private readonly Dictionary<Guid, JobViewModel> _byId = [];
 
+    /// <summary>This computer's engine: settings, presets, hardware and the local queue.</summary>
     public QueueService Queue { get; }
+    /// <summary>The KnA server the queue runs on (client mode); null = this computer.</summary>
+    public RemoteQueue? Remote { get; private set; }
+    /// <summary>The queue shown: the server's in client mode, this computer's otherwise.</summary>
+    public IQueueEngine Engine => (IQueueEngine?)Remote ?? Queue;
+    public bool IsRemote => Remote is not null;
+    private readonly Action<QueueJob> _onJob;
+    private readonly Action<Guid> _onRemoved;
+    private readonly Action _onQueue;
     /// <summary>Watch folders run in the desktop app too (same settings as the web edition).</summary>
     public WatchFolderService Watch { get; }
     public IDialogService? Dialogs { get; set; }
@@ -47,6 +57,10 @@ public sealed partial class MainViewModel : ObservableObject
     [ObservableProperty] private bool _isDetecting;
     [ObservableProperty] private int _selectedCount;
     [ObservableProperty] private string _windowTitle = "KnA - Konjiki no Autoencoder";
+    /// <summary>Where the work happens: "This computer" or the server's name (top bar, opens Settings → KnA server).</summary>
+    [ObservableProperty] private string _engineLabel = L.T("This computer");
+    /// <summary>What the server connection has to say (lost connection, results back home…); click to dismiss.</summary>
+    [ObservableProperty] private string? _remoteNotice;
 
     public string Version => "v" + AppInfo.Version;
     public bool IsEmpty => Jobs.Count == 0;
@@ -61,9 +75,10 @@ public sealed partial class MainViewModel : ObservableObject
     public MainViewModel(QueueService queue)
     {
         Queue = queue;
-        queue.JobChanged += j => Dispatcher.UIThread.Post(() => OnJobChanged(j));
-        queue.JobRemoved += id => Dispatcher.UIThread.Post(() => OnJobRemoved(id));
-        queue.QueueChanged += () => Dispatcher.UIThread.Post(OnQueueChanged);
+        _onJob = j => Dispatcher.UIThread.Post(() => OnJobChanged(j));
+        _onRemoved = id => Dispatcher.UIThread.Post(() => OnJobRemoved(id));
+        _onQueue = () => Dispatcher.UIThread.Post(OnQueueChanged);
+        Attach(queue);
         queue.QueueCompleted += action => Dispatcher.UIThread.Post(() =>
             PowerActions.Run(action, () => Dialogs?.CloseApp()));
         Jobs.CollectionChanged += (_, _) => OnPropertyChanged(nameof(IsEmpty));
@@ -125,7 +140,7 @@ public sealed partial class MainViewModel : ObservableObject
     private void ApplyToSelected()
     {
         var s = CurrentSettings();
-        Queue.UpdateSettings(Jobs.Where(j => j.IsSelected).Select(j => j.Id), _ => s);
+        Engine.UpdateSettings(Jobs.Where(j => j.IsSelected).Select(j => j.Id), _ => s);
     }
 
     // ------------------------------------------------------------------ queue
@@ -133,7 +148,9 @@ public sealed partial class MainViewModel : ObservableObject
     public void AddPaths(IEnumerable<string> paths, string? preset = null)
     {
         var settings = preset is not null && Queue.Presets.Get(preset) is { } p ? p.Settings with { PresetName = p.Name } : CurrentSettings();
-        Queue.AddPaths(paths, settings, Queue.Settings.FolderExtensions);
+        // On a server: the files are uploaded by themselves and their results come back into the output folder.
+        if (Remote is { } remote) remote.AddLocalPaths(paths, settings, Queue.Settings.FolderExtensions, Queue.Settings.OutputDirectory);
+        else Queue.AddPaths(paths, settings, Queue.Settings.FolderExtensions);
     }
 
     /// <summary>
@@ -142,6 +159,17 @@ public sealed partial class MainViewModel : ObservableObject
     /// </summary>
     public async Task DropAsync(IReadOnlyList<string> paths, Guid? targetJob = null)
     {
+        if (Remote is not null)
+        {
+            // Client mode, first version: videos and folders are sent to the server; subtitles, audio and fonts are
+            // attached in the server's web page for now.
+            var others = paths.Where(p => !Directory.Exists(p) && !MediaExtensions.IsVideo(p)).ToList();
+            AddPaths(paths.Except(others));
+            if (others.Count > 0 && Dialogs is not null)
+                await Dialogs.ShowTextAsync("KnA", L.T("On a KnA server this version sends videos and folders; attach subtitles, audio and fonts in the server's web page for now:") + "\n\n"
+                    + string.Join("\n", others.Take(20).Select(Path.GetFileName)));
+            return;
+        }
         var plan = DropClassifier.Classify(paths, Queue, targetJob);
         if (Dialogs is not null && (plan.NeedsConfirmation || !plan.HasWork))
         {
@@ -166,7 +194,21 @@ public sealed partial class MainViewModel : ObservableObject
 
     public async Task OpenEditorAsync(JobViewModel j, string tab = "tracks")
     {
-        if (Dialogs is not null) await Dialogs.ShowEditorAsync(this, j.Job, tab);
+        if (Dialogs is null) return;
+        if (Remote is { } remote)
+        {
+            // The editor on a server's job comes with the next part of client mode: its web page has it meanwhile.
+            if (await Dialogs.ConfirmAsync(L.T("Editor"), L.T("This file is on the KnA server: in this version its editor opens in the server's web page. Open it?")))
+                OpenInBrowser(remote.Client.BaseUri.ToString());
+            return;
+        }
+        await Dialogs.ShowEditorAsync(this, j.Job, tab);
+    }
+
+    public static void OpenInBrowser(string url)
+    {
+        try { System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo(url) { UseShellExecute = true }); }
+        catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or InvalidOperationException) { }
     }
 
     [RelayCommand]
@@ -186,6 +228,11 @@ public sealed partial class MainViewModel : ObservableObject
     [RelayCommand]
     private async Task StartStop()
     {
+        if (Remote is { } remote)
+        {
+            if (remote.IsRunning) remote.Stop(); else remote.Start();
+            return;
+        }
         if (Queue.IsRunning)
         {
             await Queue.StopAsync();
@@ -203,12 +250,13 @@ public sealed partial class MainViewModel : ObservableObject
     [RelayCommand]
     private void PauseResume()
     {
+        if (Remote is { } remote) { if (remote.IsPaused) remote.Resume(); else remote.Pause(); return; }
         if (Queue.IsPaused) Queue.Resume(); else Queue.Pause();
     }
 
-    [RelayCommand] private void RemoveSelected() => Queue.Remove(Jobs.Where(j => j.IsSelected).Select(j => j.Id));
-    [RelayCommand] private void RetrySelected() => Queue.Reset(Jobs.Where(j => j.IsSelected).Select(j => j.Id));
-    [RelayCommand] private void ClearFinished() => Queue.RemoveByStatus(JobStatus.Done, JobStatus.Warning);
+    [RelayCommand] private void RemoveSelected() => Engine.Remove(Jobs.Where(j => j.IsSelected).Select(j => j.Id));
+    [RelayCommand] private void RetrySelected() => Engine.Reset(Jobs.Where(j => j.IsSelected).Select(j => j.Id));
+    [RelayCommand] private void ClearFinished() => Engine.RemoveByStatus(JobStatus.Done, JobStatus.Warning);
 
     [RelayCommand]
     private void SelectAll()
@@ -220,7 +268,9 @@ public sealed partial class MainViewModel : ObservableObject
     public async Task ShowLogAsync(JobViewModel j)
     {
         if (Dialogs is null) return;
-        var log = j.Job.Log;
+        string log;
+        try { log = Remote is { } remote ? await remote.LogAsync(j.Job) : j.Job.Log; }
+        catch (RemoteException ex) { log = ex.Message; }
         await Dialogs.ShowTextAsync(L.T("Log") + " — " + j.FileName, string.IsNullOrWhiteSpace(log) ? L.T("(empty — the log fills while the file is processed)") : log);
     }
 
@@ -228,7 +278,7 @@ public sealed partial class MainViewModel : ObservableObject
     {
         if (Dialogs is null) return;
         string cmd;
-        try { cmd = j.Job.CommandLine ?? await Queue.PreviewCommandAsync(j.Job); }
+        try { cmd = Remote is { } remote ? await remote.CommandAsync(j.Job) : j.Job.CommandLine ?? await Queue.PreviewCommandAsync(j.Job); }
         catch (Exception ex) { cmd = L.T("Cannot build the command: {0}", ex.Message); }
         await Dialogs.ShowTextAsync(L.T("FFmpeg command"), cmd);
     }
@@ -263,15 +313,16 @@ public sealed partial class MainViewModel : ObservableObject
     private void OnQueueChanged()
     {
         // Mirror the service order (moves).
-        var order = Queue.Jobs.Select(j => j.Id).ToList();
+        var order = Engine.Jobs.Select(j => j.Id).ToList();
         for (int i = 0; i < order.Count; i++)
         {
             if (!_byId.TryGetValue(order[i], out var vm)) continue;
             int cur = Jobs.IndexOf(vm);
             if (cur != i && cur >= 0) Jobs.Move(cur, i);
         }
-        IsRunning = Queue.IsRunning;
-        IsPaused = Queue.IsPaused;
+        IsRunning = Engine.IsRunning;
+        IsPaused = Engine.IsPaused;
+        UpdateEngineLabel();
         OnPropertyChanged(nameof(StartLabel));
         OnPropertyChanged(nameof(PauseLabel));
         UpdateQueueStatus();
@@ -279,15 +330,118 @@ public sealed partial class MainViewModel : ObservableObject
 
     private void UpdateQueueStatus()
     {
-        var all = Queue.Jobs;
+        var all = Engine.Jobs;
         int done = all.Count(j => j.Status is JobStatus.Done or JobStatus.Warning);
         int ready = all.Count(j => j.Status == JobStatus.Ready);
         int failed = all.Count(j => j.Status is JobStatus.Error or JobStatus.Stopped);
-        var cur = Queue.CurrentJob;
-        QueueStatus = Queue.IsPaused ? L.T("Paused")
-            : Queue.IsRunning ? $"{L.T("Encoding")} {done + 1}/{all.Count}{(cur is null ? "" : $" · {cur.Percent:0}%")}"
+        var cur = Engine.CurrentJob;
+        QueueStatus = Remote is { Connected: false } ? L.T("KnA server not reachable: retrying…")
+            : Remote is { BusyWithOthers: true, IsPaused: false } ? L.T("The server is encoding another account's file") + (ready > 0 ? " · " + L.T("{0} ready · {1} done", ready, done) : "")
+            : Engine.IsPaused ? L.T("Paused")
+            : Engine.IsRunning ? $"{L.T("Encoding")} {done + 1}/{all.Count}{(cur is null ? "" : $" · {cur.Percent:0}%")}"
             : all.Count > 0 ? L.T("{0} ready · {1} done", ready, done) + (failed > 0 ? " · " + L.T("{0} failed", failed) : "") : L.T("Idle");
-        WindowTitle = Queue.IsRunning && cur is not null ? $"{cur.Percent:0}% · KnA" : "KnA - Konjiki no Autoencoder";
+        WindowTitle = Engine.IsRunning && cur is not null ? $"{cur.Percent:0}% · KnA" : "KnA - Konjiki no Autoencoder";
+    }
+
+    // ------------------------------------------------------------------ this computer or a KnA server
+
+    private void Attach(IQueueEngine e)
+    {
+        e.JobChanged += _onJob;
+        e.JobRemoved += _onRemoved;
+        e.QueueChanged += _onQueue;
+    }
+
+    private void Detach(IQueueEngine e)
+    {
+        e.JobChanged -= _onJob;
+        e.JobRemoved -= _onRemoved;
+        e.QueueChanged -= _onQueue;
+    }
+
+    /// <summary>The list shows <see cref="Engine"/>'s jobs again (after switching where the work happens).</summary>
+    private void ReloadJobs()
+    {
+        _byId.Clear();
+        Jobs.Clear();
+        foreach (var j in Engine.Jobs) OnJobChanged(j);
+        OnSelectionChanged();
+        OnQueueChanged();
+        RefreshHardware();
+        OnPropertyChanged(nameof(IsRemote));
+    }
+
+    private void UpdateEngineLabel() =>
+        EngineLabel = Remote is { } r
+            ? (r.Connected ? "🌐 " : "⚠ ") + (r.Server?.Name ?? r.Client.BaseUri.Host) + " · " + r.Client.User
+            : "🖥 " + L.T("This computer");
+
+    /// <summary>
+    /// Encodes on a KnA server from now on: checks it (version, account), mirrors its queue. Throws
+    /// <see cref="RemoteException"/> with a plain reason when it can't; this computer's queue stays as it was.
+    /// </summary>
+    public async Task ConnectAsync(RemoteServerSettings server, string password, CancellationToken ct = default)
+    {
+        var client = new KnaClient(server.Url ?? "", server.User ?? "", password, server.PinnedCertificate);
+        var remote = new RemoteQueue(client, Queue.Store.DataDirectory);
+        try { await remote.ConnectAsync(ct); }
+        catch { await remote.DisposeAsync(); throw; }
+        remote.Notice += (text, _) => Dispatcher.UIThread.Post(() => { RemoteNotice = text; UpdateQueueStatus(); UpdateEngineLabel(); RefreshHardware(); });
+        await DisconnectAsync(keepSetting: true);
+        Detach(Queue);
+        Remote = remote;
+        Attach(remote);
+        ReloadJobs();
+    }
+
+    /// <summary>Back to this computer (one click): the server keeps its jobs; results come back at the next connection.</summary>
+    public async Task DisconnectAsync(bool keepSetting = false)
+    {
+        if (Remote is not { } remote) return;
+        Detach(remote);
+        Remote = null;
+        Attach(Queue);
+        await remote.DisposeAsync();
+        ReloadJobs();
+        if (!keepSetting)
+        {
+            Queue.Settings.Remote = Queue.Settings.Remote with { Enabled = false };
+            Queue.SaveSettings();
+        }
+    }
+
+    /// <summary>At start: the server chosen last time, with the password from the system's keychain.</summary>
+    public async Task ConnectSavedServerAsync()
+    {
+        var rs = Queue.Settings.Remote;
+        if (!rs.Enabled || string.IsNullOrWhiteSpace(rs.Url) || string.IsNullOrWhiteSpace(rs.User)) return;
+        string? password = null;
+        try { password = SecretStores.ForThisSystem().Read(SecretStores.Key(rs.Url, rs.User)); }
+        catch (Exception ex) when (ex is InvalidOperationException or DllNotFoundException or EntryPointNotFoundException or System.ComponentModel.Win32Exception) { }
+        if (password is null)
+        {
+            RemoteNotice = L.T("Encoding on this computer: the password of the KnA server {0} is not in the system's keychain. Type it in Settings → KnA server.", rs.Url);
+            return;
+        }
+        EngineLabel = "⏳ " + rs.Url;
+        try { await ConnectAsync(rs, password); }
+        catch (RemoteException ex)
+        {
+            RemoteNotice = L.T("Encoding on this computer meanwhile: {0}", ex.Message);
+            UpdateEngineLabel();
+        }
+    }
+
+    [RelayCommand] private void DismissNotice() => RemoteNotice = null;
+
+    [RelayCommand]
+    private async Task OpenServerSettings()
+    {
+        if (Dialogs is null) return;
+        await Dialogs.ShowSettingsAsync(this, "server");
+        Queue.RefreshTools();
+        RefreshHardware();
+        OnPropertyChanged(nameof(Presets));
     }
 
     // ------------------------------------------------------------------ hardware / settings
@@ -295,6 +449,7 @@ public sealed partial class MainViewModel : ObservableObject
     [RelayCommand]
     private async Task DetectHardwareAsync()
     {
+        if (Remote is not null) { RefreshHardware(); return; }   // the server tests its own hardware
         IsDetecting = true;
         HardwareInfo = L.T("Testing…");
         try
@@ -317,12 +472,27 @@ public sealed partial class MainViewModel : ObservableObject
     private void RefreshHardware()
     {
         Hardware.Clear();
-        var caps = Queue.Settings.Capabilities;
+        // Client mode: the hardware that encodes is the server's.
+        var caps = Remote is { } remote ? remote.Capabilities : Queue.Settings.Capabilities;
+        if (Remote is { Server: { } info })
+        {
+            if (caps is not null) FillHardwareTable(caps, localOs: false);
+            HardwareInfo = L.T("KnA server \"{0}\" · KnA {1} · {2}", info.Name, info.Version, info.Platform)
+                           + (caps is null ? "\n" + L.T("Its hardware has not been tested yet (its web page: Settings → Hardware).")
+                               : "\n" + caps.Version.Replace("ffmpeg version ", "FFmpeg ").Split(" Copyright")[0]);
+            return;
+        }
         if (caps is null)
         {
             HardwareInfo = Queue.Tools is null ? L.T("FFmpeg not found — open Settings.") : L.T("Not detected yet.");
             return;
         }
+        FillHardwareTable(caps);
+        LocalHardwareInfo(caps);
+    }
+
+    private void FillHardwareTable(FfmpegCapabilities caps, bool localOs = true)
+    {
         HardwareCell Cell(VideoCodec c, EncoderBackend b)
         {
             var e = caps.Find(c, b);
@@ -337,11 +507,17 @@ public sealed partial class MainViewModel : ObservableObject
         foreach (var b in VideoEncoders.AllBackends)
         {
             if (b == EncoderBackend.Vulkan && !caps.Encoders.Any(e => e.Backend == b && e.Compiled)) continue;
-            if (b == EncoderBackend.VideoToolbox && !OperatingSystem.IsMacOS()) continue;
-            if (b == EncoderBackend.Vaapi && !OperatingSystem.IsLinux()) continue;
-            if (b == EncoderBackend.Amf && OperatingSystem.IsMacOS()) continue;
+            // A server's table: the backends its own detection found (its system may differ from this one).
+            if (!localOs && !caps.Encoders.Any(e => e.Backend == b && e.Compiled)) continue;
+            if (localOs && b == EncoderBackend.VideoToolbox && !OperatingSystem.IsMacOS()) continue;
+            if (localOs && b == EncoderBackend.Vaapi && !OperatingSystem.IsLinux()) continue;
+            if (localOs && b == EncoderBackend.Amf && OperatingSystem.IsMacOS()) continue;
             Hardware.Add(new HardwareRow { Name = b.Short(), H264 = Cell(VideoCodec.H264, b), Hevc = Cell(VideoCodec.HEVC, b), Av1 = Cell(VideoCodec.AV1, b) });
         }
+    }
+
+    private void LocalHardwareInfo(FfmpegCapabilities caps)
+    {
         // The table shows H.264/HEVC/AV1; the other codecs that work are listed with their backends.
         var others = caps.Encoders.Where(e => e.Usable && e.Codec is not (VideoCodec.H264 or VideoCodec.HEVC or VideoCodec.AV1))
             .GroupBy(e => e.Codec).Select(g => $"{g.Key.Short()} ({string.Join("/", g.Select(e => e.Backend.Short()).Distinct())})");

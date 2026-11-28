@@ -391,6 +391,27 @@ modifica, disattiva ed elimina gli altri account in **Impostazioni → Account**
   oauth2-proxy) KnA prende l'utente che il proxy ha fatto accedere, crea l'account alla prima visita e segue il gruppo
   degli amministratori.
 
+## App desktop su un server KnA
+
+L'app desktop può usare un server KnA come motore: un PC potente o un server dell'homelab esegue kna-server, un
+portatile esegue l'app desktop. **Impostazioni → Server KnA**: "Cerca nella rete locale" trova i server da sola (oppure
+scrivi l'indirizzo), poi l'account del server; la password resta nel portachiavi di sistema (Gestione credenziali di
+Windows, Portachiavi di macOS, Secret Service tramite `secret-tool` su Linux). La barra in alto mostra dove si
+codificano i file; tornare a questo computer è un clic.
+
+- La coda è quella del server: aggiungi file e cartelle, avvia, ferma, pausa, ordine, impostazioni e preset del
+  pannello laterale, log; il pannello hardware mostra quello del server.
+- I file del portatile vengono **caricati da soli** (con ripresa) e i **risultati tornano da soli** nella cartella di
+  uscita (o accanto alla sorgente), poi il server cancella ciò che aveva tenuto per loro. Una volta caricato un file il
+  portatile si può spegnere: il risultato torna al collegamento successivo.
+- Se il server non è raggiungibile, KnA dice perché e intanto codifica su questo computer.
+- HTTPS tramite reverse proxy funziona; un certificato autofirmato viene mostrato con la sua impronta e, una volta
+  accettato, fissato. L'HTTP semplice fuori dalla rete locale viene segnalato.
+- Prima versione: editor, anteprime, OCR e assistente AI di un file del server si aprono nella sua pagina web.
+
+La scoperta risponde sulla porta UDP 8585 (`KNA_DISCOVERY_PORT`, `KNA_DISCOVERY=off`; `KNA_PUBLIC_URL` = l'indirizzo da
+annunciare). I broadcast non attraversano sottoreti, VPN o reti bridge di Docker: lì scrivi l'indirizzo.
+
 ## Variabili d'ambiente
 
 | Variabile | Uso |
@@ -404,6 +425,7 @@ modifica, disattiva ed elimina gli altri account in **Impostazioni → Account**
 | `KNA_AUTH` | `off` = niente account, sono tutti amministratori (solo reti fidate) |
 | `KNA_TRUSTED_PROXIES` | reverse proxy di cui credere alle intestazioni `X-Forwarded-*`: indirizzi, reti (`172.18.0.0/16`) o `private`; questa macchina sempre ([guida](docs/REVERSE-PROXY.it.md)) |
 | `KNA_BASE_PATH` | percorso sotto cui KnA è pubblicato dietro un reverse proxy, es. `/kna` |
+| `KNA_DISCOVERY` · `KNA_DISCOVERY_PORT` · `KNA_PUBLIC_URL` | le app desktop trovano il server nella rete locale (UDP 8585; `off` per spegnerla; l'indirizzo da annunciare) |
 | `KNA_SSO` · `KNA_SSO_ADMIN_GROUP` · `KNA_SSO_USER_GROUP` · `KNA_SSO_SECRET` · … | single sign-on dal proxy: `authelia`, `authentik` o il nome di un'intestazione ([guida](docs/REVERSE-PROXY.it.md#single-sign-on-authelia-authentik-oauth2-proxy)) |
 | `KNA_ALLOW_ADVANCED` | consente di modificare dal browser FFmpeg, build personalizzate, argomenti extra, Python |
 | `KNA_FFMPEG` · `KNA_FDKAAC` · `KNA_VSPIPE` · `KNA_AI_SCRIPT` | percorsi dei programmi |

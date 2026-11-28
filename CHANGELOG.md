@@ -50,6 +50,21 @@
   follow `KNA_SSO_ADMIN_GROUP`, `KNA_SSO_USER_GROUP` limits who may enter; "Sign out" leads to the portal
   (`KNA_SSO_LOGOUT_URL`). KnA's own sign-in and HTTP Basic keep working without the header.
 
+**Desktop app on a KnA server** (client mode, first part)
+- Settings → KnA server: servers on the local network found by themselves (UDP discovery on port 8585, answered by
+  kna-server), or an address typed (completed by itself: `192.168.1.10` → `http://192.168.1.10:8585`, names → HTTPS);
+  the account of point 1; the password in the system's keychain (Windows Credential Manager, macOS Keychain, Secret
+  Service through secret-tool), never in a file. The server's version is checked (`/api/version`), too old or too new
+  is said plainly; a self-signed HTTPS certificate is shown with its fingerprint and pinned once trusted; plain HTTP
+  outside the local network is flagged. The top bar shows where the files are encoded; back to this computer is one
+  click; an unreachable server leaves the work on this computer, saying why.
+- The main window shows the server's queue with live progress: add files and folders, start, stop, pause, order,
+  retry, remove, apply the side panel's settings, logs and commands; the hardware panel shows the server's.
+- Local files are uploaded by themselves (resumable, smaller pieces through a strict proxy) and their results come back
+  by themselves into the output folder or next to the source (resumable, never overwriting), then the server deletes
+  the upload and its result. Once uploaded, the laptop may be switched off: results come home at the next connection.
+- The editor, previews, OCR and the AI assistant of a server's file open in its web page for now.
+
 **Fixes**
 - NVEncC / QSVEncC / VCEEncC with FFmpeg decoding: the size shown (and the final size estimated from it) was the raw
   frames sent to the encoder (~600 Mb/s at 1080p: a "394 GB" film); it is now the encoded file.
@@ -300,6 +315,24 @@
   alla prima visita (`KNA_SSO_CREATE=false` per ammettere solo quelli esistenti; il primo account è l'amministratore),
   i ruoli seguono `KNA_SSO_ADMIN_GROUP`, `KNA_SSO_USER_GROUP` limita chi può entrare; "Esci" porta al portale
   (`KNA_SSO_LOGOUT_URL`). L'accesso di KnA e HTTP Basic continuano a funzionare senza l'intestazione.
+
+**App desktop su un server KnA** (modalità client, prima parte)
+- Impostazioni → Server KnA: i server della rete locale trovati da soli (scoperta UDP sulla porta 8585, a cui risponde
+  kna-server), oppure un indirizzo scritto (completato da solo: `192.168.1.10` → `http://192.168.1.10:8585`, i nomi →
+  HTTPS); l'account del punto 1; la password nel portachiavi di sistema (Gestione credenziali di Windows, Portachiavi
+  di macOS, Secret Service tramite secret-tool), mai in un file. La versione del server viene controllata
+  (`/api/version`), troppo vecchia o troppo nuova lo si dice chiaramente; un certificato HTTPS autofirmato viene
+  mostrato con la sua impronta e fissato una volta accettato; l'HTTP semplice fuori dalla rete locale viene segnalato.
+  La barra in alto mostra dove si codificano i file; tornare a questo computer è un clic; un server irraggiungibile
+  lascia il lavoro su questo computer, dicendo perché.
+- La finestra principale mostra la coda del server con l'avanzamento in tempo reale: aggiungi file e cartelle, avvia,
+  ferma, pausa, ordine, riprova, rimuovi, applica le impostazioni del pannello laterale, log e comandi; il pannello
+  hardware mostra quello del server.
+- I file locali vengono caricati da soli (con ripresa, pezzi più piccoli con un proxy severo) e i risultati tornano da
+  soli nella cartella di uscita o accanto alla sorgente (con ripresa, senza mai sovrascrivere), poi il server cancella
+  il caricamento e il suo risultato. Una volta caricato, il portatile si può spegnere: i risultati tornano al
+  collegamento successivo.
+- Editor, anteprime, OCR e assistente AI di un file del server per ora si aprono nella sua pagina web.
 
 **Correzioni**
 - NVEncC / QSVEncC / VCEEncC con decodifica FFmpeg: la dimensione mostrata (e quella finale stimata) era dei fotogrammi

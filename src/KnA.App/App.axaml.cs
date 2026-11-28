@@ -32,11 +32,14 @@ public partial class App : Application
             desktop.ShutdownRequested += (_, _) =>
             {
                 _listen.Cancel();
+                // On a server the jobs go on there; uploads resume at the next start.
+                if (vm.Remote is { } remote) remote.DisposeAsync().AsTask().Wait(TimeSpan.FromSeconds(5));
                 queue.StopAsync().Wait(TimeSpan.FromSeconds(10));
                 queue.SaveQueue();
                 queue.Dispose();
             };
-            Handle(vm, desktop.Args ?? []);
+            // Encode on the KnA server chosen last time (falls back to this computer, saying why).
+            window.Opened += async (_, _) => { await vm.ConnectSavedServerAsync(); Handle(vm, desktop.Args ?? []); };
             SingleInstance.Listen(args => Dispatcher.UIThread.Post(() =>
             {
                 Handle(vm, args);
@@ -51,7 +54,8 @@ public partial class App : Application
     {
         var a = LaunchArgs.Parse(raw);
         if (a.Paths.Count > 0) vm.AddPaths(a.Paths, a.Preset);
-        if (a.Start && vm.Queue.Tools is not null && !vm.Queue.IsRunning) vm.Queue.Start();
+        if (a.Start && vm.Remote is { } remote) { if (!remote.IsRunning) remote.Start(); }
+        else if (a.Start && vm.Queue.Tools is not null && !vm.Queue.IsRunning) vm.Queue.Start();
     }
 
     public static void ApplyTheme(string theme)

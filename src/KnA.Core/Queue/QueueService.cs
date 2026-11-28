@@ -33,7 +33,7 @@ public sealed record JobAnalysis(
 /// Thread-safe; events are raised on background threads (front-ends marshal them to their UI thread).
 /// The queue is saved to disk and restored at the next start.
 /// </summary>
-public sealed class QueueService : IDisposable
+public sealed class QueueService : IDisposable, IQueueEngine
 {
     private readonly List<QueueJob> _jobs = [];
     private readonly object _lock = new();
@@ -544,6 +544,8 @@ public sealed class QueueService : IDisposable
     /// Moves a job <paramref name="delta"/> places; with <paramref name="among"/>, the places counted are those of the
     /// matching jobs only (a web user moves their job past their own, whatever other accounts queued in between).
     /// </summary>
+    void IQueueEngine.Move(Guid id, int delta) => Move(id, delta);
+
     public void Move(Guid id, int delta, Func<QueueJob, bool>? among = null)
     {
         lock (_lock)

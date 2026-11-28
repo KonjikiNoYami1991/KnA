@@ -91,6 +91,8 @@ public sealed class AppSettings
     public DateTimeOffset? LastUpdateCheck { get; set; }
     /// <summary>Preset names offered in the Windows "Send to" menu.</summary>
     public List<string> SendToPresets { get; set; } = [];
+    /// <summary>Desktop app: encode on a KnA server instead of this computer (the password is in the system's keychain).</summary>
+    public Remote.RemoteServerSettings Remote { get; set; } = new();
     public double WindowWidth { get; set; } = 1280;
     public double WindowHeight { get; set; } = 800;
 }
