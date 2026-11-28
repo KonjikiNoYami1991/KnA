@@ -15,6 +15,18 @@ public sealed record AppUser(Guid Id, string Name, bool IsAdmin, AccountPermissi
     /// <summary>Requests from this machine before the first account exists (the installers set up components).</summary>
     public static readonly AppUser LocalSetup = new(Guid.Empty, "setup", true, new AccountPermissions());
     public bool MayUseAdvanced => IsAdmin || Permissions.Advanced;
+
+    /// <summary>The account its new jobs belong to (null: accounts switched off, set-up from this machine).</summary>
+    public Guid? OwnerId => Id == Guid.Empty ? null : Id;
+
+    /// <summary>
+    /// A user keeps their own presets and settings; administrators (and everybody, with accounts switched off) save
+    /// into the shared ones, which every account sees.
+    /// </summary>
+    public bool HasOwnData => !IsAdmin && Id != Guid.Empty;
+
+    /// <summary>Users see and manage their own jobs; administrators see and manage everybody's.</summary>
+    public bool Sees(KnA.Core.Queue.QueueJob job) => IsAdmin || job.Owner == Id;
 }
 
 public sealed record LoginRequest(string Name, string Password, bool Remember = false);
@@ -115,7 +127,7 @@ public static class Auth
         return null;
     }
 
-    public static void MapAuth(this WebApplication app, AccountStore accounts, LoginThrottle throttle, Func<AppUser, FileBrowser> browserFor)
+    public static void MapAuth(this WebApplication app, AccountStore accounts, LoginThrottle throttle, Func<AppUser, FileBrowser> browserFor, Action<Guid>? deleted = null)
     {
         app.MapGet("/api/auth/status", (HttpContext ctx) =>
         {
@@ -195,7 +207,7 @@ public static class Auth
             return Results.Ok(accounts.View(a));
         }).AdminOnly();
         app.MapPost("/api/accounts/{id:guid}/signout", (Guid id) => { accounts.EndSessions(id); return Results.Ok(); }).AdminOnly();
-        app.MapDelete("/api/accounts/{id:guid}", (Guid id) => { accounts.Delete(id); return Results.Ok(); }).AdminOnly();
+        app.MapDelete("/api/accounts/{id:guid}", (Guid id) => { accounts.Delete(id); deleted?.Invoke(id); return Results.Ok(); }).AdminOnly();
     }
 
     private static object Describe(AppUser u, FileBrowser browser) => new

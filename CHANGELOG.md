@@ -21,6 +21,20 @@
   changed. Lost password: `kna-reset-password` (Linux), `kna-server --reset-password NAME`, also while KnA runs.
   `KNA_AUTH=off` keeps an install without accounts. The Docker health check and the installers' checks no longer need
   a password.
+- **Each user has their own queue, presets and settings**: a user sees and manages only the files they queued (the
+  live progress, downloads, logs, OCR and the editor too: another account's job answers as if it did not exist); the
+  server encodes everybody's in queue order. *Start* also resumes the user's stopped files, *Stop* stops only theirs
+  (the others go on), *Pause* works while their own file is being encoded. Presets: built-in, **shared** (the
+  administrators', seen by everybody) and **own** (a copy with a shared preset's name takes its place for that user);
+  quick-form defaults and theme are kept per user. **Administrators see and manage everything**: every job with the
+  name of whoever queued it, and in Settings → Accounts each user's presets (share them with everybody, delete them),
+  settings (reset) and queue; deleting an account removes its presets, settings and waiting files.
+- **Editor, advanced mode**: for users without it the fields that run hand-written code or arguments on the server
+  (encoder parameter pages, audio/subtitle program parameters, custom audio/video/GPU filters, the hand-written
+  VapourSynth/AviSynth script, container parameters) are locked, with a note saying who can allow them; the server
+  keeps refusing them too. The options written by KnA's own rigaya speed/quality profiles are no longer counted as
+  hand-written (a user without advanced mode can pick a profile).
+- Fix: the editor's encoder parameter pages failed to open (a function was not imported).
 
 **Fixes**
 - NVEncC / QSVEncC / VCEEncC with FFmpeg decoding: the size shown (and the final size estimated from it) was the raw
@@ -242,6 +256,22 @@
   script finché non viene cambiata. Password persa: `kna-reset-password` (Linux), `kna-server --reset-password NOME`,
   anche con KnA in esecuzione. `KNA_AUTH=off` mantiene un'installazione senza account. L'health check Docker e i
   controlli degli installer non richiedono più una password.
+- **Ogni utente ha la propria coda, i propri preset e le proprie impostazioni**: un utente vede e gestisce solo i file
+  che ha messo in coda (anche avanzamento in tempo reale, download, log, OCR ed editor: il job di un altro account
+  risponde come se non esistesse); il server li codifica tutti nell'ordine della coda. *Avvia* riprende anche i file
+  fermati dell'utente, *Ferma* ferma solo i suoi (gli altri proseguono), *Pausa* funziona mentre si codifica un suo
+  file. Preset: integrati, **condivisi** (degli amministratori, visti da tutti) e **propri** (una copia con il nome di
+  un preset condiviso ne prende il posto per quell'utente); predefiniti del modulo rapido e tema sono per utente. **Gli
+  amministratori vedono e gestiscono tutto**: ogni job con il nome di chi l'ha messo in coda e, in Impostazioni →
+  Account, preset (da condividere con tutti o eliminare), impostazioni (da riportare a quelle condivise) e coda di
+  ogni utente; eliminare un account ne rimuove preset, impostazioni e file in attesa.
+- **Editor, modalità avanzata**: per gli utenti che non ce l'hanno, i campi che eseguono codice o argomenti scritti a
+  mano sul server (pagine dei parametri dell'encoder, parametri dei programmi audio/sottotitoli, filtri audio/video/GPU
+  personalizzati, lo script VapourSynth/AviSynth scritto a mano, parametri del contenitore) sono bloccati, con una nota
+  che dice chi può consentirli; il server continua comunque a rifiutarli. Le opzioni scritte dai profili di
+  velocità/qualità rigaya di KnA non contano più come scritte a mano (un utente senza modalità avanzata può scegliere un
+  profilo).
+- Correzione: le pagine dei parametri dell'encoder nell'editor non si aprivano (una funzione non era importata).
 
 **Correzioni**
 - NVEncC / QSVEncC / VCEEncC con decodifica FFmpeg: la dimensione mostrata (e quella finale stimata) era dei fotogrammi

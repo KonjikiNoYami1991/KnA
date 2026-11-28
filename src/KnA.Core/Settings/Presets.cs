@@ -5,7 +5,15 @@ using KnA.Core.Tools;
 
 namespace KnA.Core.Settings;
 
-public sealed record Preset(string Name, string? Description, JobSettings Settings, bool BuiltIn = false);
+public sealed record Preset(string Name, string? Description, JobSettings Settings, bool BuiltIn = false)
+{
+    /// <summary>
+    /// Web server only, in what an account is shown: "own" (the account's) or "shared" (the administrators', seen by
+    /// every account). Never stored.
+    /// </summary>
+    [System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+    public string? Scope { get; init; }
+}
 
 /// <summary>Built-in presets plus the user's own (presets.json in the data folder).</summary>
 public sealed class PresetStore(string dataDirectory)
@@ -62,7 +70,7 @@ public sealed class PresetStore(string dataDirectory)
         if (string.IsNullOrWhiteSpace(preset.Name)) throw new ArgumentException(L.T("The preset needs a name."));
         if (BuiltIns.Any(b => b.Name.Equals(preset.Name.Trim(), StringComparison.OrdinalIgnoreCase)))
             throw new InvalidOperationException(L.T("A built-in preset already has this name."));
-        var p = preset with { Name = preset.Name.Trim(), BuiltIn = false, Settings = preset.Settings with { PresetName = preset.Name.Trim() } };
+        var p = preset with { Name = preset.Name.Trim(), BuiltIn = false, Scope = null, Settings = preset.Settings with { PresetName = preset.Name.Trim() } };
         lock (_lock)
         {
             var list = User.Where(u => !u.Name.Equals(p.Name, StringComparison.OrdinalIgnoreCase)).Append(p).OrderBy(u => u.Name).ToList();

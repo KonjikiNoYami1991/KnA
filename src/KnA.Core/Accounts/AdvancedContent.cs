@@ -22,7 +22,8 @@ public static class AdvancedContent
             var fs = s.Frameserver;
             if (fs.Kind != FrameserverKind.None && fs.Chain is null && !string.IsNullOrWhiteSpace(fs.Script))
                 yield return new(L.T("a script written by hand"), fs.Script.Trim());
-            if (Has(s.Encoder.Extra)) yield return new(L.T("extra encoder options"), s.Encoder.Extra!.Trim());
+            // The options KnA's own rigaya speed/quality profiles write are choices of a list, not hand-written.
+            if (WithoutProfileOptions(s.Encoder.Extra) is { Length: > 0 } extra) yield return new(L.T("extra encoder options"), extra);
             if (Has(s.Encoder.GpuFilters) && !OnlyGpuFilters(s.Encoder.GpuFilters!)) yield return new(L.T("encoder options among the GPU filters"), s.Encoder.GpuFilters!.Trim());
             if (Has(s.VideoFilters.Custom)) yield return new(L.T("custom video filters"), s.VideoFilters.Custom!.Trim());
             if (Has(s.VideoFilters.Gpu)) yield return new(L.T("custom GPU filters"), s.VideoFilters.Gpu!.Trim());
@@ -63,4 +64,9 @@ public static class AdvancedContent
             .All(tok => tok.StartsWith("--vpp-", StringComparison.Ordinal));
 
     private static bool Has(string? v) => !string.IsNullOrWhiteSpace(v);
+
+    private static string? WithoutProfileOptions(string? extra) =>
+        string.IsNullOrWhiteSpace(extra) ? null
+            : string.Join(' ', VideoEncoders.ParseExtra(extra).Where(x => !RigayaProfiles.Owned.Contains(x.Option))
+                .Select(x => x.Value is null ? x.Option : x.Option + " " + x.Value)).Trim();
 }

@@ -105,3 +105,10 @@ export function showText(title, text) {
 export function capability(codec, backend) {
   return state.settings.capabilities?.encoders?.find(e => e.codec === codec && e.backend === backend);
 }
+
+// ---------------------------------------------------------------- advanced mode (web accounts)
+/** Hand-written scripts and program arguments run on the server: accounts without advanced mode see them locked. */
+export const advancedLocked = () => !!state.user && !state.user.advanced;
+const lockNote = () => `<small class="muted adv-note">🔒 ${esc(t("Advanced mode needed (hand-written code and arguments run on the server): ask an administrator, Settings → Accounts. What is already set keeps working."))}</small>`;
+/** `html` inside a disabled fieldset with the note when the account lacks advanced mode (its last element is the box). */
+export const advWrap = (html = "<div></div>") => advancedLocked() ? `${lockNote()}<fieldset class="adv-lock" disabled>${html}</fieldset>` : html;

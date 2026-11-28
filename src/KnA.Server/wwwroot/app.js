@@ -29,12 +29,20 @@ $("#btn-theme").onclick = () => {
 function renderPresets() {
   const sel = $("#f-preset");
   const cur = state.form.presetName ?? "";
+  // Users: the built-in presets, the shared ones (the administrators') and their own. Administrators' own presets are
+  // the shared ones.
+  const ownData = state.user && !state.user.isAdmin;
+  const group = (label, list) => list.length
+    ? `<optgroup label="${esc(label)}">${list.map(p => `<option value="${esc(p.name)}">${esc(p.name)}</option>`).join("")}</optgroup>` : "";
   sel.innerHTML = `<option value="">${esc(t("— custom —"))}</option>` +
-    `<optgroup label="${esc(t("Built-in"))}">${state.presets.filter(p => p.builtIn).map(p => `<option value="${esc(p.name)}">${esc(p.name)}</option>`).join("")}</optgroup>` +
-    (state.presets.some(p => !p.builtIn) ? `<optgroup label="${esc(t("My presets"))}">${state.presets.filter(p => !p.builtIn).map(p => `<option value="${esc(p.name)}">${esc(p.name)}</option>`).join("")}</optgroup>` : "");
+    group(t("Built-in"), state.presets.filter(p => p.builtIn)) +
+    group(ownData ? t("Shared presets") : t("My presets"), state.presets.filter(p => !p.builtIn && p.scope !== "own")) +
+    group(t("My presets"), state.presets.filter(p => !p.builtIn && p.scope === "own"));
   sel.value = state.presets.some(p => p.name === cur) ? cur : "";
   const preset = state.presets.find(p => p.name === sel.value);
-  $("#btn-delete-preset").disabled = !preset || preset.builtIn;
+  const deletable = preset && !preset.builtIn && (!ownData || preset.scope === "own");
+  $("#btn-delete-preset").disabled = !deletable;
+  $("#btn-delete-preset").title = preset && !preset.builtIn && !deletable ? t("A shared preset: only an administrator can delete it.") : "";
   sel.title = preset?.description ?? "";
 }
 $("#f-preset").onchange = e => {
@@ -44,7 +52,10 @@ $("#f-preset").onchange = e => {
   renderForm();
 };
 $("#btn-save-preset").onclick = guard(async () => {
-  const name = prompt(t("Preset name"), state.form.presetName && !state.presets.find(p => p.name === state.form.presetName)?.builtIn ? state.form.presetName : "");
+  const cur = state.presets.find(p => p.name === state.form.presetName);
+  // A user saving over a shared preset makes their own copy (it takes the shared one's place for them).
+  const name = prompt(cur?.scope === "shared" && state.user && !state.user.isAdmin ? t("Preset name (your own copy of the shared preset)") : t("Preset name"),
+    state.form.presetName && !cur?.builtIn ? state.form.presetName : "");
   if (!name) return;
   const p = await post("/api/presets", { name, description: null, settings: state.form });
   state.form.presetName = p.name;
@@ -173,6 +184,9 @@ function jobHtml(j) {
   const s = j.settings, p = profileOf(s.profile);
   const chips = [`<span class="chip">${esc(p.label)}</span>`];
   if (s.presetName) chips.unshift(`<span class="chip hw">★ ${esc(s.presetName)}</span>`);
+  // Administrators see every account's jobs: whose each one is.
+  if (state.user?.isAdmin && !state.user.authDisabled && j.owner !== state.user.id)
+    chips.unshift(`<span class="chip owner" title="${esc(t("Queued by"))}">👤 ${esc(j.ownerName ?? (j.owner ? t("deleted account") : t("server")))}</span>`);
   if (p.codecs.length > 1) chips.push(`<span class="chip">${esc(label(state.options.codecs, s.codec).split(" /")[0])}</span>`);
   if (p.encodesVideo && s.backend !== "Software" && p.allowsHardware) chips.push(`<span class="chip hw">${esc(label(state.options.backends, s.backend))}</span>`);
   if (j.label.includes("10bit")) chips.push(`<span class="chip bit">10-bit</span>`);
@@ -259,17 +273,25 @@ function renderControls() {
   pill.classList.toggle("running", q.running && !q.paused);
   pill.classList.toggle("paused", !!q.paused);
   const cur = q.currentJob && state.jobs.get(q.currentJob);
-  $("#queue-text").textContent = q.paused ? t("Paused") : q.running
+  // A user's view: the server may be busy with another account's file while theirs wait their turn.
+  const user = state.user && !state.user.isAdmin;
+  const active = q.running && (!user || q.currentJob || q.ready > 0);
+  $("#queue-text").textContent = q.otherAccount && !q.paused
+    ? (q.ready ? t("Busy with another account's file · {0} of yours waiting", q.ready) : t("Busy with another account's file"))
+    : q.paused ? t("Paused") : q.running && (!user || q.currentJob)
     ? `${t("Encoding")} ${q.done + 1}/${q.total}${cur ? " · " + Math.round(cur.percent) + "%" : ""}`
     : q.total ? t("{0} ready · {1} done", q.ready, q.done) + (q.failed ? " · " + t("{0} failed", q.failed) : "") : t("Idle");
   document.title = q.running && cur ? `${Math.round(cur.percent)}% · KnA` : "KnA · Konjiki no Autoencoder";
 
   const start = $("#btn-start");
-  start.className = "btn " + (q.running ? "danger" : "primary");
-  start.innerHTML = q.running ? `<svg><use href="#i-stop"/></svg><span>${esc(t("Stop"))}</span>` : `<svg><use href="#i-play"/></svg><span>${esc(t("Start"))}</span>`;
-  start.disabled = !q.running && !q.ready;
+  start.className = "btn " + (active ? "danger" : "primary");
+  start.innerHTML = active ? `<svg><use href="#i-stop"/></svg><span>${esc(t("Stop"))}</span>` : `<svg><use href="#i-play"/></svg><span>${esc(t("Start"))}</span>`;
+  start.dataset.stop = active ? "1" : "";
+  start.title = user ? (active ? t("Stops your files; the other accounts' go on") : "") : "";
+  start.disabled = !active && !q.ready && !(user && q.failed);
   const pause = $("#btn-pause");
-  pause.disabled = !q.running;
+  pause.disabled = !q.running || !!q.otherAccount;
+  pause.title = q.otherAccount ? t("The file being encoded belongs to another account: only an administrator can pause it.") : "";
   pause.innerHTML = q.paused ? `<svg><use href="#i-play"/></svg><span>${esc(t("Resume"))}</span>` : `<svg><use href="#i-pause"/></svg><span>${esc(t("Pause"))}</span>`;
   $("#select-all").checked = state.jobs.size > 0 && state.selected.size === state.jobs.size;
   $("#settings-target").textContent = state.selected.size ? t("{0} selected", state.selected.size) : t("for new files");
@@ -309,7 +331,7 @@ $("#select-all").onchange = e => {
 $("#btn-remove-sel").onclick = guard(() => post("/api/jobs/remove", { ids: [...state.selected] }));
 $("#btn-reset-sel").onclick = guard(() => post("/api/jobs/reset", { ids: [...state.selected] }));
 $("#btn-clear-done").onclick = guard(() => post("/api/jobs/clear", { statuses: ["Done", "Warning"] }));
-$("#btn-start").onclick = guard(async () => post(state.queue?.running ? "/api/queue/stop" : "/api/queue/start"));
+$("#btn-start").onclick = guard(async () => post($("#btn-start").dataset.stop ? "/api/queue/stop" : "/api/queue/start"));
 $("#btn-pause").onclick = guard(async () => post(state.queue?.paused ? "/api/queue/resume" : "/api/queue/pause"));
 $("#btn-copy").onclick = async () => {
   try { await navigator.clipboard.writeText($("#text-body").textContent); toast(t("Copied"), "ok"); }

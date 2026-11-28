@@ -92,20 +92,59 @@ function renderAccounts() {
       ${!a.isAdmin && a.permissions.advanced ? `<span class="chip bit">${esc(t("Advanced"))}</span>` : ""}
       ${a.name === state.user?.name ? `<span class="chip">${esc(t("you"))}</span>` : ""}
       <span class="grow"></span>
+      ${!a.isAdmin ? `<button class="btn sm ghost" type="button" data-act="data" title="${esc(t("The account's own presets, settings and queue"))}">${esc(t("Presets and settings"))}</button>` : ""}
       <button class="btn sm ghost" type="button" data-act="edit">${esc(t("Edit"))}</button>
       <button class="btn sm ghost" type="button" data-act="signout" ${a.sessions ? "" : "disabled"} title="${esc(t("Sign out on every device"))}">${esc(t("Sign out"))} (${a.sessions})</button>
       <button class="btn sm ghost" type="button" data-act="delete" title="${esc(t("Delete"))}"><svg><use href="#i-trash"/></svg></button>
       <span class="note">${esc(t("Last sign-in: {0}", when(a.lastLogin)))}${!a.isAdmin ? " · " + esc(t("folders: {0}", a.permissions.roots?.join(", ") ?? t("all of the server's"))) : ""}${a.fromEnvironment ? " · " + esc(t("created from KNA_PASSWORD")) : ""}</span>
+      ${a.id === openData ? `<div class="acc-data" data-data></div>` : ""}
     </div>`).join("");
+  if (openData) showData(accounts.find(a => a.id === openData)).catch(e => toast(e.message, "err"));
+}
+
+// ---------------------------------------------------------------- administrators: an account's own data
+let openData = null;
+
+async function showData(a) {
+  const box = $("[data-data]"); if (!box || !a) return;
+  const d = await api("GET", `/api/accounts/${a.id}/data`);
+  const own = d.settings?.defaults || d.settings?.theme;
+  box.innerHTML = `
+    <div class="note">${esc(t("Queue: {0} file(s), {1} waiting — they are in the queue above, with the account's name.", d.jobs, d.waiting))}</div>
+    <div class="note">${esc(own ? t("Own settings: quick-form defaults{0}.", d.settings.theme ? " · " + t("theme {0}", d.settings.theme) : "") : t("Own settings: none (the shared ones)."))}
+      ${own ? `<button class="btn sm ghost" type="button" data-act="reset-settings">${esc(t("Reset to the shared ones"))}</button>` : ""}</div>
+    ${d.presets.length ? d.presets.map(p => `
+      <div class="acc-preset" data-preset="${esc(p.name)}">
+        <span>★ ${esc(p.name)}</span>${p.description ? `<span class="note">${esc(p.description)}</span>` : ""}<span class="grow"></span>
+        <button class="btn sm ghost" type="button" data-act="share-preset" title="${esc(t("Copy it into the shared presets, which every account sees"))}">${esc(t("Share"))}</button>
+        <button class="btn sm ghost" type="button" data-act="delete-preset" title="${esc(t("Delete"))}"><svg><use href="#i-trash"/></svg></button>
+      </div>`).join("") : `<div class="note">${esc(t("No own presets."))}</div>`}`;
+}
+
+async function dataAction(b, a) {
+  const name = b.closest("[data-preset]")?.dataset.preset;
+  if (b.dataset.act === "reset-settings") {
+    if (!confirm(t("Reset the settings of \"{0}\" to the shared ones?", a.name))) return;
+    await api("DELETE", `/api/accounts/${a.id}/settings`);
+  } else if (b.dataset.act === "share-preset") {
+    await post(`/api/accounts/${a.id}/presets/${encodeURIComponent(name)}/share`);
+    toast(t("Preset \"{0}\" shared", name), "ok");
+  } else if (b.dataset.act === "delete-preset") {
+    if (!confirm(t("Delete the preset \"{0}\"?", name))) return;
+    await api("DELETE", `/api/accounts/${a.id}/presets/${encodeURIComponent(name)}`);
+  }
+  await showData(a);
 }
 
 $("#acc-list").onclick = guard(async e => {
   const b = e.target.closest("[data-act]"); if (!b) return;
   const a = accounts.find(x => x.id === b.closest("[data-id]").dataset.id);
-  if (b.dataset.act === "edit") openEdit(a);
+  if (["reset-settings", "share-preset", "delete-preset"].includes(b.dataset.act)) return dataAction(b, a);
+  if (b.dataset.act === "data") { openData = openData === a.id ? null : a.id; renderAccounts(); }
+  else if (b.dataset.act === "edit") openEdit(a);
   else if (b.dataset.act === "signout") { await post(`/api/accounts/${a.id}/signout`); toast(t("{0} signed out everywhere", a.name), "ok"); await loadAccounts(); }
   else if (b.dataset.act === "delete") {
-    if (!confirm(t("Delete the account \"{0}\"?", a.name))) return;
+    if (!confirm(t("Delete the account \"{0}\"? Its presets, settings and waiting files go with it.", a.name))) return;
     await api("DELETE", `/api/accounts/${a.id}`);
     await loadAccounts();
   }

@@ -14,6 +14,8 @@ public sealed class QueueJob
 
     public Guid Id { get; } = Guid.NewGuid();
     public required string SourcePath { get; init; }
+    /// <summary>The web server account that queued the job (null: desktop app, command line, watch folders, older queues).</summary>
+    public Guid? Owner { get; set; }
     public string FileName => KnA.Core.Media.Discs.DiscSource.IsTitlePath(SourcePath)
         ? KnA.Core.Media.Discs.DiscSource.Label(SourcePath) : Path.GetFileName(SourcePath);
     public string Folder => KnA.Core.Media.Discs.DiscSource.ContainingFolder(SourcePath) ?? "";

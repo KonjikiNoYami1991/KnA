@@ -6,14 +6,9 @@ right; optional controls are fine, a required manual step or a silent loss is a 
 
 ## 1. Web server: separate user accounts
 
-First part done (accounts, roles and permissions, security, migration from `KNA_PASSWORD`: see "Done" below).
-Still to do, in this order:
+First and second part done (accounts, roles and permissions, security, migration from `KNA_PASSWORD`; each user's
+own queue, presets and settings, advanced fields locked in the editor: see "Done" below). Still to do, in this order:
 
-- **Each user has their own queue, presets and settings**; the admin sees and manages everything. Until then the
-  queue is shared, users may add presets but only administrators replace or delete them, and users change only the
-  defaults of the quick form and the theme (everything else in Settings is the administrators').
-- Advanced mode in the editor: today the server refuses hand-written scripts / arguments of users without it with a
-  clear message; the editor should also hide or lock those fields for them (with point 4's Pro switch).
 - **Reverse-proxy compatible**: forwarded headers (X-Forwarded-For/Proto/Host) from trusted proxies only (the sign-in
   throttle and the cookie's Secure flag must see the real client and scheme), a configurable base path (e.g. `/kna`),
   correct cookie paths and redirects, WebSocket/SSE progress through the proxy; documented examples for nginx, Caddy,
@@ -119,6 +114,13 @@ suitable backgrounds, desktop and web, next to the current light/dark themes. Mi
 the user provides or that may be redistributed; nothing scraped.
 
 ## Done (details in CHANGELOG)
+
+- Web server accounts, second part: each user has their own queue (one engine encodes everybody's in order; Stop
+  stops only the user's files, Pause only while their own file runs), presets (built-in, shared = the administrators',
+  own) and settings (quick-form defaults, theme); administrators see every job with its owner and manage each user's
+  presets, settings and queue in Settings → Accounts; deleting an account removes them. The editor locks the
+  hand-written code and argument fields for users without advanced mode (the global "Pro" switch of point 4 still to
+  come).
 
 - Web server accounts, first part: administrator created at the first start (or from `KNA_PASSWORD`, which keeps old
   HTTP Basic clients working until the password changes), users / administrators, per-user allowed folders and

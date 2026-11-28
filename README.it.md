@@ -367,6 +367,12 @@ modifica, disattiva ed elimina gli altri account in **Impostazioni → Account**
   **modalità avanzata** (script VapourSynth/AviSynth scritti a mano, argomenti extra di encoder e programmi, filtri
   FFmpeg personalizzati: vengono eseguiti sul server, quindi sono spenti per i nuovi utenti; script e argomenti già
   presenti nei preset o nei predefiniti continuano a funzionare).
+- **Coda, preset e impostazioni propri**: ogni utente vede e gestisce solo i propri file (il server codifica quelli di
+  tutti nell'ordine della coda; *Ferma* ferma solo i suoi), i propri preset accanto a quelli integrati e a quelli
+  **condivisi** (degli amministratori), e i propri predefiniti del modulo rapido e tema. Gli amministratori vedono ogni
+  job con il nome del proprietario e gestiscono preset, impostazioni e coda di ogni utente in Impostazioni → Account
+  (un preset di un utente si può condividere con tutti). Nell'editor, gli utenti senza modalità avanzata vedono
+  bloccati i campi di codice e argomenti scritti a mano.
 - **Sicurezza**: le password sono salvate come hash PBKDF2-SHA256 con salt (600.000 iterazioni); il browser tiene un
   cookie di sessione HttpOnly, SameSite=Strict (Secure in HTTPS; "resta connesso" = 30 giorni, altrimenti 12 ore di
   inattività); dopo 5 password sbagliate ogni tentativo successivo attende il doppio (per indirizzo e per nome utente,

@@ -15,6 +15,13 @@ public sealed record JobDto(
     double? ElapsedSeconds, double PositionSeconds, double DurationSeconds, string? HdrSummary,
     IReadOnlyList<ValidationIssue> Issues, bool IsEdited, bool Encoding = false, bool Indeterminate = false, double? StagePercent = null)
 {
+    /// <summary>The account that queued the job (shown to administrators, who see everybody's jobs).</summary>
+    public Guid? Owner { get; init; }
+    public string? OwnerName { get; init; }
+
+    /// <summary>Account names by id (set by the server at start).</summary>
+    public static Func<Guid, string?> OwnerNames { get; set; } = _ => null;
+
     public static JobDto From(QueueJob j) => new(
         j.Id, j.FileName, j.Folder, j.SourcePath, j.Settings, j.Edit, j.Settings.Label, j.Status, j.Stage, j.Message,
         Math.Round(j.Percent, 2), j.Media?.Summary, j.ProbeError, j.OutputPath,
@@ -23,10 +30,12 @@ public sealed record JobDto(
         j.Progress?.Position.TotalSeconds ?? 0, j.Progress?.Duration.TotalSeconds ?? j.Media?.Duration.TotalSeconds ?? 0,
         j.HdrSummary, j.Issues,
         j.Edit.Tracks is not null || j.Edit.IsTrimmed || j.Edit.ExternalFiles.Count > 0 || j.Edit.Chapters is not null,
-        j.Progress is not null, j.StageIndeterminate, j.StagePercent is { } sp ? Math.Round(sp, 1) : null);
+        j.Progress is not null, j.StageIndeterminate, j.StagePercent is { } sp ? Math.Round(sp, 1) : null)
+    { Owner = j.Owner, OwnerName = j.Owner is { } o ? OwnerNames(o) : null };
 }
 
-public sealed record QueueStateDto(bool Running, bool Paused, Guid? CurrentJob, int Total, int Ready, int Done, int Failed);
+/// <param name="OtherAccount">The file being encoded belongs to another account (a user's view).</param>
+public sealed record QueueStateDto(bool Running, bool Paused, Guid? CurrentJob, int Total, int Ready, int Done, int Failed, bool OtherAccount = false);
 
 public sealed record OptionDto(string Value, string Label, string? Description = null);
 
@@ -213,13 +222,15 @@ public sealed record AiSuggestRequest(string Prompt, JobSettings Settings, Guid?
 
 public static class Mapping
 {
-    public static QueueStateDto QueueState(QueueService q)
+    /// <summary>The queue's state; with <paramref name="visible"/>, counted over those jobs (a user's own).</summary>
+    public static QueueStateDto QueueState(QueueService q, Func<QueueJob, bool>? visible = null)
     {
-        var jobs = q.Jobs;
-        return new QueueStateDto(q.IsRunning, q.IsPaused, q.CurrentJob?.Id, jobs.Count,
+        var jobs = q.Jobs.Where(j => visible is null || visible(j)).ToList();
+        var current = q.CurrentJob is { } c && (visible is null || visible(c)) ? c.Id : (Guid?)null;
+        return new QueueStateDto(q.IsRunning, q.IsPaused, current, jobs.Count,
             jobs.Count(j => j.Status == JobStatus.Ready),
             jobs.Count(j => j.Status is JobStatus.Done or JobStatus.Warning),
-            jobs.Count(j => j.Status is JobStatus.Error or JobStatus.Stopped));
+            jobs.Count(j => j.Status is JobStatus.Error or JobStatus.Stopped), q.CurrentJob is not null && current is null);
     }
 
     public static ToolsDto Tools(QueueService q) => new(q.Tools?.Ffmpeg, q.Tools?.Ffprobe, q.Tools?.Scxvid, q.Tools?.DoviTool, q.Tools?.Hdr10PlusTool,

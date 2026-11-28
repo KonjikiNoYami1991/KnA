@@ -1,6 +1,6 @@
 // Settings form shared by the side panel ("quick") and the editor tabs ("full": one section per tab — video, audio,
 // subtitles, output — so every setting appears in exactly one place).
-import { $, $$, esc, state, t, label, profileOf, fillSelect, capability, api } from "./core.js";
+import { $, $$, esc, state, t, label, profileOf, fillSelect, capability, api, advWrap } from "./core.js";
 
 function backendStatus(codec, backend, tenBit) {
   const c = capability(codec, backend);
@@ -244,7 +244,7 @@ function bindForm(root, s, opts, codec) {
 }
 
 /** rigaya's encoder encodes this job: chosen, or "Auto" (GPU first, the default) with it installed. */
-function usesRigaya(s, codec) {
+export function usesRigaya(s, codec) {
   const rig = state.options.rigayaEncoders?.[`${codec}|${s.backend ?? "Software"}`];
   if (!rig) return false;
   const p = s.encoder?.program ?? "Auto";
@@ -418,7 +418,8 @@ function rateControl(s, codec) {
 /** Placeholder of a parameter editor, filled by mountParams (options read from the program's own help). */
 function paramsBlock(title, tool, key, value, example, open = false) {
   const set = !!(value && String(value).trim());
-  const inner = `<div class="params" data-tool="${esc(tool)}" data-pk="${esc(key)}" data-example="${esc(example)}"></div>`;
+  // Program arguments run on the server: locked for accounts without advanced mode.
+  const inner = advWrap(`<div class="params" data-tool="${esc(tool)}" data-pk="${esc(key)}" data-example="${esc(example)}"></div>`);
   return open ? `<div class="field"><span>${esc(title)}</span>${inner}</div>`
     : `<details class="upscale" ${set ? "open" : ""}><summary>${esc(title)}${set ? " ●" : ""}</summary>${inner}</details>`;
 }

@@ -3,8 +3,8 @@
 // It works on explicit settings only: when it opens, the server writes the profile's automatic choices into the
 // fields (/materialize); a profile or preset can only be imported. Every change is saved and re-validated (debounced).
 // Mirrors KnA.App/Views/JobEditorWindow.cs.
-import { $, $$, esc, state, t, api, post, toast, guard, fmtStamp, parseStamp, fmtTime, label, profileOf, fillSelect, debounce, showText } from "./core.js";
-import { renderSettingsForm, cloneSettings, parsePairs, formatPairs } from "./form.js";
+import { $, $$, esc, state, t, api, post, toast, guard, fmtStamp, parseStamp, fmtTime, label, profileOf, fillSelect, debounce, showText, advWrap, advancedLocked } from "./core.js";
+import { renderSettingsForm, cloneSettings, parsePairs, formatPairs, usesRigaya } from "./form.js";
 import { openAssistant, analyzeJob } from "./ai.js";
 import { pickFiles } from "./files.js";
 import { openOcr } from "./ocr.js";
@@ -725,7 +725,7 @@ async function renderVideo(body) {
     }
     const cat = sub.slice(2);
     const list = options.filter(o => o.category === cat);
-    page.innerHTML = `<small class="muted">${esc(t("{0} parameters of {1}, read from its help. Applied last: they win over KnA's values.", options.length, program))}</small><div></div>`;
+    page.innerHTML = `<small class="muted">${esc(t("{0} parameters of {1}, read from its help. Applied last: they win over KnA's values.", options.length, program))}</small>${advWrap()}`;
     mountPage(page.lastElementChild, list, cmdModel(() => ed.settings.encoder?.extra, v => { ed.settings.encoder = { ...ed.settings.encoder, extra: v }; save(); }), cat === "Other",
       usesRigaya(ed.settings, ed.settings.codec) ? "--aq-temporal --bref-mode each" : "-x265-params psy-rd=2:aq-strength=0.8");
   };
@@ -865,7 +865,7 @@ function audioPage(tp) {
         <small class="muted">${esc(t("Per stereo pair (scaled for more channels); 0 = KnA's value for the codec."))}</small></label>`}`}
     </div>
     ${copy ? `<p class="muted small">${esc(t("The track is copied as it is: no encoder, no audio filter."))}</p>` : audioFiltersHtml(tp, opt)}
-    ${copy ? "" : enc ? `<h3>${esc(t("All {0} parameters", enc))}</h3><div data-track-params="audio:${esc(enc)}" data-example="${esc(enc === "fdkaac" ? "--afterburner 1" : enc === "qaac" ? "--quality 2" : "-aac_coder twoloop")}"></div>` : ""}`;
+    ${copy ? "" : enc ? `<h3>${esc(t("All {0} parameters", enc))}</h3>${advWrap(`<div data-track-params="audio:${esc(enc)}" data-example="${esc(enc === "fdkaac" ? "--afterburner 1" : enc === "qaac" ? "--quality 2" : "-aac_coder twoloop")}"></div>`)}` : ""}`;
 }
 
 /** The track's own audio filters: volume, loudness normalisation, channels (downmix), sample rate, custom. */
@@ -878,7 +878,7 @@ function audioFiltersHtml(tp, opt) {
       <label class="field"><span>${esc(t("Sample rate"))}</span><select data-af="sampleRate">${[["", t("Keep original")], ["44100", "44.1 kHz"], ["48000", "48 kHz"], ["96000", "96 kHz"]].map(([v, l]) => opt(v, l, f.sampleRate ?? "")).join("")}</select></label>
     </div>
     <label class="toggle"><input type="checkbox" data-af="normalize" ${f.normalize ? "checked" : ""}><span class="switch"></span><span>${esc(t("Normalize loudness (EBU R128)"))}</span></label>
-    <label class="field"><span>${esc(t("Custom audio filters (advanced)"))}</span><input class="mono" data-af="custom" value="${esc(f.custom ?? "")}" placeholder="highpass=f=80"></label>
+    ${advWrap(`<label class="field"><span>${esc(t("Custom audio filters (advanced)"))}</span><input class="mono" data-af="custom" value="${esc(f.custom ?? "")}" placeholder="highpass=f=80"></label>`)}
   </div>`;
 }
 
@@ -903,7 +903,7 @@ function subtitlePage(tp) {
     : `${labelsHtml(tp)}
       <label class="field" style="max-width:360px"><span>${esc(t("Format"))}</span><select data-tf="format">${formats.map(([v, l]) => opt(v, l + (possible(v) ? "" : " — " + t("not possible in {0}", container.toUpperCase())), !possible(v))).join("")}
         ${bitmap ? opt("ocr", t("Text (OCR, picture subtitles)"), false) : ""}</select></label>
-      ${cur !== "copy" && cur !== "ocr" ? `<h3>${esc(t("All {0} parameters", cur))}</h3><div data-track-params="subtitle:${esc(cur)}" data-example="-alignment 1"></div>` : ""}`}
+      ${cur !== "copy" && cur !== "ocr" ? `<h3>${esc(t("All {0} parameters", cur))}</h3>${advWrap(`<div data-track-params="subtitle:${esc(cur)}" data-example="-alignment 1"></div>`)}` : ""}`}
     <div class="row" style="flex-wrap:wrap;margin-top:8px">
       ${bitmap ? `<button class="btn sm" data-a="ocr" title="${esc(t("Opens the OCR editor: every picture next to its text, to check and correct, then save as SRT or use in this job."))}">${esc(t("OCR editor…"))}</button>` : ""}
       ${p.usesVideoFilters && !tp.burn ? `<button class="btn sm" data-a="burn-this">${esc(t("Burn this track into the picture"))}</button>` : ""}
@@ -953,7 +953,7 @@ function renderFilters(body) {
             <label class="field"><span>${esc(t("Sharpen"))}</span><select data-v="sharpen"></select></label>
           </div>
           <label class="field"><span>${esc(t("Frame rate"))}</span><input type="number" step="0.001" min="1" data-v="fps" value="${v.fps ?? ""}" placeholder="${esc(t("Keep original"))}"></label>
-          <label class="field"><span>${esc(t("Custom video filters (advanced)"))}</span><input class="mono" data-v="custom" value="${esc(v.custom ?? "")}" placeholder="eq=saturation=1.1"></label>` : ""}
+          ${advWrap(`<label class="field"><span>${esc(t("Custom video filters (advanced)"))}</span><input class="mono" data-v="custom" value="${esc(v.custom ?? "")}" placeholder="eq=saturation=1.1"></label>`)}` : ""}
         </div>
       </div>
       <div>
@@ -961,7 +961,7 @@ function renderFilters(body) {
           ${useRig ? `${pipelineHtml(ed.analysis.gpu)}<p class="muted small">${esc(t("{0}'s own filters (--vpp-*): the filters on the left become them by themselves; add others here (they run after KnA's).", rig.name))}</p><div id="vpp"></div>`
             : backend === "Software" ? `<p class="muted small">${esc(t("The video is encoded on the CPU: choose a GPU encoder in the Video tab to use its filters."))}</p>`
             : !gpuSuffix ? `<p class="muted small">${esc(t("FFmpeg has no filters for {0}: choose VCEEncC as the encoder program (Video tab) to use its GPU filters.", backendLabel))}</p>`
-            : `<p class="muted small">${esc(t("FFmpeg filters of {0}: the frames are uploaded to the GPU after the filters on the left and filtered there, right before the encoder.", backendLabel))}</p><div id="gpu-filters"></div>`}
+            : `<p class="muted small">${esc(t("FFmpeg filters of {0}: the frames are uploaded to the GPU after the filters on the left and filtered there, right before the encoder.", backendLabel))}</p>${advWrap(`<div id="gpu-filters"></div>`)}`}
         </div>` : ""}
         ${p.usesVideoFilters ? `<div class="section"><h3>VapourSynth / AviSynth</h3><div id="fs-editor"></div>
           ${ed.analysis.script ? `<details class="script-preview"><summary>${esc(t("Script of this encode (where each step runs)"))}</summary><pre class="mono small">${esc(ed.analysis.script)}</pre></details>` : ""}</div>` : ""}
@@ -1093,11 +1093,11 @@ async function frameserver(el) {
     el.innerHTML = `<label class="field"><span>${esc(t("Frameserver"))}</span><select data-fs="kind">
         ${[["None", t("None (FFmpeg decodes the file)")], ["VapourSynth", "VapourSynth"], ["AviSynth", "AviSynth+"]].map(([v2, l]) => opt(v2, l, kind)).join("")}</select></label>
       ${kind === "None" ? "" : `<div class="grid2">
-        <label class="field"><span>${esc(t("Mode"))}</span><select data-fs="mode">${opt("list", t("Filters from the list"), byHand ? "hand" : "list")}${opt("hand", t("Script written by hand"), byHand ? "hand" : "list")}</select></label>
+        <label class="field"><span>${esc(t("Mode"))}</span><select data-fs="mode">${opt("list", t("Filters from the list"), byHand ? "hand" : "list")}${advancedLocked() && !byHand ? "" : opt("hand", t("Script written by hand"), byHand ? "hand" : "list")}</select></label>
         <label class="field"><span>${esc(t("Source filter"))}</span><select data-fs="source">${catalog.sources.map(s => opt(s.value, s.label, f.source ?? "lsmas")).join("")}</select></label></div>
-      ${byHand ? `<label class="field"><span>${esc(t("Template"))}</span><select data-fs="template"><option value="">—</option>${templates.filter(x => x.kind === kind).map((x, i) => `<option value="${i}">${esc(x.name)}</option>`).join("")}</select></label>
+      ${byHand ? advWrap(`<label class="field"><span>${esc(t("Template"))}</span><select data-fs="template"><option value="">—</option>${templates.filter(x => x.kind === kind).map((x, i) => `<option value="${i}">${esc(x.name)}</option>`).join("")}</select></label>
         <label class="field"><span>${esc(t("Script"))} <small class="muted">({source} = ${esc(t("this file"))})</small></span>
-          <textarea class="mono" rows="10" data-fs="script" spellcheck="false">${esc(f.script ?? "")}</textarea></label>`
+          <textarea class="mono" rows="10" data-fs="script" spellcheck="false">${esc(f.script ?? "")}</textarea></label>`)
       : `<div class="grid2"><label class="field"><span>${esc(t("Category"))}</span><select data-fs="cat">${cats.map(([v2, l]) => opt(v2, l, ed.fsCat)).join("")}</select></label>
         <label class="field"><span>${esc(t("Filter"))}</span><select data-fs="add"><option value="">${esc(t("Add a filter…"))}</option>${filters.filter(x => x.category === ed.fsCat).map(x => `<option value="${esc(x.id)}" ${x.available === false ? "disabled" : ""}>${esc(x.name)} — ${esc(x.description)}${x.available === false ? " — " + esc(t("not available here ({0})", x.plugin)) : ""}</option>`).join("")}</select></label></div>
         ${(f.chain ?? []).length ? f.chain.map((c, i) => {

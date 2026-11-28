@@ -478,3 +478,10 @@ details.upscale[open] > summary { color: color-mix(in srgb, var(--accent) 80%, v
 .acc-edit .grow, #dlg-user .grow { flex: 1; }
 #dlg-user h3 { font-size: 14px; margin: 14px 0 8px; }
 @media (max-width: 560px) { #btn-user span { display: none; } }
+.acc-data { flex-basis: 100%; display: flex; flex-direction: column; gap: 6px; margin-top: 4px; padding: 8px 10px; border-radius: 8px; background: var(--bg-2); }
+.acc-data .note { font-size: 12px; color: var(--muted); }
+.acc-preset { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.acc-preset .grow { flex: 1; }
+.acc-row .acc-preset .note { flex-basis: auto; }
+fieldset.adv-lock { border: 0; padding: 0; margin: 0; min-width: 0; opacity: .65; }
+.adv-note { display: block; margin: 4px 0; }

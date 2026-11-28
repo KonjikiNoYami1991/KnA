@@ -40,6 +40,7 @@ public sealed class QueueService : IDisposable
     private readonly SemaphoreSlim _probeGate = new(2);
     private readonly Timer _saveTimer;
     private CancellationTokenSource? _runCts;
+    private volatile CancellationTokenSource? _jobCts;
     private ProcessGroup? _processes;
     private Task? _runTask;
     private volatile bool _running;
@@ -263,7 +264,7 @@ public sealed class QueueService : IDisposable
         AddPaths(paths, settings, folderExtensions, null);
 
     /// <summary>Adds files, folders (recursive) and discs; <paramref name="edit"/> is the starting edit of every new job (e.g. its output folder).</summary>
-    public IReadOnlyList<QueueJob> AddPaths(IEnumerable<string> paths, JobSettings settings, IEnumerable<string>? folderExtensions, JobEdit? edit)
+    public IReadOnlyList<QueueJob> AddPaths(IEnumerable<string> paths, JobSettings settings, IEnumerable<string>? folderExtensions, JobEdit? edit, Guid? owner = null)
     {
         var exts = (folderExtensions ?? Settings.FolderExtensions).Select(e => e.ToLowerInvariant()).ToHashSet();
         var files = new List<string>();
@@ -305,7 +306,7 @@ public sealed class QueueService : IDisposable
         {
             foreach (var f in files)
             {
-                var job = new QueueJob { SourcePath = Media.Discs.DiscSource.IsTitlePath(f) ? f : Path.GetFullPath(f), Settings = settings };
+                var job = new QueueJob { SourcePath = Media.Discs.DiscSource.IsTitlePath(f) ? f : Path.GetFullPath(f), Settings = settings, Owner = owner };
                 if (edit is not null) job.Edit = edit;
                 _jobs.Add(job);
                 added.Add(job);
@@ -462,7 +463,7 @@ public sealed class QueueService : IDisposable
                     result.Add(j);
                     continue;
                 }
-                var copy = new QueueJob { SourcePath = j.SourcePath, Settings = j.Settings, Edit = edit, Media = j.Media };
+                var copy = new QueueJob { SourcePath = j.SourcePath, Settings = j.Settings, Edit = edit, Media = j.Media, Owner = j.Owner };
                 foreach (var (k, v) in j.ExternalMedia) copy.ExternalMedia[k] = v;
                 _jobs.Insert(at + i, copy);
                 result.Add(copy);
@@ -539,13 +540,19 @@ public sealed class QueueService : IDisposable
             }
     }
 
-    public void Move(Guid id, int delta)
+    /// <summary>
+    /// Moves a job <paramref name="delta"/> places; with <paramref name="among"/>, the places counted are those of the
+    /// matching jobs only (a web user moves their job past their own, whatever other accounts queued in between).
+    /// </summary>
+    public void Move(Guid id, int delta, Func<QueueJob, bool>? among = null)
     {
         lock (_lock)
         {
             int i = _jobs.FindIndex(j => j.Id == id);
             if (i < 0) return;
-            int k = Math.Clamp(i + delta, 0, _jobs.Count - 1);
+            var places = Enumerable.Range(0, _jobs.Count).Where(x => x == i || among is null || among(_jobs[x])).ToList();
+            int p = places.IndexOf(i);
+            int k = places[Math.Clamp(p + delta, 0, places.Count - 1)];
             if (i == k) return;
             var j = _jobs[i];
             _jobs.RemoveAt(i);
@@ -556,17 +563,23 @@ public sealed class QueueService : IDisposable
 
     // ---------------------------------------------------------------- running
 
-    public void Start()
+    /// <summary>
+    /// Starts the queue. Stopped jobs continue (segmented and resumable encodes pick up where they were, without
+    /// asking): all of them, or with <paramref name="resume"/> only the matching ones (a web user's own), also while
+    /// the queue is already running.
+    /// </summary>
+    public void Start(Func<QueueJob, bool>? resume = null)
     {
+        if (IsRunning && resume is null) return;
+        if (!IsRunning && RefreshTools() is null) throw new InvalidOperationException(L.T("FFmpeg was not found. Configure it in Settings."));
+        List<QueueJob> stopped;
+        lock (_lock) stopped = _jobs.Where(j => j.Status == JobStatus.Stopped && (resume is null || resume(j))).ToList();
+        foreach (var j in stopped)
+        {
+            j.ResetForRun();
+            JobChanged?.Invoke(j);
+        }
         if (IsRunning) return;
-        if (RefreshTools() is null) throw new InvalidOperationException(L.T("FFmpeg was not found. Configure it in Settings."));
-        // Stopped jobs continue: segmented and resumable encodes pick up where they were, without asking.
-        lock (_lock)
-            foreach (var j in _jobs.Where(j => j.Status == JobStatus.Stopped).ToList())
-            {
-                j.ResetForRun();
-                JobChanged?.Invoke(j);
-            }
         _runCts = new CancellationTokenSource();
         _processes = new ProcessGroup();
         IsPaused = false;
@@ -589,7 +602,9 @@ public sealed class QueueService : IDisposable
                 CurrentJob = next;
                 QueueChanged?.Invoke();
                 var ctx = new RunnerContext(Tools!, Settings, Store, _processes!, j => JobChanged?.Invoke(j));
-                try { await JobRunner.RunAsync(next, ctx, ct); }
+                using var jobCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+                _jobCts = jobCts;
+                try { await JobRunner.RunAsync(next, ctx, jobCts.Token); }
                 catch (Exception ex)
                 {
                     // JobRunner handles its own errors; this is the last safety net so the queue never dies.
@@ -598,6 +613,7 @@ public sealed class QueueService : IDisposable
                     next.Message = ex.Message;
                     JobChanged?.Invoke(next);
                 }
+                finally { _jobCts = null; }
                 if (!ct.IsCancellationRequested && !string.IsNullOrWhiteSpace(Settings.AfterJobCommand))
                 {
                     var cmd = QueueEvents.Expand(Settings.AfterJobCommand, next);
@@ -633,6 +649,28 @@ public sealed class QueueService : IDisposable
         if (_runTask is { } t) await t.ConfigureAwait(false);
     }
 
+    /// <summary>
+    /// Stops only the matching jobs (a web user's own) while the queue goes on with the others: the running one, if it
+    /// matches, is stopped (and resumes from where it was at the next start); the waiting ones are marked stopped.
+    /// </summary>
+    public void StopJobs(Func<QueueJob, bool> which)
+    {
+        List<QueueJob> waiting;
+        lock (_lock) waiting = _jobs.Where(j => j.Status == JobStatus.Ready && j != CurrentJob && which(j)).ToList();
+        foreach (var j in waiting)
+        {
+            j.Status = JobStatus.Stopped;
+            j.Message = L.T("Stopped by user.");
+            JobChanged?.Invoke(j);
+        }
+        if (CurrentJob is { } current && which(current))
+        {
+            try { _jobCts?.Cancel(); } catch (ObjectDisposedException) { }   // finished meanwhile
+            _processes?.KillAll();
+            if (IsPaused) { IsPaused = false; QueueChanged?.Invoke(); }
+        }
+    }
+
     public void Pause()
     {
         if (!IsRunning || IsPaused) return;
@@ -665,7 +703,7 @@ public sealed class QueueService : IDisposable
 
     // ---------------------------------------------------------------- persistence
 
-    private sealed record SavedJob(string SourcePath, JobSettings Settings, JobEdit Edit, JobStatus Status, string? OutputPath, string? Message);
+    private sealed record SavedJob(string SourcePath, JobSettings Settings, JobEdit Edit, JobStatus Status, string? OutputPath, string? Message, Guid? Owner = null);
 
     private string QueuePath => Path.Combine(Store.DataDirectory, "queue.json");
 
@@ -676,7 +714,7 @@ public sealed class QueueService : IDisposable
         try
         {
             var data = Jobs.Select(j => new SavedJob(j.SourcePath, j.Settings, j.Edit,
-                j.Status is JobStatus.Running or JobStatus.Paused ? JobStatus.Ready : j.Status, j.OutputPath, j.Message)).ToList();
+                j.Status is JobStatus.Running or JobStatus.Paused ? JobStatus.Ready : j.Status, j.OutputPath, j.Message, j.Owner)).ToList();
             var tmp = QueuePath + ".tmp";
             File.WriteAllText(tmp, JsonSerializer.Serialize(data, SettingsStore.Json));
             File.Move(tmp, QueuePath, overwrite: true);
@@ -694,7 +732,7 @@ public sealed class QueueService : IDisposable
             {
                 foreach (var s in saved.Where(s => KnA.Core.Media.Discs.DiscSource.Exists(s.SourcePath)))
                 {
-                    var j = new QueueJob { SourcePath = s.SourcePath, Settings = s.Settings, Edit = s.Edit ?? new JobEdit() };
+                    var j = new QueueJob { SourcePath = s.SourcePath, Settings = s.Settings, Edit = s.Edit ?? new JobEdit(), Owner = s.Owner };
                     j.Status = s.Status;
                     j.OutputPath = s.OutputPath;
                     j.Message = s.Message;

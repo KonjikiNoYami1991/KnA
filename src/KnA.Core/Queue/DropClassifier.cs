@@ -50,11 +50,14 @@ public static class DropClassifier
         return SubtitleExtensions.Contains(e) || AudioExtensions.Contains(e) || TrackPlanner.IsFontFile(path) || e == ".mks";
     }
 
-    public static DropPlan Classify(IEnumerable<string> paths, QueueService queue, Guid? targetJob = null)
+    /// <param name="visible">The jobs the drop may match (a web user's own); null = all of them.</param>
+    public static DropPlan Classify(IEnumerable<string> paths, QueueService queue, Guid? targetJob = null, Func<QueueJob, bool>? visible = null)
     {
         var items = new List<DropItem>();
         var list = paths.Select(p => p.Trim().Trim('"')).Where(p => p.Length > 0).Distinct().ToList();
-        var waiting = queue.Jobs.Where(j => j.Status is JobStatus.Ready or JobStatus.Running or JobStatus.Paused)
+        var jobsSeen = queue.Jobs.Where(j => visible is null || visible(j)).ToList();
+        if (targetJob is { } tid && jobsSeen.All(j => j.Id != tid)) targetJob = null;
+        var waiting = jobsSeen.Where(j => j.Status is JobStatus.Ready or JobStatus.Running or JobStatus.Paused)
             .Select(j => j.SourcePath).ToHashSet(StringComparer.Ordinal);
         var droppedVideos = new List<string>();
 
@@ -119,7 +122,7 @@ public static class DropClassifier
             // Same base name: a video dropped together, then a waiting job (longest name wins: "Ep01" vs "Ep0").
             var video = droppedVideos.Where(v => BelongsTo(p, v)).MaxBy(v => Path.GetFileNameWithoutExtension(v).Length);
             if (video is not null) { items.Add(new DropItem(p, DropKind.External) { TargetVideo = video }); continue; }
-            var match = queue.Jobs.Where(j => j.Status is JobStatus.Ready or JobStatus.Stopped or JobStatus.Error && !DiscSource.IsTitlePath(j.SourcePath)
+            var match = jobsSeen.Where(j => j.Status is JobStatus.Ready or JobStatus.Stopped or JobStatus.Error && !DiscSource.IsTitlePath(j.SourcePath)
                                               && BelongsTo(p, j.SourcePath))
                 .MaxBy(j => Path.GetFileNameWithoutExtension(j.SourcePath).Length);
             items.Add(match is not null
@@ -153,12 +156,15 @@ public static class DropClassifier
     }
 
     /// <summary>Carries out a plan: queue, attach, import. Externals are probed and switched on in the job's track plan.</summary>
-    public static async Task<DropResult> ApplyAsync(DropPlan plan, QueueService queue, JobSettings settings, CancellationToken ct = default)
+    /// <param name="owner">The web account the new jobs belong to.</param>
+    /// <param name="presetStore">Where imported presets go (a web user's own); null = the queue's.</param>
+    public static async Task<DropResult> ApplyAsync(DropPlan plan, QueueService queue, JobSettings settings, CancellationToken ct = default,
+        Guid? owner = null, PresetStore? presetStore = null)
     {
         var messages = new List<string>();
         int added = 0, attached = 0, presets = 0;
         var toQueue = plan.Items.Where(i => i.Kind is DropKind.Video or DropKind.Disc or DropKind.Folder).Select(i => i.Path).ToList();
-        var jobs = toQueue.Count > 0 ? queue.AddPaths(toQueue, settings) : [];
+        var jobs = toQueue.Count > 0 ? queue.AddPaths(toQueue, settings, null, null, owner) : [];
         added = jobs.Count;
 
         foreach (var group in plan.Items.Where(i => i.Kind == DropKind.External).GroupBy(i => i.TargetJob?.ToString() ?? i.TargetVideo))
@@ -179,7 +185,7 @@ public static class DropClassifier
         }
 
         foreach (var item in plan.Items.Where(i => i.Kind == DropKind.Preset))
-            if (ReadPreset(item.Path) is { } p) { queue.Presets.Save(p); presets++; }
+            if (ReadPreset(item.Path) is { } p) { (presetStore ?? queue.Presets).Save(p); presets++; }
 
         foreach (var r in plan.Items.Where(i => i.Kind is DropKind.Rejected or DropKind.Duplicate))
             messages.Add($"{Path.GetFileName(r.Path)}: {r.Reason}");

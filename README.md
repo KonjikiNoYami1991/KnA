@@ -369,6 +369,11 @@ administrator then creates, edits, disables and removes the other accounts in **
   HttpOnly, SameSite=Strict session cookie (Secure over HTTPS; "stay signed in" = 30 days, otherwise 12 idle hours);
   after 5 wrong passwords each further attempt waits twice as long (per address and per user name, up to 15 minutes).
   Changing a password signs the account out on its other devices.
+- **Own queue, presets and settings**: each user sees and manages only their own files (the server encodes everybody's
+  in queue order; *Stop* stops only theirs), their own presets next to the built-in and the **shared** ones (the
+  administrators'), and their own quick-form defaults and theme. Administrators see every job with its owner's name
+  and manage each user's presets, settings and queue in Settings → Accounts (a user's preset can be shared with
+  everybody). In the editor, users without advanced mode see the fields of hand-written code and arguments locked.
 - **Scripts and curl** keep using HTTP Basic: `curl -u name:password http://server:8585/api/...`.
 - **From `KNA_PASSWORD`** (older installs, Docker, Linux and Windows services): at the first start of this version the
   password becomes the administrator **`admin`** (`KNA_ADMIN_USER` to choose another name); HTTP Basic with any user

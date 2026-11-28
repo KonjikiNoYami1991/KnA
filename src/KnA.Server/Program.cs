@@ -62,14 +62,37 @@ var app = builder.Build();
 var queue = app.Services.GetRequiredService<QueueService>();
 AutoUpdateResult autoUpdate = new(AutoUpdateState.UpToDate, "", new UpdateCheck(AppUpdater.CurrentVersion, null, false, null, ""));
 var hub = app.Services.GetRequiredService<EventHub>();
+// Each account's own presets and settings (users); administrators use the shared ones.
+var userData = new UserDataStore(store.DataDirectory, queue.Presets);
+JobDto.OwnerNames = id => accounts.Find(id)?.Name;
+IReadOnlyList<Preset> PresetsFor(AppUser u) => userData.Visible(u.Id, u.HasOwnData);
+Preset? PresetOf(AppUser u, string name) => userData.Get(u.Id, u.HasOwnData, name);
+PresetStore PresetStoreOf(AppUser u) => u.HasOwnData ? userData.PresetsOf(u.Id) : queue.Presets;
+JobSettings DefaultsFor(AppUser u) => u.HasOwnData && userData.SettingsOf(u.Id).Defaults is { } d ? d : queue.Settings.Defaults;
+void PresetsChanged() => hub.BroadcastEach("presets", PresetsFor);
+// The server's settings as an account sees them: a user's own quick-form defaults and theme in place of the shared ones.
+System.Text.Json.Nodes.JsonNode? SettingsFor(AppUser u)
+{
+    var node = Mapping.PublicSettings(queue.Settings, SettingsStore.Json);
+    if (u.HasOwnData && node is System.Text.Json.Nodes.JsonObject o)
+    {
+        var mine = userData.SettingsOf(u.Id);
+        if (mine.Defaults is { } d) o["defaults"] = System.Text.Json.JsonSerializer.SerializeToNode(d, SettingsStore.Json);
+        if (mine.Theme is { } th) o["theme"] = th;
+    }
+    return node;
+}
+// A job the signed-in account may see and manage (users: their own; administrators: everybody's).
+QueueJob? JobOf(HttpContext ctx, Guid id) => queue.Find(id) is { } j && ctx.CurrentUser().Sees(j) ? j : null;
+List<Guid> OwnIds(HttpContext ctx, IEnumerable<Guid> ids) => ids.Where(id => JobOf(ctx, id) is not null).ToList();
 var browser = app.Services.GetRequiredService<FileBrowser>();
 var userBrowsers = new UserBrowsers(browser);
 // The folders the signed-in account may use (administrators: all of the server's).
 FileBrowser B(HttpContext ctx) => userBrowsers.For(ctx.CurrentUser());
 var uploads = app.Services.GetRequiredService<UploadService>();
 var watch = app.Services.GetRequiredService<WatchFolderService>();
-watch.StatusChanged += st => hub.Broadcast("watch", st);
-watch.JobsQueued += jobs => hub.Broadcast("toast", new { text = L.T("Watch folder: {0} file(s) queued", jobs.Count) });
+watch.StatusChanged += st => hub.ToAdmins("watch", st);
+watch.JobsQueued += jobs => hub.ToAdmins("toast", new { text = L.T("Watch folder: {0} file(s) queued", jobs.Count) });
 var log = app.Logger;
 
 AppDomain.CurrentDomain.UnhandledException += (_, e) =>
@@ -111,26 +134,56 @@ app.Use(async (ctx, next) =>
 });
 
 app.UseAccounts(accounts, throttle);
+// Every /api/jobs/{id}/… and /api/ocr/{session}/… request: a user reaches only their own jobs (another account's
+// job answers as if it did not exist).
+app.Use(async (ctx, next) =>
+{
+    var path = ctx.Request.Path.Value ?? "";
+    QueueJob? job = null;
+    if (Segment(path, "/api/jobs/") is { } jid) job = queue.Find(jid);
+    else if (Segment(path, "/api/ocr/") is { } sid && queue.OcrSessions.TryGetValue(sid, out var session)) job = session.Job;
+    if (job is not null && !ctx.CurrentUser().Sees(job))
+    {
+        ctx.Response.StatusCode = 404;
+        await ctx.Response.WriteAsJsonAsync(new { title = L.T("Not found."), detail = L.T("Not found.") });
+        return;
+    }
+    await next();
+
+    static Guid? Segment(string path, string prefix) =>
+        path.StartsWith(prefix, StringComparison.OrdinalIgnoreCase) && Guid.TryParse(path[prefix.Length..].Split('/')[0], out var g) ? g : null;
+});
 app.UseDefaultFiles();
 app.UseStaticFiles();
-app.MapAuth(accounts, throttle, userBrowsers.For);
+// A deleted account's presets, settings and waiting jobs go with it (a file being encoded finishes).
+app.MapAuth(accounts, throttle, userBrowsers.For, id =>
+{
+    userData.Delete(id);
+    queue.Remove(queue.Jobs.Where(j => j.Owner == id).Select(j => j.Id));
+    PresetsChanged();
+});
 
 // Hand-written scripts and arguments run on the server: an account without advanced mode may keep those already in
 // the presets, the defaults or the job, never bring in new ones.
 IResult? DenyAdvanced(HttpContext ctx, JobSettings? settings, JobEdit? edit = null, IEnumerable<QueueJob>? jobs = null, IEnumerable<string>? paths = null)
 {
-    if (ctx.CurrentUser().MayUseAdvanced) return null;
+    var user = ctx.CurrentUser();
+    if (user.MayUseAdvanced) return null;
     if (paths?.FirstOrDefault(AdvancedContent.IsScriptSource) is { } script)
         return Results.Problem(AdvancedContent.Denied(new(L.T("a script as the source"), script)), statusCode: 403);
-    var allowed = queue.Presets.All.SelectMany(p => AdvancedContent.Of(p.Settings))
-        .Concat(AdvancedContent.Of(queue.Settings.Defaults))
+    var allowed = PresetsFor(user).SelectMany(p => AdvancedContent.Of(p.Settings))
+        .Concat(AdvancedContent.Of(queue.Settings.Defaults)).Concat(AdvancedContent.Of(DefaultsFor(user)))
         .Concat((jobs ?? []).SelectMany(j => AdvancedContent.Of(j.Settings, j.Edit)));
     return AdvancedContent.FirstNew(settings, edit, allowed) is { } item ? Results.Problem(AdvancedContent.Denied(item), statusCode: 403) : null;
 }
 
 // ---------------------------------------------------------------- state, i18n & events
-app.MapGet("/api/state", () => new StateDto(AppInfo.Version, Platform(), L.Language, Mapping.PublicSettings(queue.Settings, SettingsStore.Json), OptionsDto.Create(),
-    Mapping.Tools(queue), Mapping.QueueState(queue), queue.Jobs.Select(JobDto.From).ToList(), powerActionsAllowed, queue.Presets.All));
+app.MapGet("/api/state", (HttpContext ctx) =>
+{
+    var u = ctx.CurrentUser();
+    return new StateDto(AppInfo.Version, Platform(), L.Language, SettingsFor(u), OptionsDto.Create(),
+        Mapping.Tools(queue), Mapping.QueueState(queue, u.Sees), queue.Jobs.Where(u.Sees).Select(JobDto.From).ToList(), powerActionsAllowed, PresetsFor(u));
+});
 
 app.MapGet("/api/i18n", () => new { lang = L.Language, table = L.IsItalian() ? L.ItalianTable : new Dictionary<string, string>() });
 
@@ -192,10 +245,11 @@ app.MapDelete("/api/uploads/{id}", (string id) => { uploads.Cancel(id); return R
 app.MapPost("/api/uploads/{id}/complete", async (string id, UploadComplete req, HttpContext ctx, CancellationToken ct) =>
 {
     if (req.Enqueue && DenyAdvanced(ctx, req.Settings, paths: [uploads.Get(id)?.Name ?? ""]) is { } denied) return denied;
+    var user = ctx.CurrentUser();
     var path = uploads.Complete(id);
     int added = 0;
-    var target = req.AttachTo is { } jid ? queue.Find(jid)
-        : req.AttachToSource is { Length: > 0 } src ? queue.Jobs.LastOrDefault(j => j.SourcePath == src) : null;
+    var target = req.AttachTo is { } jid ? JobOf(ctx, jid)
+        : req.AttachToSource is { Length: > 0 } src ? queue.Jobs.LastOrDefault(j => j.SourcePath == src && user.Sees(j)) : null;
     if (target is not null)
     {
         await queue.AttachExternalsAsync(target.Id, [path], ct);
@@ -207,9 +261,9 @@ app.MapPost("/api/uploads/{id}/complete", async (string id, UploadComplete req, 
     }
     else if (req.Enqueue && (MediaExtensions.IsVideo(path) || path.EndsWith(".iso", StringComparison.OrdinalIgnoreCase)))
     {
-        var settings = req.Preset is { Length: > 0 } pn && queue.Presets.All.FirstOrDefault(p => p.Name == pn) is { } preset
-            ? preset.Settings with { PresetName = preset.Name } : req.Settings ?? queue.Settings.Defaults;
-        added = queue.AddPaths([path], settings).Count;
+        var settings = req.Preset is { Length: > 0 } pn && PresetOf(user, pn) is { } preset
+            ? preset.Settings with { PresetName = preset.Name } : req.Settings ?? DefaultsFor(user);
+        added = queue.AddPaths([path], settings, null, null, user.OwnerId).Count;
     }
     return Results.Ok(new { path, added });
 });
@@ -219,16 +273,20 @@ app.MapPost("/api/drop/classify", (DropRequest req, HttpContext ctx) =>
 {
     if (req.Paths.FirstOrDefault(p => !B(ctx).IsAllowed(p)) is { } bad)
         return Results.Problem(L.T("Outside the allowed media roots: {0}", bad), statusCode: 403);
-    return Results.Ok(DropClassifier.Classify(req.Paths, queue, req.TargetJob));
+    return Results.Ok(DropClassifier.Classify(req.Paths, queue, req.TargetJob, ctx.CurrentUser().Sees));
 });
 app.MapPost("/api/drop/apply", async (DropRequest req, HttpContext ctx, CancellationToken ct) =>
 {
     if (req.Paths.FirstOrDefault(p => !B(ctx).IsAllowed(p)) is { } bad)
         return Results.Problem(L.T("Outside the allowed media roots: {0}", bad), statusCode: 403);
     if (DenyAdvanced(ctx, req.Settings, paths: req.Paths) is { } denied) return denied;
-    var plan = DropClassifier.Classify(req.Paths, queue, req.TargetJob);
-    var r = await DropClassifier.ApplyAsync(plan, queue, req.Settings ?? queue.Settings.Defaults, ct);
-    if (r.Presets > 0) hub.Broadcast("presets", queue.Presets.All);
+    var user = ctx.CurrentUser();
+    var plan = DropClassifier.Classify(req.Paths, queue, req.TargetJob, user.Sees);
+    // Preset files bring their settings in: the same check as a preset saved from the editor.
+    foreach (var item in plan.Items.Where(i => i.Kind == DropKind.Preset))
+        if (DropClassifier.ReadPreset(item.Path) is { } dropped && DenyAdvanced(ctx, dropped.Settings) is { } deniedPreset) return deniedPreset;
+    var r = await DropClassifier.ApplyAsync(plan, queue, req.Settings ?? DefaultsFor(user), ct, user.OwnerId, PresetStoreOf(user));
+    if (r.Presets > 0) PresetsChanged();
     return Results.Ok(r);
 });
 
@@ -252,9 +310,9 @@ app.MapGet("/api/ai/setup/guide", (string provider) =>
 });
 app.MapPost("/api/ai/setup/check", async (KnA.Core.Ai.AiSettings ai, CancellationToken ct) => Results.Ok(await KnA.Core.Ai.AiSetup.CheckAsync(WithStoredKey(ai), ct))).AdminOnly();
 app.MapPost("/api/ai/setup/test", async (AiTestRequest req, CancellationToken ct) => Results.Ok(new { error = await KnA.Core.Ai.AiSetup.TestAsync(WithStoredKey(req.Ai), req.Model, ct) })).AdminOnly();
-app.MapPost("/api/ai/suggest", async (AiSuggestRequest req, CancellationToken ct) =>
+app.MapPost("/api/ai/suggest", async (AiSuggestRequest req, HttpContext ctx, CancellationToken ct) =>
 {
-    var media = req.JobId is { } jid ? queue.Find(jid)?.Media : null;
+    var media = req.JobId is { } jid ? JobOf(ctx, jid)?.Media : null;
     try { return Results.Ok(await new KnA.Core.Ai.Assistant(queue.Settings.Ai, queue.Settings.Capabilities).SuggestAsync(req.Prompt, req.Settings, media, ct)); }
     catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException or InvalidOperationException)
     {
@@ -306,19 +364,30 @@ app.MapPost("/api/jobs", (AddJobsRequest req, HttpContext ctx) =>
     var denied = req.Paths.Where(p => !B(ctx).IsAllowed(p)).ToList();
     if (denied.Count > 0) return Results.Problem(L.T("Outside the allowed media roots: {0}", denied[0]), statusCode: 403);
     if (DenyAdvanced(ctx, req.Settings, paths: req.Paths) is { } noAdvanced) return noAdvanced;
-    var added = queue.AddPaths(req.Paths, req.Settings ?? new JobSettings(), req.Extensions);
+    var added = queue.AddPaths(req.Paths, req.Settings ?? new JobSettings(), req.Extensions, null, ctx.CurrentUser().OwnerId);
     return Results.Ok(new { added = added.Count });
 });
-app.MapPost("/api/jobs/remove", (IdsRequest req) => { queue.Remove(req.Ids); return Results.Ok(); });
-app.MapPost("/api/jobs/clear", (ClearRequest req) => { queue.RemoveByStatus([.. req.Statuses]); return Results.Ok(); });
-app.MapPost("/api/jobs/reset", (IdsRequest req) => { queue.Reset(req.Ids); return Results.Ok(); });
-app.MapPost("/api/jobs/settings", (UpdateJobsRequest req, HttpContext ctx) =>
+app.MapPost("/api/jobs/remove", (IdsRequest req, HttpContext ctx) => { queue.Remove(OwnIds(ctx, req.Ids)); return Results.Ok(); });
+app.MapPost("/api/jobs/clear", (ClearRequest req, HttpContext ctx) =>
 {
-    if (DenyAdvanced(ctx, req.Settings, jobs: req.Ids.Select(queue.Find).OfType<QueueJob>()) is { } denied) return denied;
-    queue.UpdateSettings(req.Ids, _ => req.Settings);
+    var user = ctx.CurrentUser();
+    queue.Remove(queue.Jobs.Where(j => user.Sees(j) && req.Statuses.Contains(j.Status)).Select(j => j.Id));
     return Results.Ok();
 });
-app.MapPost("/api/jobs/{id:guid}/move", (Guid id, MoveRequest req) => { queue.Move(id, req.Delta); return Results.Ok(); });
+app.MapPost("/api/jobs/reset", (IdsRequest req, HttpContext ctx) => { queue.Reset(OwnIds(ctx, req.Ids)); return Results.Ok(); });
+app.MapPost("/api/jobs/settings", (UpdateJobsRequest req, HttpContext ctx) =>
+{
+    var ids = OwnIds(ctx, req.Ids);
+    if (DenyAdvanced(ctx, req.Settings, jobs: ids.Select(queue.Find).OfType<QueueJob>()) is { } denied) return denied;
+    queue.UpdateSettings(ids, _ => req.Settings);
+    return Results.Ok();
+});
+app.MapPost("/api/jobs/{id:guid}/move", (Guid id, MoveRequest req, HttpContext ctx) =>
+{
+    var user = ctx.CurrentUser();
+    queue.Move(id, req.Delta, user.IsAdmin ? null : user.Sees);   // a user moves past their own jobs
+    return Results.Ok();
+});
 app.MapGet("/api/jobs/{id:guid}/log", (Guid id) => queue.Find(id) is { } j ? Results.Text(j.Log) : Results.NotFound());
 app.MapGet("/api/jobs/{id:guid}/command", async (Guid id) =>
 {
@@ -354,7 +423,7 @@ app.MapPost("/api/jobs/{id:guid}/materialize", async (Guid id, MaterializeReques
     if (req.Profile is { } kind) (settings, edit) = EditorModel.ApplyProfile(settings, edit, kind);
     if (req.Preset is { Length: > 0 } name)
     {
-        var preset = queue.Presets.Get(name) ?? throw new KeyNotFoundException(name);
+        var preset = PresetOf(ctx.CurrentUser(), name) ?? throw new KeyNotFoundException(name);
         var parts = (req.Parts ?? []).Aggregate(PresetParts.None, (acc, x) => acc | x);
         (settings, edit) = EditorModel.ApplyPreset(settings, edit, preset, parts == PresetParts.None ? PresetParts.All : parts);
     }
@@ -382,10 +451,9 @@ app.MapPost("/api/jobs/{id:guid}/rate", (Guid id, SizeRequest req) =>
 // Editor: a preset from this file (per-track choices become the job-wide ones for other files).
 app.MapPost("/api/jobs/{id:guid}/preset", (Guid id, PresetFromJobRequest req, HttpContext ctx) =>
 {
-    if (DenyPresetChange(ctx, req.Name) is { } locked) return locked;
     if (DenyAdvanced(ctx, req.Settings, req.Edit, jobs: queue.Find(id) is { } pj ? [pj] : null) is { } denied) return denied;
-    var saved = queue.Presets.Save(new Preset(req.Name, null, EditorModel.ForPreset(req.Settings, req.Edit) with { PresetName = req.Name }));
-    hub.Broadcast("presets", queue.Presets.All);
+    var saved = PresetStoreOf(ctx.CurrentUser()).Save(new Preset(req.Name, null, EditorModel.ForPreset(req.Settings, req.Edit) with { PresetName = req.Name }));
+    PresetsChanged();
     return Results.Ok(saved);
 });
 // The audio encoders available on this server for each codec (the editor's per-track encoder list).
@@ -433,7 +501,7 @@ app.MapPost("/api/jobs/{id:guid}/ocr", async (Guid id, OcrRequest req, HttpConte
 object OcrLineDto(KnA.Core.Ocr.OcrLine l) => new { l.Index, start = l.Start.TotalSeconds, end = l.End.TotalSeconds, l.Text, l.Confidence, l.Italic, l.Forced, l.Edited };
 app.MapPost("/api/ocr/sessions", async (OcrOpenRequest req, HttpContext ctx, CancellationToken ct) =>
 {
-    var j = queue.Find(req.JobId) ?? throw new KeyNotFoundException();
+    var j = JobOf(ctx, req.JobId) ?? throw new KeyNotFoundException();
     if (!B(ctx).IsAllowed(req.File)) return Results.Problem(L.T("Outside the allowed media roots: {0}", req.File), statusCode: 403);
     var s = await KnA.Core.Ocr.OcrSession.OpenAsync(queue, j, req.File, req.Stream, ct, req.Copy);
     queue.OcrSessions[s.Id] = s;
@@ -443,13 +511,16 @@ app.MapGet("/api/ocr/{sid:guid}", (Guid sid) => queue.OcrSessions.TryGetValue(si
     ? Results.Ok(new { s.Busy, s.Done, lines = s.Lines.Select(OcrLineDto), toCheck = s.Lines.Count(s.ToCheck) }) : Results.NotFound());
 app.MapGet("/api/ocr/{sid:guid}/image/{i:int}", (Guid sid, int i) => queue.OcrSessions.TryGetValue(sid, out var s)
     ? Results.File(s.Png(i), "image/png") : Results.NotFound());
-app.MapPost("/api/ocr/{sid:guid}/run", (Guid sid, OcrRunRequest req) =>
+app.MapPost("/api/ocr/{sid:guid}/run", (Guid sid, OcrRunRequest req, HttpContext ctx) =>
 {
     if (!queue.OcrSessions.TryGetValue(sid, out var s)) return Results.NotFound();
     if (s.Busy) return Results.Ok(new { started = false });
     var options = req.Options ?? queue.Settings.Ocr;
-    queue.Settings.Ocr = options with { Language = null };   // remembered as the default (jobs use it too)
-    queue.SaveSettings();
+    if (ctx.CurrentUser().IsAdmin)
+    {
+        queue.Settings.Ocr = options with { Language = null };   // remembered as the server's default (jobs use it too)
+        queue.SaveSettings();
+    }
     _ = Task.Run(async () => { try { await s.RecognizeAsync(queue, options, req.Only, null, CancellationToken.None); } catch (Exception ex) { Console.Error.WriteLine("OCR: " + ex.Message); } });
     return Results.Ok(new { started = true });
 });
@@ -519,35 +590,69 @@ app.MapGet("/api/jobs/{id:guid}/cropdetect", async (Guid id, CancellationToken c
     Results.Ok(await queue.Preview.DetectCropAsync(id, ct)));
 
 // ---------------------------------------------------------------- queue control
-app.MapPost("/api/queue/start", () =>
+// One engine encodes every account's jobs in queue order. A user starts it (their stopped jobs go on), stops only
+// their own jobs (the others go on) and pauses only while their own file is being encoded; administrators control all.
+app.MapPost("/api/queue/start", (HttpContext ctx) =>
 {
-    try { queue.Start(); return Results.Ok(); }
+    var user = ctx.CurrentUser();
+    try { if (user.IsAdmin) queue.Start(); else queue.Start(user.Sees); return Results.Ok(); }
     catch (InvalidOperationException ex) { return Results.Problem(ex.Message, statusCode: 409); }
 });
-app.MapPost("/api/queue/stop", async () => { await queue.StopAsync(); return Results.Ok(); });
-app.MapPost("/api/queue/pause", () => { queue.Pause(); return Results.Ok(); });
-app.MapPost("/api/queue/resume", () => { queue.Resume(); return Results.Ok(); });
+app.MapPost("/api/queue/stop", async (HttpContext ctx) =>
+{
+    var user = ctx.CurrentUser();
+    if (user.IsAdmin) await queue.StopAsync(); else queue.StopJobs(user.Sees);
+    return Results.Ok();
+});
+IResult? DenyOthersJob(HttpContext ctx) =>
+    queue.CurrentJob is { } current && !ctx.CurrentUser().Sees(current)
+        ? Results.Problem(L.T("The file being encoded belongs to another account: only an administrator can pause it."), statusCode: 403) : null;
+app.MapPost("/api/queue/pause", (HttpContext ctx) => { if (DenyOthersJob(ctx) is { } d) return d; queue.Pause(); return Results.Ok(); });
+app.MapPost("/api/queue/resume", (HttpContext ctx) => { if (DenyOthersJob(ctx) is { } d) return d; queue.Resume(); return Results.Ok(); });
 
 // ---------------------------------------------------------------- presets & wizard
-app.MapGet("/api/presets", () => queue.Presets.All);
-// Presets are shared until each user gets their own: users add new ones, administrators also replace and delete.
-IResult? DenyPresetChange(HttpContext ctx, string name) =>
-    !ctx.CurrentUser().IsAdmin && queue.Presets.Get(name) is not null
-        ? Results.Problem(L.T("A preset named \"{0}\" already exists: only an administrator can replace it.", name), statusCode: 403) : null;
+// Users save and delete their own presets (one with a shared preset's name takes its place for them); administrators
+// manage the shared ones, which every account sees, and every account's own (Settings → Accounts).
+app.MapGet("/api/presets", (HttpContext ctx) => PresetsFor(ctx.CurrentUser()));
 app.MapPost("/api/presets", (Preset p, HttpContext ctx) =>
 {
-    if (DenyPresetChange(ctx, p.Name) is { } locked) return locked;
     if (DenyAdvanced(ctx, p.Settings) is { } denied) return denied;
-    var saved = queue.Presets.Save(p);
-    hub.Broadcast("presets", queue.Presets.All);
+    var saved = PresetStoreOf(ctx.CurrentUser()).Save(p);
+    PresetsChanged();
     return Results.Ok(saved);
 });
-app.MapDelete("/api/presets/{name}", (string name) =>
+app.MapDelete("/api/presets/{name}", (string name, HttpContext ctx) =>
 {
-    var ok = queue.Presets.Delete(name);
-    hub.Broadcast("presets", queue.Presets.All);
+    var user = ctx.CurrentUser();
+    if (user.HasOwnData && !userData.PresetsOf(user.Id).User.Any(p => p.Name.Equals(name, StringComparison.OrdinalIgnoreCase))
+        && queue.Presets.User.Any(p => p.Name.Equals(name, StringComparison.OrdinalIgnoreCase)))
+        return Results.Problem(L.T("\"{0}\" is a shared preset: only an administrator can delete it.", name), statusCode: 403);
+    var ok = PresetStoreOf(user).Delete(name);
+    PresetsChanged();
+    return ok ? Results.Ok() : Results.NotFound();
+});
+// Administrators: an account's own presets, queue and settings.
+app.MapGet("/api/accounts/{id:guid}/data", (Guid id) => Results.Ok(new
+{
+    presets = userData.PresetsOf(id).User,
+    settings = userData.SettingsOf(id),
+    jobs = queue.Jobs.Count(j => j.Owner == id),
+    waiting = queue.Jobs.Count(j => j.Owner == id && j.Status is JobStatus.Ready or JobStatus.Running or JobStatus.Paused),
+})).AdminOnly();
+app.MapDelete("/api/accounts/{id:guid}/presets/{name}", (Guid id, string name) =>
+{
+    var ok = userData.PresetsOf(id).Delete(name);
+    PresetsChanged();
     return ok ? Results.Ok() : Results.NotFound();
 }).AdminOnly();
+app.MapPost("/api/accounts/{id:guid}/presets/{name}/share", (Guid id, string name) =>
+{
+    var p = userData.PresetsOf(id).User.FirstOrDefault(x => x.Name.Equals(name, StringComparison.OrdinalIgnoreCase)) ?? throw new KeyNotFoundException(name);
+    var saved = queue.Presets.Save(p);
+    PresetsChanged();
+    return Results.Ok(saved);
+}).AdminOnly();
+app.MapDelete("/api/accounts/{id:guid}/settings", (Guid id) => { userData.SaveSettings(id, new UserSettings()); return Results.Ok(); }).AdminOnly();
 // Preset wizard: the questions that apply to the answers so far (with their defaults), and the resulting settings.
 app.MapPost("/api/presets/wizard/steps", (Dictionary<string, string> answers) =>
 {
@@ -573,15 +678,18 @@ app.MapPost("/api/presets/wizard", (Dictionary<string, string> answers) => Prese
 app.MapPut("/api/settings", (SettingsUpdate u, HttpContext ctx) =>
 {
     var s = queue.Settings;
-    // Users: the defaults of the quick form and the theme; everything else is the administrators' (server-wide).
-    if (!ctx.CurrentUser().IsAdmin)
+    // Users keep their own quick-form defaults and theme; everything else is the administrators' (server-wide).
+    var user = ctx.CurrentUser();
+    if (user.HasOwnData)
     {
         if (u.Defaults is not null && DenyAdvanced(ctx, u.Defaults) is { } denied) return denied;
-        if (u.Defaults is not null) s.Defaults = u.Defaults;
-        if (u.Theme is not null) s.Theme = u.Theme;
-        queue.SaveSettings();
-        return Results.Ok(new { settings = Mapping.PublicSettings(s, SettingsStore.Json), tools = Mapping.Tools(queue), advancedAllowed = false });
+        var mine = userData.SettingsOf(user.Id);
+        if (u.Defaults is not null) mine = mine with { Defaults = u.Defaults };
+        if (u.Theme is not null) mine = mine with { Theme = u.Theme };
+        userData.SaveSettings(user.Id, mine);
+        return Results.Ok(new { settings = SettingsFor(user), tools = Mapping.Tools(queue), advancedAllowed = false });
     }
+    if (!user.IsAdmin) return Results.Problem(L.T("Only an administrator can do this."), statusCode: 403);
     if (u.OutputDirectory is not null)
     {
         if (u.OutputDirectory.Length > 0 && !browser.IsWritable(u.OutputDirectory))
@@ -639,7 +747,7 @@ app.MapPut("/api/settings", (SettingsUpdate u, HttpContext ctx) =>
 // ---------------------------------------------------------------- hardware, updates, components
 app.MapPost("/api/hardware/detect", async (CancellationToken ct) =>
 {
-    var progress = new Progress<string>(line => hub.Broadcast("detect", new { line }));
+    var progress = new Progress<string>(line => hub.ToAdmins("detect", new { line }));
     var caps = await queue.DetectHardwareAsync(progress, ct);
     return caps is null ? Results.Problem(L.T("FFmpeg was not found. Configure it in Settings."), statusCode: 409) : Results.Ok(caps);
 }).AdminOnly();
@@ -682,8 +790,8 @@ app.MapPost("/api/components/{id}/install", async (string id, CancellationToken 
     if (componentsLocked) return Results.Problem(L.T("Component installation is disabled on this server (KNA_LOCK_COMPONENTS)."), statusCode: 403);
     bool isModel = id.StartsWith("model:", StringComparison.Ordinal) || id.StartsWith("llm:", StringComparison.Ordinal);
     if (queue.IsRunning && !isModel) return Results.Problem(L.T("Stop the queue before updating components."), statusCode: 409);
-    var progress = new Progress<double>(p => hub.Broadcast("component", new { id, percent = Math.Round(p, 1) }));
-    var logger = new Progress<string>(l => hub.Broadcast("component", new { id, line = l }));
+    var progress = new Progress<double>(p => hub.ToAdmins("component", new { id, percent = Math.Round(p, 1) }));
+    var logger = new Progress<string>(l => hub.ToAdmins("component", new { id, line = l }));
     try
     {
         await queue.Components.InstallAsync(id, progress, logger, ct);
@@ -693,7 +801,7 @@ app.MapPost("/api/components/{id}/install", async (string id, CancellationToken 
         return Results.Problem(ex.Message, statusCode: 502);
     }
     queue.RefreshTools();
-    if (id == "ffmpeg") await queue.DetectHardwareAsync(new Progress<string>(l => hub.Broadcast("detect", new { line = l })), ct);
+    if (id == "ffmpeg") await queue.DetectHardwareAsync(new Progress<string>(l => hub.ToAdmins("detect", new { line = l })), ct);
     return Results.Ok(await queue.Components.CheckAsync(queue.Tools, online: false, ct));
 }).AdminOnly();
 
