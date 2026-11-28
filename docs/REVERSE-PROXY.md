@@ -111,6 +111,50 @@ services:
 
 A domain of its own is simpler than a path with NPM; for a path use a Custom Location `/kna` and `KNA_BASE_PATH=/kna`.
 
+## Single sign-on (Authelia, Authentik, oauth2-proxy…)
+
+When the proxy already signs people in, KnA can take the user name it sends instead of asking for a password:
+
+| Variable | Meaning |
+|---|---|
+| `KNA_SSO` | `authelia` (headers `Remote-User`, `Remote-Groups`), `authentik` (`X-authentik-username`, `X-authentik-groups`) or the name of the header with the user name (e.g. `X-Auth-Request-User` for oauth2-proxy, `Cf-Access-Authenticated-User-Email` for Cloudflare Access) |
+| `KNA_SSO_GROUPS_HEADER` | the header with the groups, when not the preset's (separated by `,`, `\|` or `;`) |
+| `KNA_SSO_ADMIN_GROUP` | members are KnA administrators, the others users — kept in step at every request (the last administrator always stays one) |
+| `KNA_SSO_USER_GROUP` | only members of this group (or of the admin group) may use KnA |
+| `KNA_SSO_CREATE` | `false` = only people who already have a KnA account; otherwise the account is created at the first visit (as a user without advanced mode; the very first account is the administrator) |
+| `KNA_SSO_SECRET` | a value the proxy must also send in `X-KnA-Proxy-Secret` (another header: `KNA_SSO_SECRET_HEADER`) |
+| `KNA_SSO_LOGOUT_URL` | where KnA's "Sign out" leads (the portal's logout page) |
+
+The header counts **only from `KNA_TRUSTED_PROXIES`**; without it, KnA's own sign-in (and HTTP Basic for scripts)
+works as before, e.g. from the local network straight to port 8585. Two rules keep it safe:
+
+- the proxy must **overwrite** the header (Authelia/Authentik integrations do: `authResponseHeaders` in Traefik,
+  `auth_request_set` + `proxy_set_header` in nginx, `copy_headers` in Caddy), so a client can't send its own;
+- if `KNA_TRUSTED_PROXIES` is a whole network (or `private`), everybody in it who reaches KnA's port directly could send
+  the header: trust only the proxy's address, keep the port closed to the others, or set `KNA_SSO_SECRET` (KnA's log
+  warns about it).
+
+Accounts created this way are marked "SSO" in Settings → Accounts; an administrator can still give them a password,
+folders and advanced mode. Users signed in through the portal don't see "Change password" (the password is the
+portal's).
+
+**Authelia + Traefik**: the usual `forwardAuth` middleware with
+`authResponseHeaders=Remote-User,Remote-Groups,Remote-Email,Remote-Name`, then `KNA_SSO=authelia`,
+`KNA_TRUSTED_PROXIES=<Traefik's address>`, optionally `KNA_SSO_ADMIN_GROUP=admins`.
+
+**Authelia + nginx** (inside KnA's `location`, after Authelia's `auth_request` snippet):
+
+```nginx
+auth_request_set $user $upstream_http_remote_user;
+auth_request_set $groups $upstream_http_remote_groups;
+proxy_set_header Remote-User $user;
+proxy_set_header Remote-Groups $groups;
+proxy_set_header X-KnA-Proxy-Secret "a-long-random-value";   # = KNA_SSO_SECRET
+```
+
+**Authentik** (proxy provider, embedded outpost or forward auth): `KNA_SSO=authentik`; groups come pipe-separated in
+`X-authentik-groups`.
+
 ## Checking
 
 - Sign in through the proxy and look at the session cookie in the browser: `Secure` over HTTPS, path `/` or the base

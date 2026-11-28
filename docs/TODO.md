@@ -6,10 +6,8 @@ right; optional controls are fine, a required manual step or a silent loss is a 
 
 ## 1. Web server: separate user accounts
 
-Done so far (see "Done" below): accounts, roles and permissions, security, migration from `KNA_PASSWORD`; each
-user's own queue, presets and settings, advanced fields locked in the editor; reverse-proxy compatibility. Still to do:
-
-- **Proxy SSO**: accept an auth header from a trusted proxy (Authelia/Authentik style) as the logged-in user.
+Done (see "Done" below): accounts, roles and permissions, security, migration from `KNA_PASSWORD`; each user's own
+queue, presets and settings, advanced fields locked in the editor; reverse-proxy compatibility; proxy single sign-on.
 
 ## 2. Desktop app on a KnA server (client mode)
 
@@ -110,6 +108,11 @@ suitable backgrounds, desktop and web, next to the current light/dark themes. Mi
 the user provides or that may be redistributed; nothing scraped.
 
 ## Done (details in CHANGELOG)
+
+- Proxy single sign-on: `KNA_SSO` (`authelia`, `authentik` or a header name) believed only from
+  `KNA_TRUSTED_PROXIES`, optional shared secret, accounts created at the first visit, roles from `KNA_SSO_ADMIN_GROUP`,
+  `KNA_SSO_USER_GROUP`, sign-out to the portal. Checked with nginx standing in for the portal; real Authelia /
+  Authentik only from their documentation.
 
 - Reverse proxy: `X-Forwarded-*` only from `KNA_TRUSTED_PROXIES` (loopback always; the log names an untrusted proxy),
   `KNA_BASE_PATH` or `X-Forwarded-Prefix`, cookie path / Secure from them, relative URLs in the web UI, uploads that

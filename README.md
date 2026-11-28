@@ -383,7 +383,8 @@ administrator then creates, edits, disables and removes the other accounts in **
   one and re-enables the account, also while KnA is running.
 - `KNA_AUTH=off` switches accounts off (everybody is an administrator): only on a trusted network.
 - **HTTPS / reverse proxy** (nginx, Caddy, Traefik, Nginx Proxy Manager, on a domain or under a path like `/kna`):
-  [docs/REVERSE-PROXY.md](docs/REVERSE-PROXY.md).
+  [docs/REVERSE-PROXY.md](docs/REVERSE-PROXY.md); with **single sign-on** (Authelia, Authentik, oauth2-proxy) KnA takes
+  the user the proxy signed in, creates the account at the first visit and follows the admin group.
 
 ## Environment variables
 
@@ -398,6 +399,7 @@ administrator then creates, edits, disables and removes the other accounts in **
 | `KNA_AUTH` | `off` = no accounts, everybody is an administrator (trusted networks only) |
 | `KNA_TRUSTED_PROXIES` | reverse proxies whose `X-Forwarded-*` headers are believed: addresses, networks (`172.18.0.0/16`) or `private`; this machine always ([guide](docs/REVERSE-PROXY.md)) |
 | `KNA_BASE_PATH` | path KnA is published under behind a reverse proxy, e.g. `/kna` |
+| `KNA_SSO` · `KNA_SSO_ADMIN_GROUP` · `KNA_SSO_USER_GROUP` · `KNA_SSO_SECRET` · … | single sign-on from the proxy: `authelia`, `authentik` or a header name ([guide](docs/REVERSE-PROXY.md#single-sign-on-authelia-authentik-oauth2-proxy)) |
 | `KNA_ALLOW_ADVANCED` | lets administrators edit FFmpeg paths, custom builds, extra arguments, Python from the browser |
 | `KNA_FFMPEG` · `KNA_FDKAAC` · `KNA_VSPIPE` · `KNA_AI_SCRIPT` | program paths |
 | `KNA_VULKAN_DEVICE` | Vulkan GPU for libplacebo (index or name part; `llvmpipe` = CPU) |

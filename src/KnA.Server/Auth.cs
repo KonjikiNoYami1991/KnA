@@ -8,7 +8,7 @@ using KnA.Core.Settings;
 namespace KnA.Server;
 
 /// <summary>Who is making the request: an account, or everybody when accounts are switched off (KNA_AUTH=off).</summary>
-public sealed record AppUser(Guid Id, string Name, bool IsAdmin, AccountPermissions Permissions, bool AuthDisabled = false)
+public sealed record AppUser(Guid Id, string Name, bool IsAdmin, AccountPermissions Permissions, bool AuthDisabled = false, bool Sso = false)
 {
     public static AppUser From(Account a) => new(a.Id, a.Name, a.IsAdmin, a.Permissions);
     public static readonly AppUser Everybody = new(Guid.Empty, "admin", true, new AccountPermissions(), AuthDisabled: true);
@@ -60,7 +60,9 @@ public static class Auth
             ctx.HttpContext.CurrentUser().IsAdmin ? await next(ctx)
                 : Results.Problem(L.T("Only an administrator can do this."), statusCode: 403));
 
-    public static void UseAccounts(this WebApplication app, AccountStore accounts, LoginThrottle throttle)
+    private const string SsoErrorKey = "kna.ssoError";
+
+    public static void UseAccounts(this WebApplication app, AccountStore accounts, LoginThrottle throttle, ProxySso? sso = null)
     {
         app.Use(async (ctx, next) =>
         {
@@ -71,7 +73,7 @@ public static class Auth
                 await next();
                 return;
             }
-            if (Resolve(ctx, accounts, throttle, out var failure) is { } user)
+            if (Resolve(ctx, accounts, throttle, sso, out var failure) is { } user)
             {
                 ctx.Items[UserKey] = user;
                 await next();
@@ -86,9 +88,22 @@ public static class Auth
         });
     }
 
-    private static AppUser? Resolve(HttpContext ctx, AccountStore accounts, LoginThrottle throttle, out Func<HttpContext, Task> failure)
+    private static AppUser? Resolve(HttpContext ctx, AccountStore accounts, LoginThrottle throttle, ProxySso? sso, out Func<HttpContext, Task> failure)
     {
         failure = Unauthorized(accounts);
+        // Single sign-on: the person a trusted reverse proxy vouches for (Authelia, Authentik…) wins over a cookie.
+        if (sso is not null && ReverseProxy.FromTrustedProxy(ctx))
+        {
+            var r = sso.Resolve(h => h.Length > 0 && ctx.Request.Headers.TryGetValue(h, out var v) && v.ToString() is { Length: > 0 } s ? s : null);
+            if (r.Error is { } error)
+            {
+                ctx.Items[SsoErrorKey] = error;
+                failure = Problem(error, 403);
+                return null;
+            }
+            if (r.Account is { } fromSso) return AppUser.From(fromSso) with { Sso = true };
+        }
+
         if (ctx.Request.Cookies[CookieName] is { Length: > 0 } token && accounts.FromSession(token) is { } fromCookie)
             return AppUser.From(fromCookie);
 
@@ -127,8 +142,15 @@ public static class Auth
         return null;
     }
 
-    public static void MapAuth(this WebApplication app, AccountStore accounts, LoginThrottle throttle, Func<AppUser, FileBrowser> browserFor, Action<Guid>? deleted = null)
+    public static void MapAuth(this WebApplication app, AccountStore accounts, LoginThrottle throttle, Func<AppUser, FileBrowser> browserFor, Action<Guid>? deleted = null,
+        ProxySso? sso = null)
     {
+        object Describe(AppUser u, FileBrowser browser) => new
+        {
+            u.Id, u.Name, u.IsAdmin, advanced = u.MayUseAdvanced, roots = browser.Roots, u.AuthDisabled,
+            u.Sso, ssoProvider = u.Sso ? sso?.Config.Provider : null, ssoLogoutUrl = u.Sso ? sso?.Config.LogoutUrl : null,
+        };
+
         app.MapGet("/api/auth/status", (HttpContext ctx) =>
         {
             AppUser? user = ctx.Items.TryGetValue(UserKey, out var u) ? u as AppUser : null;
@@ -138,6 +160,7 @@ public static class Auth
                 setupRequired = !Disabled && accounts.SetupRequired,
                 user = user is null || user == AppUser.LocalSetup ? null : Describe(user, browserFor(user)),
                 minPasswordLength = AccountStore.MinPasswordLength,
+                ssoError = ctx.Items.TryGetValue(SsoErrorKey, out var e) ? e as string : null,
             });
         });
 
@@ -209,11 +232,6 @@ public static class Auth
         app.MapPost("/api/accounts/{id:guid}/signout", (Guid id) => { accounts.EndSessions(id); return Results.Ok(); }).AdminOnly();
         app.MapDelete("/api/accounts/{id:guid}", (Guid id) => { accounts.Delete(id); deleted?.Invoke(id); return Results.Ok(); }).AdminOnly();
     }
-
-    private static object Describe(AppUser u, FileBrowser browser) => new
-    {
-        u.Id, u.Name, u.IsAdmin, advanced = u.MayUseAdvanced, roots = browser.Roots, u.AuthDisabled,
-    };
 
     private static void SetCookie(HttpContext ctx, string token, bool persistent) =>
         ctx.Response.Cookies.Append(CookieName, token, CookieOptions(ctx, persistent));

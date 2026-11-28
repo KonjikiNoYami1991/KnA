@@ -43,6 +43,12 @@
   `X-Forwarded-Prefix`; cookies follow the path, `/kna` redirects to `/kna/`, the web UI uses relative addresses only.
   Uploads make their pieces smaller by themselves when a proxy refuses large bodies (HTTP 413). Checked with nginx and
   Caddy.
+- **Single sign-on from the proxy** (Authelia, Authentik, oauth2-proxy, Cloudflare Access…): `KNA_SSO=authelia`,
+  `authentik` or a header name; the user name is believed only from `KNA_TRUSTED_PROXIES` (optionally with a shared
+  secret, `KNA_SSO_SECRET`; the log warns when whole networks are trusted without it). Accounts are created at the
+  first visit (`KNA_SSO_CREATE=false` to allow only existing ones; the first account is the administrator), roles
+  follow `KNA_SSO_ADMIN_GROUP`, `KNA_SSO_USER_GROUP` limits who may enter; "Sign out" leads to the portal
+  (`KNA_SSO_LOGOUT_URL`). KnA's own sign-in and HTTP Basic keep working without the header.
 
 **Fixes**
 - NVEncC / QSVEncC / VCEEncC with FFmpeg decoding: the size shown (and the final size estimated from it) was the raw
@@ -288,6 +294,12 @@
   `X-Forwarded-Prefix`; i cookie seguono il percorso, `/kna` porta a `/kna/`, l'interfaccia web usa solo indirizzi
   relativi. I caricamenti rimpiccioliscono da soli i pezzi quando un proxy rifiuta corpi grandi (HTTP 413). Provato con
   nginx e Caddy.
+- **Single sign-on dal proxy** (Authelia, Authentik, oauth2-proxy, Cloudflare Access…): `KNA_SSO=authelia`,
+  `authentik` o il nome di un'intestazione; il nome utente è creduto solo da `KNA_TRUSTED_PROXIES` (eventualmente con un
+  segreto condiviso, `KNA_SSO_SECRET`; il log avvisa quando ci si fida di intere reti senza). Gli account vengono creati
+  alla prima visita (`KNA_SSO_CREATE=false` per ammettere solo quelli esistenti; il primo account è l'amministratore),
+  i ruoli seguono `KNA_SSO_ADMIN_GROUP`, `KNA_SSO_USER_GROUP` limita chi può entrare; "Esci" porta al portale
+  (`KNA_SSO_LOGOUT_URL`). L'accesso di KnA e HTTP Basic continuano a funzionare senza l'intestazione.
 
 **Correzioni**
 - NVEncC / QSVEncC / VCEEncC con decodifica FFmpeg: la dimensione mostrata (e quella finale stimata) era dei fotogrammi

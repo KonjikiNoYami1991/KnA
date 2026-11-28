@@ -235,6 +235,7 @@ Read from `/etc/kna/kna.env` by the service.
 | `KNA_AI_SCRIPT` | bundled | Path to `kna_upscale.py` (neural upscaler) |
 | `KNA_VSPIPE` | auto | Path to `vspipe` (VapourSynth) |
 | `KNA_TRUSTED_PROXIES` | (this machine) | Reverse proxies whose `X-Forwarded-*` headers are believed: addresses, networks or `private` ([REVERSE-PROXY.md](REVERSE-PROXY.md)) |
+| `KNA_SSO` | (off) | Single sign-on from the reverse proxy: `authelia`, `authentik` or a header name; more `KNA_SSO_*` in [REVERSE-PROXY.md](REVERSE-PROXY.md#single-sign-on-authelia-authentik-oauth2-proxy) |
 | `KNA_BASE_PATH` | (none) | Path KnA is published under behind a reverse proxy, e.g. `/kna` |
 | `KNA_ALLOW_ADVANCED` | `false` | Allows editing the FFmpeg path, extra arguments and the after-job / after-queue commands from the browser |
 | `PUID` / `PGID` | root | Docker only: the user the server runs as (files on your shares belong to it) |

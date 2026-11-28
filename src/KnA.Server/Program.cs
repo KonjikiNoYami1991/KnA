@@ -55,6 +55,8 @@ builder.Services.AddSingleton<QueueService>();
 builder.Services.AddSingleton<EventHub>();
 builder.Services.AddSingleton(_ => new FileBrowser(AppEnv.Get("MEDIA_ROOTS"), AppEnv.Get("READONLY_ROOTS"), [uploadsService.DefaultFolder]));
 var accounts = new AccountStore(store.DataDirectory);
+// Single sign-on through the reverse proxy (KNA_SSO…, headers believed only from KNA_TRUSTED_PROXIES).
+var sso = Auth.Disabled ? null : SsoConfig.From(AppEnv.Get) is { } ssoConfig ? new ProxySso(ssoConfig, accounts) : null;
 var throttle = new LoginThrottle();
 builder.Services.AddSingleton<WatchFolderService>();
 
@@ -137,7 +139,15 @@ app.Use(async (ctx, next) =>
     }
 });
 
-app.UseAccounts(accounts, throttle);
+app.UseAccounts(accounts, throttle, sso);
+if (sso is { Config: var sc })
+{
+    log.LogInformation("Single sign-on ({Provider}): user name from the {Header} header of KNA_TRUSTED_PROXIES{Groups}.", sc.Provider, sc.UserHeader,
+        sc.AdminGroup is null ? "" : $", administrators = group \"{sc.AdminGroup}\"");
+    if (sc.Secret is null && ReverseProxy.TrustsNetworks(AppEnv.Get("TRUSTED_PROXIES")))
+        log.LogWarning("Single sign-on trusts whole networks (KNA_TRUSTED_PROXIES) without KNA_SSO_SECRET: anybody there who reaches KnA's port " +
+                       "directly could send {Header} and be signed in. Set KNA_SSO_SECRET (and have the proxy send it), or trust only the proxy's address.", sc.UserHeader);
+}
 // Every /api/jobs/{id}/… and /api/ocr/{session}/… request: a user reaches only their own jobs (another account's
 // job answers as if it did not exist).
 app.Use(async (ctx, next) =>
@@ -165,7 +175,7 @@ app.MapAuth(accounts, throttle, userBrowsers.For, id =>
     userData.Delete(id);
     queue.Remove(queue.Jobs.Where(j => j.Owner == id).Select(j => j.Id));
     PresetsChanged();
-});
+}, sso);
 
 // Hand-written scripts and arguments run on the server: an account without advanced mode may keep those already in
 // the presets, the defaults or the job, never bring in new ones.

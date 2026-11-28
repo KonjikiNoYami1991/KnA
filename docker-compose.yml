@@ -46,6 +46,9 @@ services:
       # and the path KnA is published under, if not a domain of its own.
       # KNA_TRUSTED_PROXIES: "private"
       # KNA_BASE_PATH: "/kna"
+      # Single sign-on from the proxy (Authelia / Authentik / a header name) and the group of KnA's administrators.
+      # KNA_SSO: "authelia"
+      # KNA_SSO_ADMIN_GROUP: "admins"
     volumes:
       - type: bind
         source: ./config                 # settings, presets, queue, logs, AI models and Python runtime

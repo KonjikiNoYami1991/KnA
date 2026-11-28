@@ -20,6 +20,14 @@ namespace KnA.Server;
 public static class ReverseProxy
 {
     private static readonly ConcurrentDictionary<string, byte> Warned = new();
+    private const string PeerKey = "kna.trustedPeer";
+
+    /// <summary>The request reached KnA directly from a trusted reverse proxy (not the client address it reports).</summary>
+    public static bool FromTrustedProxy(HttpContext ctx) => ctx.Items.TryGetValue(PeerKey, out var v) && v is true;
+
+    /// <summary>Trusted entries wider than one address (networks, "private"): anybody there could pose as the proxy.</summary>
+    public static bool TrustsNetworks(string? value) =>
+        ParseTrusted(value).Networks.Skip(2).Any(n => n.PrefixLength < (n.BaseAddress.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork ? 32 : 128));
 
     /// <summary>"/kna" from "kna", "/kna/", " /kna " …; null for none or "/".</summary>
     public static string? NormalizeBasePath(string? value)
@@ -66,6 +74,8 @@ public static class ReverseProxy
         app.Use(async (ctx, next) =>
         {
             var remote = ctx.Connection.RemoteIpAddress;
+            // Whether the connection itself comes from a trusted proxy (single sign-on headers count only then).
+            ctx.Items[PeerKey] = IsTrusted(remote, proxies, networks);
             if (ctx.Request.Headers.ContainsKey("X-Forwarded-For") && !IsTrusted(remote, proxies, networks)
                 && Warned.Count < 100 && Warned.TryAdd(remote?.ToString() ?? "?", 0))
                 log.LogWarning("X-Forwarded-* headers from {Address} ignored: if it is your reverse proxy, set KNA_TRUSTED_PROXIES={Address} " +

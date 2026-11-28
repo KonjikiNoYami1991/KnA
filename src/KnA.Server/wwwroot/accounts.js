@@ -8,6 +8,8 @@ export async function signIn() {
   if (st.user) return st.user;
   const setup = st.setupRequired;
   $("#auth").hidden = false;
+  // The proxy's single sign-on recognised the person but KnA may not let them in: say why (KnA's own sign-in still works).
+  $("#auth-error").textContent = st.ssoError ?? "";
   $("#auth-intro").textContent = setup
     ? t("First start: create the administrator account. It manages the server and the other accounts.")
     : t("Sign in to KnA.");
@@ -54,15 +56,21 @@ export function initUserUi(user) {
     $("#user-title").textContent = user.name;
     $("#user-info").textContent = (user.isAdmin ? t("Administrator") : t("User"))
       + (user.isAdmin ? "" : " · " + (user.advanced ? t("advanced mode allowed") : t("no advanced mode"))
-        + " · " + t("folders: {0}", (user.roots ?? []).join(", ") || "–"));
+        + " · " + t("folders: {0}", (user.roots ?? []).join(", ") || "–"))
+      + (user.sso ? " · " + t("signed in through {0}", user.ssoProvider ?? "SSO") : "");
+    // Signed in by the proxy: the password is the SSO portal's, not KnA's.
+    $("#user-pw-box").hidden = !!user.sso;
+    $("#btn-change-pw").hidden = !!user.sso;
     $("#user-login").value = user.name;
     for (const id of ["#user-pw-old", "#user-pw-new", "#user-pw-new2"]) $(id).value = "";
     $("#dlg-user").showModal();
   };
 }
 $("#btn-logout").onclick = guard(async () => {
+  const u = state.user;
+  if (u?.sso && !u.ssoLogoutUrl) { toast(t("Signed in through {0}: sign out on its portal.", u.ssoProvider ?? "SSO"), "ok"); return; }
   await post("api/auth/logout");
-  location.reload();
+  if (u?.sso) location.href = u.ssoLogoutUrl; else location.reload();
 });
 $("#btn-change-pw").onclick = guard(async () => {
   const pw = $("#user-pw-new").value;
@@ -89,6 +97,7 @@ function renderAccounts() {
       <b>${esc(a.name)}</b>
       <span class="chip ${a.isAdmin ? "hw" : ""}">${esc(a.isAdmin ? t("Administrator") : t("User"))}</span>
       ${a.disabled ? `<span class="chip">${esc(t("Disabled"))}</span>` : ""}
+      ${a.fromSso ? `<span class="chip" title="${esc(t("Created at the first sign-in through the reverse proxy's single sign-on"))}">SSO</span>` : ""}
       ${!a.isAdmin && a.permissions.advanced ? `<span class="chip bit">${esc(t("Advanced"))}</span>` : ""}
       ${a.name === state.user?.name ? `<span class="chip">${esc(t("you"))}</span>` : ""}
       <span class="grow"></span>

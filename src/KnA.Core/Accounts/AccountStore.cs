@@ -37,6 +37,8 @@ public sealed record Account
     /// in as this account (scripts written for the shared password keep working) until its password is changed.
     /// </summary>
     public bool FromEnvironment { get; init; }
+    /// <summary>Created by the first sign-in through a reverse proxy's single sign-on (it has a random password).</summary>
+    public bool FromSso { get; init; }
 
     [JsonIgnore] public bool IsAdmin => Role == AccountRole.Admin;
 }
@@ -46,6 +48,7 @@ public sealed record AccountView(Guid Id, string Name, AccountRole Role, bool Di
     DateTimeOffset Created, DateTimeOffset? LastLogin, bool FromEnvironment, int Sessions)
 {
     public bool IsAdmin => Role == AccountRole.Admin;
+    public bool FromSso { get; init; }
 }
 
 public enum SignInResult { Ok, Invalid, Disabled }
@@ -113,7 +116,8 @@ public sealed class AccountStore
     public AccountView View(Account a)
     {
         lock (_lock)
-            return new(a.Id, a.Name, a.Role, a.Disabled, a.Permissions, a.Created, a.LastLogin, a.FromEnvironment, _sessions.Values.Count(s => s.AccountId == a.Id));
+            return new(a.Id, a.Name, a.Role, a.Disabled, a.Permissions, a.Created, a.LastLogin, a.FromEnvironment, _sessions.Values.Count(s => s.AccountId == a.Id))
+                { FromSso = a.FromSso };
     }
 
     // ------------------------------------------------------------------ first start and KNA_PASSWORD
@@ -260,6 +264,36 @@ public sealed class AccountStore
     public Account Create(string name, string password, AccountRole role, AccountPermissions? permissions)
     {
         lock (_lock) return AddLocked(name, password, role, permissions ?? new AccountPermissions(), fromEnvironment: false, checkLength: true);
+    }
+
+    /// <summary>
+    /// An account for a person a reverse proxy's single sign-on vouches for: a random password (they sign in through the
+    /// proxy; an administrator may give them one), administrator when <paramref name="role"/> says so or no account
+    /// exists yet (the first person creates the administrator, as on the sign-in screen).
+    /// </summary>
+    public Account CreateFromSso(string name, AccountRole role)
+    {
+        lock (_lock)
+        {
+            Refresh();
+            if (_accounts.Count == 0) role = AccountRole.Admin;
+            var a = AddLocked(name, Convert.ToBase64String(RandomNumberGenerator.GetBytes(32)), role, new AccountPermissions(), fromEnvironment: false, checkLength: false)
+                with { FromSso = true, LastLogin = _now() };
+            Replace(a);
+            SaveAccounts();
+            return a;
+        }
+    }
+
+    /// <summary>Last sign-in of an account that signs in with every request (single sign-on): written at most hourly.</summary>
+    public void TouchLogin(Guid id)
+    {
+        lock (_lock)
+        {
+            if (_accounts.FirstOrDefault(x => x.Id == id) is not { } a || a.LastLogin is { } l && _now() - l < TimeSpan.FromHours(1)) return;
+            Replace(a with { LastLogin = _now() });
+            SaveAccounts();
+        }
     }
 
     /// <summary>Changes name, role, permissions or the disabled state; the last enabled administrator always stays one.</summary>

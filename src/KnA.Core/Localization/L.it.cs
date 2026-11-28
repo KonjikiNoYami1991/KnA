@@ -1645,5 +1645,12 @@ public static partial class L
         ["server"] = "server",
         ["Advanced mode needed (hand-written code and arguments run on the server): ask an administrator, Settings → Accounts. What is already set keeps working."] = "Serve la modalità avanzata (codice e argomenti scritti a mano girano sul server): chiedila a un amministratore, Impostazioni → Account. Ciò che è già impostato continua a funzionare.",
         ["The reverse proxy in front of KnA refuses even small uploads (HTTP 413): raise its request size limit (nginx: client_max_body_size 32m)."] = "Il reverse proxy davanti a KnA rifiuta anche i caricamenti piccoli (HTTP 413): alza il suo limite alla dimensione delle richieste (nginx: client_max_body_size 32m).",
+        // Proxy single sign-on
+        ["{0} lets you in, but you are not in the group \"{1}\" that may use KnA."] = "{0} ti fa entrare, ma non sei nel gruppo \"{1}\" che può usare KnA.",
+        ["{0} signed you in as \"{1}\", but KnA has no account with that name: ask an administrator to create it."] = "{0} ti ha fatto accedere come \"{1}\", ma KnA non ha un account con quel nome: chiedi a un amministratore di crearlo.",
+        ["{0} signed you in as \"{1}\": {2}"] = "{0} ti ha fatto accedere come \"{1}\": {2}",
+        ["signed in through {0}"] = "accesso tramite {0}",
+        ["Signed in through {0}: sign out on its portal."] = "Accesso tramite {0}: esci dal suo portale.",
+        ["Created at the first sign-in through the reverse proxy's single sign-on"] = "Creato al primo accesso tramite il single sign-on del reverse proxy",
     };
 }
