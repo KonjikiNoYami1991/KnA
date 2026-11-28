@@ -221,9 +221,9 @@ public static class Auth
     private static CookieOptions CookieOptions(HttpContext ctx, bool persistent) => new()
     {
         HttpOnly = true,
-        Secure = ctx.Request.IsHttps,
+        Secure = ctx.Request.IsHttps,          // HTTPS seen through a trusted proxy too (X-Forwarded-Proto)
         SameSite = SameSiteMode.Strict,
-        Path = "/",
+        Path = ReverseProxy.CookiePath(ctx),   // the public base path behind a reverse proxy
         IsEssential = true,
         Expires = persistent ? DateTimeOffset.UtcNow + AccountStore.RememberedSessionIdle : null,
     };

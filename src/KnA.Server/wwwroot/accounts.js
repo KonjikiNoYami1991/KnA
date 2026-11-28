@@ -4,7 +4,7 @@ import { $, esc, state, t, api, post, toast, guard, fillSelect } from "./core.js
 // ---------------------------------------------------------------- sign in / first start
 /** The signed-in user; when nobody is, shows the sign-in (or "create the administrator") screen and waits. */
 export async function signIn() {
-  const st = await api("GET", "/api/auth/status");
+  const st = await api("GET", "api/auth/status");
   if (st.user) return st.user;
   const setup = st.setupRequired;
   $("#auth").hidden = false;
@@ -28,7 +28,7 @@ export async function signIn() {
       if (setup && password !== $("#auth-pw2").value) { err.textContent = t("The two passwords differ."); return; }
       $("#auth-submit").disabled = true;
       try {
-        const r = await post(setup ? "/api/auth/setup" : "/api/auth/login", { name, password, remember: $("#auth-remember").checked });
+        const r = await post(setup ? "api/auth/setup" : "api/auth/login", { name, password, remember: $("#auth-remember").checked });
         $("#auth").hidden = true;
         $("#auth-pw").value = $("#auth-pw2").value = "";
         resolve(r.user);
@@ -61,13 +61,13 @@ export function initUserUi(user) {
   };
 }
 $("#btn-logout").onclick = guard(async () => {
-  await post("/api/auth/logout");
+  await post("api/auth/logout");
   location.reload();
 });
 $("#btn-change-pw").onclick = guard(async () => {
   const pw = $("#user-pw-new").value;
   if (pw !== $("#user-pw-new2").value) throw new Error(t("The two passwords differ."));
-  await post("/api/auth/password", { current: $("#user-pw-old").value, password: pw });
+  await post("api/auth/password", { current: $("#user-pw-old").value, password: pw });
   $("#dlg-user").close();
   toast(t("Password changed"), "ok");
 });
@@ -76,8 +76,8 @@ $("#btn-change-pw").onclick = guard(async () => {
 let accounts = [], editing = null, serverRoots = [];
 
 export async function loadAccounts() {
-  accounts = await api("GET", "/api/accounts");
-  serverRoots = (await api("GET", "/api/info")).roots ?? [];
+  accounts = await api("GET", "api/accounts");
+  serverRoots = (await api("GET", "api/info")).roots ?? [];
   renderAccounts();
 }
 
@@ -107,7 +107,7 @@ let openData = null;
 
 async function showData(a) {
   const box = $("[data-data]"); if (!box || !a) return;
-  const d = await api("GET", `/api/accounts/${a.id}/data`);
+  const d = await api("GET", `api/accounts/${a.id}/data`);
   const own = d.settings?.defaults || d.settings?.theme;
   box.innerHTML = `
     <div class="note">${esc(t("Queue: {0} file(s), {1} waiting — they are in the queue above, with the account's name.", d.jobs, d.waiting))}</div>
@@ -125,13 +125,13 @@ async function dataAction(b, a) {
   const name = b.closest("[data-preset]")?.dataset.preset;
   if (b.dataset.act === "reset-settings") {
     if (!confirm(t("Reset the settings of \"{0}\" to the shared ones?", a.name))) return;
-    await api("DELETE", `/api/accounts/${a.id}/settings`);
+    await api("DELETE", `api/accounts/${a.id}/settings`);
   } else if (b.dataset.act === "share-preset") {
-    await post(`/api/accounts/${a.id}/presets/${encodeURIComponent(name)}/share`);
+    await post(`api/accounts/${a.id}/presets/${encodeURIComponent(name)}/share`);
     toast(t("Preset \"{0}\" shared", name), "ok");
   } else if (b.dataset.act === "delete-preset") {
     if (!confirm(t("Delete the preset \"{0}\"?", name))) return;
-    await api("DELETE", `/api/accounts/${a.id}/presets/${encodeURIComponent(name)}`);
+    await api("DELETE", `api/accounts/${a.id}/presets/${encodeURIComponent(name)}`);
   }
   await showData(a);
 }
@@ -142,10 +142,10 @@ $("#acc-list").onclick = guard(async e => {
   if (["reset-settings", "share-preset", "delete-preset"].includes(b.dataset.act)) return dataAction(b, a);
   if (b.dataset.act === "data") { openData = openData === a.id ? null : a.id; renderAccounts(); }
   else if (b.dataset.act === "edit") openEdit(a);
-  else if (b.dataset.act === "signout") { await post(`/api/accounts/${a.id}/signout`); toast(t("{0} signed out everywhere", a.name), "ok"); await loadAccounts(); }
+  else if (b.dataset.act === "signout") { await post(`api/accounts/${a.id}/signout`); toast(t("{0} signed out everywhere", a.name), "ok"); await loadAccounts(); }
   else if (b.dataset.act === "delete") {
     if (!confirm(t("Delete the account \"{0}\"? Its presets, settings and waiting files go with it.", a.name))) return;
-    await api("DELETE", `/api/accounts/${a.id}`);
+    await api("DELETE", `api/accounts/${a.id}`);
     await loadAccounts();
   }
 });
@@ -174,8 +174,8 @@ $("#acc-save").onclick = guard(async () => {
     permissions: { advanced: $("#acc-advanced").checked, roots: $("#acc-roots").value.split("\n").map(x => x.trim()).filter(Boolean) },
   };
   const pw = $("#acc-pw").value;
-  if (editing) await api("PUT", `/api/accounts/${editing.id}`, { ...body, password: pw || null });
-  else await post("/api/accounts", { ...body, password: pw });
+  if (editing) await api("PUT", `api/accounts/${editing.id}`, { ...body, password: pw || null });
+  else await post("api/accounts", { ...body, password: pw });
   toast(t("Account \"{0}\" saved", body.name), "ok");
   $("#acc-edit").hidden = true; editing = null;
   await loadAccounts();

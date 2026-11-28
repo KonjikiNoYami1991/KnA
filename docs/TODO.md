@@ -6,13 +6,9 @@ right; optional controls are fine, a required manual step or a silent loss is a 
 
 ## 1. Web server: separate user accounts
 
-First and second part done (accounts, roles and permissions, security, migration from `KNA_PASSWORD`; each user's
-own queue, presets and settings, advanced fields locked in the editor: see "Done" below). Still to do, in this order:
+Done so far (see "Done" below): accounts, roles and permissions, security, migration from `KNA_PASSWORD`; each
+user's own queue, presets and settings, advanced fields locked in the editor; reverse-proxy compatibility. Still to do:
 
-- **Reverse-proxy compatible**: forwarded headers (X-Forwarded-For/Proto/Host) from trusted proxies only (the sign-in
-  throttle and the cookie's Secure flag must see the real client and scheme), a configurable base path (e.g. `/kna`),
-  correct cookie paths and redirects, WebSocket/SSE progress through the proxy; documented examples for nginx, Caddy,
-  Traefik and Nginx Proxy Manager.
 - **Proxy SSO**: accept an auth header from a trusted proxy (Authelia/Authentik style) as the logged-in user.
 
 ## 2. Desktop app on a KnA server (client mode)
@@ -114,6 +110,12 @@ suitable backgrounds, desktop and web, next to the current light/dark themes. Mi
 the user provides or that may be redistributed; nothing scraped.
 
 ## Done (details in CHANGELOG)
+
+- Reverse proxy: `X-Forwarded-*` only from `KNA_TRUSTED_PROXIES` (loopback always; the log names an untrusted proxy),
+  `KNA_BASE_PATH` or `X-Forwarded-Prefix`, cookie path / Secure from them, relative URLs in the web UI, uploads that
+  shrink their pieces on HTTP 413; guide with nginx, Caddy, Traefik and Nginx Proxy Manager examples
+  (`docs/REVERSE-PROXY.md`). Checked in the container with real nginx (path kept and stripped) and Caddy; Traefik and
+  NPM only from their documentation.
 
 - Web server accounts, second part: each user has their own queue (one engine encodes everybody's in order; Stop
   stops only the user's files, Pause only while their own file runs), presets (built-in, shared = the administrators',

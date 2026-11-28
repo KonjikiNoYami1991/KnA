@@ -111,6 +111,10 @@ else if (accounts.EnsureFromEnvironment(AppEnv.Get("PASSWORD"), AppEnv.Get("ADMI
 else if (AppEnv.Get("PASSWORD") is not null && !accounts.SetupRequired)
     log.LogInformation("KNA_PASSWORD is set but accounts already exist: it is not used any more (Settings → Accounts).");
 
+// ---------------------------------------------------------------- reverse proxy: real client and scheme, base path
+app.UseReverseProxy();
+app.UseRouting();   // after the base path, so routes see the path without it
+
 // ---------------------------------------------------------------- language: Italian browsers get Italian
 app.Use(async (ctx, next) =>
 {

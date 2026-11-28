@@ -240,6 +240,8 @@ Il servizio le legge da `/etc/kna/kna.env`.
 | `KNA_VULKAN_DEVICE` | auto | GPU Vulkan per libplacebo / Anime4K (indice o parte del nome; `llvmpipe` = CPU) |
 | `KNA_AI_SCRIPT` | incluso | Percorso di `kna_upscale.py` (upscaler neurale) |
 | `KNA_VSPIPE` | auto | Percorso di `vspipe` (VapourSynth) |
+| `KNA_TRUSTED_PROXIES` | (questa macchina) | Reverse proxy di cui credere alle intestazioni `X-Forwarded-*`: indirizzi, reti o `private` ([REVERSE-PROXY.it.md](REVERSE-PROXY.it.md)) |
+| `KNA_BASE_PATH` | (nessuno) | Percorso sotto cui KnA è pubblicato dietro un reverse proxy, es. `/kna` |
 | `KNA_ALLOW_ADVANCED` | `false` | Permette di modificare dal browser il percorso di FFmpeg e gli argomenti extra |
 | `PUID` / `PGID` | root | Solo Docker: l'utente con cui gira il server (i file sulle condivisioni sono suoi) |
 | `UMASK` | `002` | Solo Docker: permessi dei nuovi file |

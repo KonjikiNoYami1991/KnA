@@ -18,7 +18,7 @@ export const browserLang = (navigator.language || "en").toLowerCase().startsWith
 export let lang = browserLang;
 export async function loadI18n() {
   try {
-    const r = await (await fetch("/api/i18n", { headers: { "Accept-Language": browserLang } })).json();
+    const r = await (await fetch("api/i18n", { headers: { "Accept-Language": browserLang } })).json();
     lang = r.lang; dict = r.table || {};
   } catch { dict = {}; }
   document.documentElement.lang = lang;
@@ -42,7 +42,7 @@ export async function api(method, url, body) {
     body: body ? JSON.stringify(body) : undefined,
   });
   // Signed out (session expired, password changed elsewhere): back to the sign-in screen.
-  if (res.status === 401 && !url.startsWith("/api/auth/")) { location.reload(); return new Promise(() => {}); }
+  if (res.status === 401 && !url.startsWith("api/auth/")) { location.reload(); return new Promise(() => {}); }
   if (!res.ok) {
     let msg = res.statusText;
     try { const j = await res.json(); msg = j.detail || j.title || msg; } catch { /* not json */ }

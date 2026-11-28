@@ -22,7 +22,7 @@ export async function analyzeJob(id, current, apply) {
   $("#ai-model").textContent = (state.settings.ai?.visionModel || state.settings.ai?.model) ?? "";
   $("#ai-result").innerHTML = `<p class="muted">${esc(t("Extracting frames and asking the vision model… (this can take a minute on a local model)"))}</p>`;
   $("#dlg-ai").showModal();
-  try { show(await post(`/api/jobs/${id}/ai/analyze`), current); }
+  try { show(await post(`api/jobs/${id}/ai/analyze`), current); }
   catch (e) { $("#ai-result").innerHTML = `<p class="issue err">${esc(e.message)}</p>`; }
 }
 
@@ -33,7 +33,7 @@ $("#ai-ask").onclick = guard(async () => {
   const current = cloneSettings(state.form);
   $("#ai-status").textContent = t("Thinking…");
   $("#ai-ask").disabled = true;
-  try { show(await post("/api/ai/suggest", { prompt, settings: current, jobId }), current); }
+  try { show(await post("api/ai/suggest", { prompt, settings: current, jobId }), current); }
   finally { $("#ai-ask").disabled = false; $("#ai-status").textContent = ""; }
 });
 
@@ -98,7 +98,7 @@ async function renderAiSetup() {
   }
   b.onclick = b.ondblclick = null;
   if (ais.step === 1) {
-    const g = ais.guide?.provider === a.provider ? ais.guide : { provider: a.provider, ...(await api("GET", `/api/ai/setup/guide?provider=${encodeURIComponent(a.provider)}`)) };
+    const g = ais.guide?.provider === a.provider ? ais.guide : { provider: a.provider, ...(await api("GET", `api/ai/setup/guide?provider=${encodeURIComponent(a.provider)}`)) };
     ais.guide = g;
     b.innerHTML = `<h3 style="margin-top:0">${esc(t("Install and start it"))}</h3>
       <div class="section"><ol style="margin:0;padding-left:20px;display:grid;gap:4px">${g.steps.map(x => `<li>${esc(x)}</li>`).join("")}</ol></div>
@@ -109,7 +109,7 @@ async function renderAiSetup() {
     b.oninput = e => { if (e.target.id === "ais-url") { a.baseUrl = e.target.value.trim() || null; ais.check = null; } if (e.target.id === "ais-key") { ais.key = e.target.value; ais.check = null; } };
     $("#ais-check").onclick = guard(async () => {
       $("#ais-result").innerHTML = `<p class="muted small">${esc(t("Checking…"))}</p>`;
-      ais.check = await post("/api/ai/setup/check", aiBody());
+      ais.check = await post("api/ai/setup/check", aiBody());
       $("#ais-result").innerHTML = checkHtml(ais.check);
     });
     return;
@@ -130,7 +130,7 @@ async function renderAiSetup() {
       const m = vision ? a.visionModel ?? a.model : a.model;
       if (!m) return;
       $("#ais-result").innerHTML = `<p class="muted small">${esc(t("Asking {0}… (the first answer can take a minute while the model loads)", m))}</p>`;
-      const r = await post("/api/ai/setup/test", { ai: aiBody(), model: m });
+      const r = await post("api/ai/setup/test", { ai: aiBody(), model: m });
       $("#ais-result").innerHTML = r.error ? `<p class="issue err">✖ ${esc(r.error)}</p>` : `<p class="issue info">✔ ${esc(t("{0} answers correctly.", m))}</p>`;
     });
     return;
@@ -146,7 +146,7 @@ $("#ais-close").onclick = () => $("#dlg-ai-setup").close();
 $("#ais-back").onclick = () => { ais.step--; renderAiSetup(); };
 $("#ais-next").onclick = guard(async () => {
   if (ais.step < AIS_STEPS - 1) { ais.step++; return renderAiSetup(); }
-  const r = await api("PUT", "/api/settings", { ai: aiBody() });
+  const r = await api("PUT", "api/settings", { ai: aiBody() });
   state.settings = r.settings;
   $("#dlg-ai-setup").close();
   toast(t("Saved"), "ok");

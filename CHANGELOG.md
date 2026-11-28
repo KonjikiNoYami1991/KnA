@@ -35,6 +35,14 @@
   keeps refusing them too. The options written by KnA's own rigaya speed/quality profiles are no longer counted as
   hand-written (a user without advanced mode can pick a profile).
 - Fix: the editor's encoder parameter pages failed to open (a function was not imported).
+- **Behind a reverse proxy** (nginx, Caddy, Traefik, Nginx Proxy Manager; guide with examples in
+  `docs/REVERSE-PROXY.md`): `X-Forwarded-For/-Proto/-Host/-Prefix` are believed only from `KNA_TRUSTED_PROXIES`
+  (addresses, networks, `private`; this machine always), so sign-in throttling sees the real client and the session
+  cookie is `Secure` over HTTPS; headers from anybody else are ignored and the log says which address to trust.
+  `KNA_BASE_PATH` (e.g. `/kna`) publishes KnA under a path, also when the proxy strips it and sends
+  `X-Forwarded-Prefix`; cookies follow the path, `/kna` redirects to `/kna/`, the web UI uses relative addresses only.
+  Uploads make their pieces smaller by themselves when a proxy refuses large bodies (HTTP 413). Checked with nginx and
+  Caddy.
 
 **Fixes**
 - NVEncC / QSVEncC / VCEEncC with FFmpeg decoding: the size shown (and the final size estimated from it) was the raw
@@ -272,6 +280,14 @@
   velocità/qualità rigaya di KnA non contano più come scritte a mano (un utente senza modalità avanzata può scegliere un
   profilo).
 - Correzione: le pagine dei parametri dell'encoder nell'editor non si aprivano (una funzione non era importata).
+- **Dietro un reverse proxy** (nginx, Caddy, Traefik, Nginx Proxy Manager; guida con esempi in
+  `docs/REVERSE-PROXY.it.md`): `X-Forwarded-For/-Proto/-Host/-Prefix` sono creduti solo da `KNA_TRUSTED_PROXIES`
+  (indirizzi, reti, `private`; questa macchina sempre), così il limite ai tentativi di accesso vede il client vero e il
+  cookie di sessione è `Secure` in HTTPS; le intestazioni di chiunque altro sono ignorate e il log dice quale indirizzo
+  rendere fidato. `KNA_BASE_PATH` (es. `/kna`) pubblica KnA sotto un percorso, anche quando il proxy lo toglie e invia
+  `X-Forwarded-Prefix`; i cookie seguono il percorso, `/kna` porta a `/kna/`, l'interfaccia web usa solo indirizzi
+  relativi. I caricamenti rimpiccioliscono da soli i pezzi quando un proxy rifiuta corpi grandi (HTTP 413). Provato con
+  nginx e Caddy.
 
 **Correzioni**
 - NVEncC / QSVEncC / VCEEncC con decodifica FFmpeg: la dimensione mostrata (e quella finale stimata) era dei fotogrammi

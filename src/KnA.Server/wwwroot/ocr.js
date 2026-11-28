@@ -13,7 +13,7 @@ export async function openOcr(jobId, track, onUsed) {
   $("#ocr-sub").textContent = `#${track.stream} ${track.codec ?? ""} ${track.language ?? ""}`;
   $("#ocr-list").innerHTML = `<p class="muted small" style="padding:10px">${esc(t("Reading…"))}</p>`;
   $("#dlg-ocr").showModal();
-  const r = await api("POST", "/api/ocr/sessions", { jobId, file: track.file, stream: track.stream, copy: track.copy ?? 0 });
+  const r = await api("POST", "api/ocr/sessions", { jobId, file: track.file, stream: track.stream, copy: track.copy ?? 0 });
   oc = { id: r.id, lines: [], cur: 0, sel: new Set(), onUsed };
   const o = r.options ?? {};
   $("#ocr-engine").value = o.engine ?? "tesseract";
@@ -34,7 +34,7 @@ const options = () => ({ engine: $("#ocr-engine").value, language: $("#ocr-lang"
   detectItalic: $("#ocr-italic").checked, fixCommonErrors: $("#ocr-fix").checked });
 
 async function refresh() {
-  const r = await api("GET", `/api/ocr/${oc.id}`);
+  const r = await api("GET", `api/ocr/${oc.id}`);
   oc.lines = r.lines;
   $("#ocr-status").textContent = r.busy ? `${r.done} / ${oc.lines.length}` : t("{0} lines to check.", r.toCheck);
   renderList();
@@ -52,7 +52,7 @@ function renderList() {
 
 function show() {
   const l = oc.lines[oc.cur]; if (!l) return;
-  $("#ocr-img").src = `/api/ocr/${oc.id}/image/${l.index}`;
+  $("#ocr-img").src = `api/ocr/${oc.id}/image/${l.index}`;
   $("#ocr-text").value = l.text;
   $("#ocr-it").checked = l.italic;
   $("#ocr-start").value = stamp(l.start);
@@ -63,7 +63,7 @@ async function commit(extra = {}) {
   const l = oc.lines[oc.cur]; if (!l) return;
   const text = $("#ocr-text").value.replace(/\r/g, "");
   if (text === l.text && !Object.keys(extra).length) return;
-  oc.lines[oc.cur] = await api("PUT", `/api/ocr/${oc.id}/lines/${l.index}`, { text, ...extra });
+  oc.lines[oc.cur] = await api("PUT", `api/ocr/${oc.id}/lines/${l.index}`, { text, ...extra });
   renderList();
 }
 
@@ -78,13 +78,13 @@ function move(d) {
 
 async function run(only) {
   await commit();
-  const r = await api("POST", `/api/ocr/${oc.id}/run`, { options: options(), only });
+  const r = await api("POST", `api/ocr/${oc.id}/run`, { options: options(), only });
   if (!r.started) return;
   clearInterval(oc.poll);
   oc.poll = setInterval(guard(async () => { const s = await refresh(); if (!s.busy) clearInterval(oc.poll); }), 1000);
 }
 
-$("#ocr-close").onclick = () => { clearInterval(oc?.poll); if (oc) api("DELETE", `/api/ocr/${oc.id}`).catch(() => {}); $("#dlg-ocr").close(); };
+$("#ocr-close").onclick = () => { clearInterval(oc?.poll); if (oc) api("DELETE", `api/ocr/${oc.id}`).catch(() => {}); $("#dlg-ocr").close(); };
 $("#ocr-only").onchange = () => renderList();
 $("#ocr-list").onclick = e => {
   const row = e.target.closest(".ocr-row"); if (!row) return;
@@ -108,8 +108,8 @@ $("#dlg-ocr").onclick = guard(async e => {
   if (a === "install-paddle") {
     const b = $("#ocr-paddle"); b.disabled = true;
     try {
-      for (const id of ["paddleocr", "paddleocr-models"]) { $("#ocr-status").textContent = t("Installing {0}…", id); await api("POST", `/api/components/${id}/install`); }
-      state.tools = (await api("GET", "/api/state")).tools;
+      for (const id of ["paddleocr", "paddleocr-models"]) { $("#ocr-status").textContent = t("Installing {0}…", id); await api("POST", `api/components/${id}/install`); }
+      state.tools = (await api("GET", "api/state")).tools;
       $("#ocr-status").textContent = t("Installed {0}.", "PaddleOCR");
     } finally { b.disabled = false; paddleCheck(); }
     return;
@@ -125,12 +125,12 @@ $("#dlg-ocr").onclick = guard(async e => {
     oc.cur = next.index; renderList(); show(); $(`.ocr-row[data-i="${oc.cur}"]`)?.scrollIntoView({ block: "nearest" });
   }
   if (a === "replace") {
-    const r = await api("POST", `/api/ocr/${oc.id}/replace`, { find: $("#ocr-find").value, replace: $("#ocr-repl").value, regex: $("#ocr-rx").checked });
+    const r = await api("POST", `api/ocr/${oc.id}/replace`, { find: $("#ocr-find").value, replace: $("#ocr-repl").value, regex: $("#ocr-rx").checked });
     toast(t("{0} lines changed.", r.changed), "ok"); await refresh();
   }
   if (a === "save" || a === "use") {
     await commit();
-    const r = await api("POST", `/api/ocr/${oc.id}/save${a === "use" ? "?use=true" : ""}`);
+    const r = await api("POST", `api/ocr/${oc.id}/save${a === "use" ? "?use=true" : ""}`);
     toast(t("OCR: {0} subtitles written to {1}.", oc.lines.filter(l => l.text.trim()).length, r.path), "ok");
     if (a === "use") { $("#ocr-close").click(); oc.onUsed?.(); }
   }

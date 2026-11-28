@@ -108,6 +108,11 @@ Stacks → **Add stack** → Web editor: paste [docker-compose.yml](../docker-co
 Prefer the LXC installer (native, no Docker, GPU passthrough handled): [PROXMOX.md](PROXMOX.md). Docker inside an
 LXC works too but needs nesting and the device passthrough done twice.
 
+## HTTPS and reverse proxy
+
+nginx, Caddy, Traefik or Nginx Proxy Manager in front of KnA (on a domain or under `/kna`): set
+`KNA_TRUSTED_PROXIES` to the proxy's Docker network (or `private`), see [REVERSE-PROXY.md](REVERSE-PROXY.md).
+
 ## Troubleshooting
 
 | Symptom | Fix |

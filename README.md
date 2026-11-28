@@ -382,6 +382,8 @@ administrator then creates, edits, disables and removes the other accounts in **
   --reset-password admin` (Docker) or `kna-server --reset-password admin` with the service's `KNA_DATA_DIR` asks for a new
   one and re-enables the account, also while KnA is running.
 - `KNA_AUTH=off` switches accounts off (everybody is an administrator): only on a trusted network.
+- **HTTPS / reverse proxy** (nginx, Caddy, Traefik, Nginx Proxy Manager, on a domain or under a path like `/kna`):
+  [docs/REVERSE-PROXY.md](docs/REVERSE-PROXY.md).
 
 ## Environment variables
 
@@ -394,6 +396,8 @@ administrator then creates, edits, disables and removes the other accounts in **
 | `KNA_UPLOAD_DIR` · `KNA_MAX_UPLOAD_GB` | upload destination and limit |
 | `KNA_PASSWORD` · `KNA_ADMIN_USER` | first start only: creates the administrator (default name `admin`) with this password |
 | `KNA_AUTH` | `off` = no accounts, everybody is an administrator (trusted networks only) |
+| `KNA_TRUSTED_PROXIES` | reverse proxies whose `X-Forwarded-*` headers are believed: addresses, networks (`172.18.0.0/16`) or `private`; this machine always ([guide](docs/REVERSE-PROXY.md)) |
+| `KNA_BASE_PATH` | path KnA is published under behind a reverse proxy, e.g. `/kna` |
 | `KNA_ALLOW_ADVANCED` | lets administrators edit FFmpeg paths, custom builds, extra arguments, Python from the browser |
 | `KNA_FFMPEG` · `KNA_FDKAAC` · `KNA_VSPIPE` · `KNA_AI_SCRIPT` | program paths |
 | `KNA_VULKAN_DEVICE` | Vulkan GPU for libplacebo (index or name part; `llvmpipe` = CPU) |

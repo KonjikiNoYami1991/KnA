@@ -26,7 +26,7 @@ export const openFiles = guard(async path => {
 });
 
 async function fmBrowse(path) {
-  const r = await api("GET", "/api/browse?" + new URLSearchParams({ ...(path ? { path } : {}), mode: "all", hidden: $("#fm-hidden").checked }));
+  const r = await api("GET", "api/browse?" + new URLSearchParams({ ...(path ? { path } : {}), mode: "all", hidden: $("#fm-hidden").checked }));
   fm.path = r.path; fm.entries = r.entries; fm.writable = r.writable; fm.selected.clear();
   const crumbs = [`<button type="button" data-p="">${esc(t("Roots"))}</button>`];
   if (r.path) {
@@ -47,7 +47,7 @@ async function fmBrowse(path) {
       <span class="name">${esc(e.name)}${e.kind === "disc" ? ` <span class="chip">${esc(t("disc"))}</span>` : ""}</span>
       <span class="size">${e.isDirectory ? "" : fmtSize(e.size)}</span>
       <span class="row-actions">
-        ${r.path ? `<a class="btn ghost icon sm" href="/api/files/download?path=${encodeURIComponent(e.path)}" download title="${esc(e.isDirectory ? t("Download as ZIP") : t("Download"))}"><svg><use href="#i-download"/></svg></a>` : ""}
+        ${r.path ? `<a class="btn ghost icon sm" href="api/files/download?path=${encodeURIComponent(e.path)}" download title="${esc(e.isDirectory ? t("Download as ZIP") : t("Download"))}"><svg><use href="#i-download"/></svg></a>` : ""}
         ${["video", "disc"].includes(e.kind) || (e.isDirectory && r.path) ? `<button class="btn ghost icon sm" data-q title="${esc(t("Add to queue"))}"><svg><use href="#i-plus"/></svg></button>` : ""}
       </span>
     </div>`).join("") || `<p class="muted" style="padding:16px">${esc(t("Empty folder."))}</p>`;
@@ -79,14 +79,14 @@ $("#fm-download").onclick = () => {
   // One download per item (folders arrive as ZIP), spaced so the browser doesn't block them.
   [...fm.selected].forEach((p, i) => setTimeout(() => {
     const a = document.createElement("a");
-    a.href = "/api/files/download?path=" + encodeURIComponent(p); a.download = ""; document.body.append(a); a.click(); a.remove();
+    a.href = "api/files/download?path=" + encodeURIComponent(p); a.download = ""; document.body.append(a); a.click(); a.remove();
   }, i * 400));
 };
 $("#fm-queue").onclick = guard(() => queuePaths([...fm.selected]));
 $("#fm-mkdir").onclick = guard(async () => {
   const name = prompt(t("Folder name"));
   if (!name) return;
-  await post("/api/files/mkdir", { path: join(fm.path, name.replace(/[\\/]/g, "_")) });
+  await post("api/files/mkdir", { path: join(fm.path, name.replace(/[\\/]/g, "_")) });
   await fmBrowse(fm.path);
 });
 $("#fm-upload").onclick = () => pickFiles(fm.path);
@@ -100,13 +100,13 @@ $("#fm-list").addEventListener("dragstart", e => {
 
 /** Server paths → smart drop (classify, confirm when needed, apply). */
 export async function queuePaths(paths, targetJob = null) {
-  const plan = await post("/api/drop/classify", { paths, targetJob });
+  const plan = await post("api/drop/classify", { paths, targetJob });
   if (plan.needsConfirmation) {
     const lines = plan.items.map(i => `• ${i.path.split(/[\\/]/).pop()} — ${describe(i)}`).slice(0, 25).join("\n");
     if (!confirm(t("KnA will do this:") + "\n\n" + lines + (plan.items.length > 25 ? "\n…" : "") + "\n\n" + t("Continue?"))) return;
   }
   if (!plan.hasWork) { toast(plan.items.map(describe).join(" · ") || t("Nothing to do."), "err"); return; }
-  const r = await post("/api/drop/apply", { paths, targetJob, settings: state.form });
+  const r = await post("api/drop/apply", { paths, targetJob, settings: state.form });
   summary(r);
 }
 function describe(i) {
@@ -138,7 +138,7 @@ export function pickFiles(folder = null, attachTo = null) {
 export async function openUpload(items, folder = null, attachTo = null) {
   if (!items.length) return;
   if (items.length > 500 && !confirm(t("{0} files: upload them all?", items.length))) return;
-  const info = await api("GET", "/api/info");
+  const info = await api("GET", "api/info");
   up.folder = folder ?? info.uploadDir;
   up.attachTo = attachTo;
   const queued = [...state.jobs.values()];
@@ -211,13 +211,13 @@ $("#up-start").onclick = guard(async () => {
         if (it.kind === "preset") {
           const p = JSON.parse(await it.file.text());
           const body = p.settings ? { name: p.name ?? stem(it.name), description: p.description ?? null, settings: p.settings } : { name: stem(it.name), description: null, settings: p };
-          await post("/api/presets", body);
+          await post("api/presets", body);
           it.state = "done"; continue;
         }
         const folder = it.rel.includes("/") ? join(up.folder, it.rel.split("/").slice(0, -1).join(sepOf(up.folder))) : up.folder;
-        if (folder !== up.folder) await post("/api/files/mkdir", { path: folder });
+        if (folder !== up.folder) await post("api/files/mkdir", { path: folder });
         const path = await uploadOne(it, folder);
-        const r = await post(`/api/uploads/${it.id}/complete`, {
+        const r = await post(`api/uploads/${it.id}/complete`, {
           enqueue: enqueue && it.kind === "video", preset: preset || null, settings: preset ? null : state.form,
           attachTo: it.kind === "external" && (up.attachTo || it.job) ? (up.attachTo || it.job) : null,
           attachToSource: it.kind === "external" && it.video ? sources.get(it.video.rel) ?? null : null,
@@ -237,27 +237,32 @@ $("#up-start").onclick = guard(async () => {
   } finally { up.running = false; renderUpload(); }
 });
 
+// A reverse proxy may refuse 16 MB pieces (nginx accepts 1 MB unless configured): the pieces get smaller by themselves.
+let chunkLimit = Infinity;
+
 /** Sends one file in 16 MB chunks; resumes from the offset the server reports (409) and retries network errors. */
 async function uploadOne(it, folder) {
-  const c = await post("/api/uploads", { name: it.name, size: it.size, folder });
+  const c = await post("api/uploads", { name: it.name, size: it.size, folder });
   it.id = c.id; it.sent = c.offset;
-  const chunk = c.chunk || 16 << 20;
+  let chunk = Math.min(c.chunk || 16 << 20, chunkLimit);
   let failures = 0;
   while (it.sent < it.size) {
     up.abort = new AbortController();
     const end = Math.min(it.size, it.sent + chunk);
     try {
-      const res = await fetch(`/api/uploads/${it.id}?offset=${it.sent}`, { method: "PUT", body: it.file.slice(it.sent, end), signal: up.abort.signal, headers: { "Content-Type": "application/octet-stream" } });
+      const res = await fetch(`api/uploads/${it.id}?offset=${it.sent}`, { method: "PUT", body: it.file.slice(it.sent, end), signal: up.abort.signal, headers: { "Content-Type": "application/octet-stream" } });
       const j = await res.json().catch(() => ({}));
       if (res.status === 409) { it.sent = j.offset; continue; }
+      if (res.status === 413 && chunk > 256 << 10) { chunk = chunkLimit = Math.max(256 << 10, chunk >> 2); continue; }
+      if (res.status === 413) throw new Error(t("The reverse proxy in front of KnA refuses even small uploads (HTTP 413): raise its request size limit (nginx: client_max_body_size 32m)."));
       if (!res.ok) throw new Error(j.detail || j.title || res.statusText);
       it.sent = j.offset; failures = 0;
       renderUpload();
     } catch (e) {
-      if (e.name === "AbortError") { await api("DELETE", `/api/uploads/${it.id}`).catch(() => {}); throw e; }
+      if (e.name === "AbortError") { await api("DELETE", `api/uploads/${it.id}`).catch(() => {}); throw e; }
       if (++failures > 5) throw e;
       await new Promise(r => setTimeout(r, 1000 * failures));
-      const s = await api("GET", `/api/uploads/${it.id}`).catch(() => null);
+      const s = await api("GET", `api/uploads/${it.id}`).catch(() => null);
       if (s) it.sent = s.offset;
     }
   }

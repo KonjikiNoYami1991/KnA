@@ -51,7 +51,7 @@ const saveNow = async (rerender = false) => {
   const id = ed.id;
   $("#ed-saving").textContent = t("Saving…");
   try {
-    const a = await api("PUT", `/api/jobs/${id}/edit`, { settings: ed.settings, edit: ed.edit });
+    const a = await api("PUT", `api/jobs/${id}/edit`, { settings: ed.settings, edit: ed.edit });
     if (!ed || ed.id !== id) return;
     ed.analysis = a;
     if (ed.edit.tracks) ed.edit.tracks = a.tracks;
@@ -67,7 +67,7 @@ const saveAndRender = () => saveNow(true);
 async function materializeNow(extra = {}, render = true) {
   const id = ed.id;
   $("#ed-saving").textContent = t("Saving…");
-  const r = await api("POST", `/api/jobs/${id}/materialize`, { settings: ed.settings, edit: ed.edit, ...extra });
+  const r = await api("POST", `api/jobs/${id}/materialize`, { settings: ed.settings, edit: ed.edit, ...extra });
   if (!ed || ed.id !== id) return;
   ed.settings = r.settings; ed.edit = r.edit; ed.analysis = r.analysis;
   $("#ed-saving").textContent = t("Saved");
@@ -327,7 +327,7 @@ function pickExternal() {
 const optionCache = new Map();
 async function loadOptions(tool, s) {
   const key = tool + "|" + JSON.stringify([s.codec, s.backend, s.encoder?.program, s.profile, s.tenBit]);
-  if (!optionCache.has(key)) optionCache.set(key, await api("POST", "/api/tools/options", { tool, settings: s }));
+  if (!optionCache.has(key)) optionCache.set(key, await api("POST", "api/tools/options", { tool, settings: s }));
   return optionCache.get(key);
 }
 function cmdModel(get, set) {
@@ -482,8 +482,8 @@ function renderTrim(body) {
   body.innerHTML = `
     <p class="muted small">${esc(t("The cut is applied last: after imported tracks, delays, filters and burned subtitles."))}</p>
     <div class="timeline" id="tl">
-      <div class="thumbs">${Array.from({ length: nThumbs }, (_, i) => `<img alt="" src="/api/jobs/${ed.id}/preview/thumb?t=${((i + 0.5) * dur / nThumbs).toFixed(2)}&w=192">`).join("")}</div>
-      ${audio ? `<div class="wave"><img alt="" src="/api/jobs/${ed.id}/preview/waveform?file=${encodeURIComponent(audio.file)}&stream=${audio.stream}&w=1600&h=100"></div>` : ""}
+      <div class="thumbs">${Array.from({ length: nThumbs }, (_, i) => `<img alt="" src="api/jobs/${ed.id}/preview/thumb?t=${((i + 0.5) * dur / nThumbs).toFixed(2)}&w=192">`).join("")}</div>
+      ${audio ? `<div class="wave"><img alt="" src="api/jobs/${ed.id}/preview/waveform?file=${encodeURIComponent(audio.file)}&stream=${audio.stream}&w=1600&h=100"></div>` : ""}
       <div id="shades"></div><div id="others"></div>
       <div class="sel-range" id="rng"></div>
       <div class="handle" id="h-start" title="${esc(t("Trim start"))}"></div>
@@ -546,7 +546,7 @@ function renderTrim(body) {
     const img = $("#pv-img"); if (!img) return;
     $("#pv-spin").hidden = false;
     img.onload = img.onerror = () => { const sp = $("#pv-spin"); if (sp) sp.hidden = true; };
-    img.src = `/api/jobs/${ed.id}/preview/frame?t=${ed.playhead.toFixed(3)}&final=${ed.final}&w=1280&v=${Date.now() % 100000}`;
+    img.src = `api/jobs/${ed.id}/preview/frame?t=${ed.playhead.toFixed(3)}&final=${ed.final}&w=1280&v=${Date.now() % 100000}`;
   }, 250);
   const setTrim = (s, e) => {
     const ns = s > 0.0005 ? Math.min(s, dur) : null;
@@ -620,7 +620,7 @@ function renderTrim(body) {
     if (a === "add-ch-ph") { addChapter(ed.playhead); await saveNow(); toast(t("Chapter added at {0}", fmtStamp(ed.playhead)), "ok"); }
     if (a === "split") {
       await saveNow();
-      const ids = await post(`/api/jobs/${ed.id}/split-segments`);
+      const ids = await post(`api/jobs/${ed.id}/split-segments`);
       toast(t("{0} jobs created: one per segment.", ids.length), "ok");
       $("#dlg-editor").close();
     }
@@ -632,10 +632,10 @@ function renderTrim(body) {
 // ---------------------------------------------------------------- settings form
 const formOpts = section => ({
   full: true, section, allowedContainers: ed.analysis.allowedContainers, onChange: s => formChanged(s), onQuietChange: () => save(),
-  sizeInfo: async s => (await api("POST", `/api/jobs/${ed.id}/size`, { settings: s, edit: ed.edit })).text,
-  gpuEstimate: async s => (await api("POST", `/api/jobs/${ed.id}/gpu-estimate`, { settings: s, edit: ed.edit })).text,
-  gpuBenchmark: async s => api("POST", "/api/gpu/benchmark", { backend: s.backend, codec: s.codec }),
-  onLevel: async s => { ed.settings.encoder = await api("POST", `/api/jobs/${ed.id}/rate`, { settings: s }); saveAndRender(); },
+  sizeInfo: async s => (await api("POST", `api/jobs/${ed.id}/size`, { settings: s, edit: ed.edit })).text,
+  gpuEstimate: async s => (await api("POST", `api/jobs/${ed.id}/gpu-estimate`, { settings: s, edit: ed.edit })).text,
+  gpuBenchmark: async s => api("POST", "api/gpu/benchmark", { backend: s.backend, codec: s.codec }),
+  onLevel: async s => { ed.settings.encoder = await api("POST", `api/jobs/${ed.id}/rate`, { settings: s }); saveAndRender(); },
 });
 
 /** A change in a form: a new profile asks first; another encoder gets KnA's values for the same quality level. */
@@ -655,7 +655,7 @@ async function formChanged(s) {
     if ((s.encoder?.program ?? "Auto") !== (prev.encoder?.program ?? "Auto") || s.backend !== prev.backend) e.gpuFilters = null;
     if (["Quality", "Auto"].includes(e.rateControl ?? "Auto")) { e.rateControl = "Auto"; e.qualityValue = null; }
     s.encoder = e;
-    try { s.encoder = await api("POST", `/api/jobs/${ed.id}/rate`, { settings: s }); } catch { /* keep the cleared values */ }
+    try { s.encoder = await api("POST", `api/jobs/${ed.id}/rate`, { settings: s }); } catch { /* keep the cleared values */ }
   }
   ed.settings = s;
   saveAndRender();
@@ -692,7 +692,7 @@ function renderPresetTab(body) {
     if (a === "save-preset") {
       const name = $("#preset-name").value.trim();
       if (!name) throw new Error(t("The preset needs a name."));
-      await post(`/api/jobs/${ed.id}/preset`, { name, settings: ed.settings, edit: ed.edit });
+      await post(`api/jobs/${ed.id}/preset`, { name, settings: ed.settings, edit: ed.edit });
       ed.settings.presetName = name; save();
       toast(t("Preset \"{0}\" saved", name), "ok");
     }
@@ -738,11 +738,11 @@ async function renderVideo(body) {
     if (vs) { ed.videoSub = vs.dataset.vs; ed.prev = cloneSettings(ed.settings); show(); return; }
     const b = e.target.closest("[data-a]"); if (!b) return;
     if (await trackListClick(b)) return;
-    if (b.dataset.a === "cmd") { await saveNow(); showText(t("Encoder command"), await api("GET", `/api/jobs/${ed.id}/command`)); }
+    if (b.dataset.a === "cmd") { await saveNow(); showText(t("Encoder command"), await api("GET", `api/jobs/${ed.id}/command`)); }
     if (b.dataset.a === "estimate") {
       await saveNow();
       $("#estimate").textContent = t("Encoding samples…");
-      const r = await api("POST", `/api/jobs/${ed.id}/estimate`, { settings: ed.settings, edit: ed.edit });
+      const r = await api("POST", `api/jobs/${ed.id}/estimate`, { settings: ed.settings, edit: ed.edit });
       if ($("#estimate")) $("#estimate").textContent = r.text;
     }
   });
@@ -779,7 +779,7 @@ async function renderStreams(body, kind) {
     body.innerHTML = `<p class="issue warn">${esc(kind === "audio" ? t("This profile has no audio output.") : t("This profile has no subtitle output."))}</p>`;
     return;
   }
-  if (kind === "audio" && !audioEncoders) { try { audioEncoders = await api("GET", "/api/audio/encoders"); } catch { audioEncoders = {}; } }
+  if (kind === "audio" && !audioEncoders) { try { audioEncoders = await api("GET", "api/audio/encoders"); } catch { audioEncoders = {}; } }
   const tabs = trackTabs(kind);
   const cur = tabs.current;
   body.innerHTML = `${tabs.html}<div id="track-page" style="margin-top:12px">${cur ? (kind === "audio" ? audioPage(cur.tp) : subtitlePage(cur.tp)) : ""}</div>`;
@@ -843,7 +843,7 @@ async function renderStreams(body, kind) {
       await saveNow();
       const tp = tracks()[cur.i];
       await openOcr(ed.id, { ...tp, codec: tp.codec ?? streamInfo(tp)?.codec }, async () => {
-        ed.edit = cloneSettings((await api("GET", "/api/state")).jobs.find(j => j.id === ed.id)?.edit ?? ed.edit);
+        ed.edit = cloneSettings((await api("GET", "api/state")).jobs.find(j => j.id === ed.id)?.edit ?? ed.edit);
         await materializeNow();
       });
     }
@@ -1009,13 +1009,13 @@ function renderFilters(body) {
     if (a === "ai-ask") { await saveNow(); openAssistant(applyAi, ed.id); }
     if (a === "gpu-instead") {
       const b = e.target.closest("[data-a]");
-      ed.settings = await api("POST", "/api/gpu-instead", { settings: ed.settings, index: +b.dataset.ci });
+      ed.settings = await api("POST", "api/gpu-instead", { settings: ed.settings, index: +b.dataset.ci });
       return materializeNow();
     }
     if (a !== "autocrop") return;
     toast(t("Analysing black borders…"));
     await saveNow();
-    const c = await api("GET", `/api/jobs/${ed.id}/cropdetect`);
+    const c = await api("GET", `api/jobs/${ed.id}/cropdetect`);
     if (!c) { toast(t("No black borders found."), "ok"); return; }
     ed.settings.videoFilters = { ...ed.settings.videoFilters, crop: c };
     renderFilters(body); save();
@@ -1077,9 +1077,9 @@ async function gpuFilters(el) {
  */
 async function frameserver(el) {
   if (ed.analysis.files[0].path.match(/\.(vpy|avs)$/i)) { el.innerHTML = `<p class="muted small">${esc(t("The source is already a script: its video (and audio, if it sets one) is used directly."))}</p>`; return; }
-  if (!catalog) { try { catalog = await api("GET", "/api/frameserver/catalog"); } catch (err) { el.textContent = err.message; return; } }
+  if (!catalog) { try { catalog = await api("GET", "api/frameserver/catalog"); } catch (err) { el.textContent = err.message; return; } }
   let templates = [];
-  try { templates = await api("GET", "/api/frameserver/templates"); } catch { /* optional */ }
+  try { templates = await api("GET", "api/frameserver/templates"); } catch { /* optional */ }
   const fs = () => ed.settings.frameserver ?? { kind: "None" };
   const setFs = (x, structural) => { ed.settings.frameserver = x; if (structural) guard(() => materializeNow())(); else save(); };
   const opt = (v, l, cur) => `<option value="${esc(v)}" ${String(cur ?? "") === String(v) ? "selected" : ""}>${esc(l)}</option>`;
@@ -1089,7 +1089,7 @@ async function frameserver(el) {
     const cats = [...new Map(filters.map(x => [x.category, x.categoryLabel])).entries()];
     ed.fsCat = cats.some(c => c[0] === ed.fsCat) ? ed.fsCat : cats[0]?.[0];
     let script = "";
-    if (kind !== "None" && !byHand) { try { script = (await api("POST", "/api/frameserver/script", f)).script; } catch { /* preview only */ } }
+    if (kind !== "None" && !byHand) { try { script = (await api("POST", "api/frameserver/script", f)).script; } catch { /* preview only */ } }
     el.innerHTML = `<label class="field"><span>${esc(t("Frameserver"))}</span><select data-fs="kind">
         ${[["None", t("None (FFmpeg decodes the file)")], ["VapourSynth", "VapourSynth"], ["AviSynth", "AviSynth+"]].map(([v2, l]) => opt(v2, l, kind)).join("")}</select></label>
       ${kind === "None" ? "" : `<div class="grid2">
@@ -1128,7 +1128,7 @@ async function frameserver(el) {
     const k = e.target.dataset.fs, f = fs();
     if (k === "kind") { const kind = e.target.value; setFs({ ...f, kind, chain: kind === "None" ? null : kind === f.kind ? f.chain : [], script: kind === f.kind ? f.script : null }, true); return; }
     if (k === "mode") {
-      if (e.target.value === "hand") { const s = (await api("POST", "/api/frameserver/script", f)).script; setFs({ ...f, chain: null, script: s }); }
+      if (e.target.value === "hand") { const s = (await api("POST", "api/frameserver/script", f)).script; setFs({ ...f, chain: null, script: s }); }
       else setFs({ ...f, chain: [] });
       return render();
     }
@@ -1194,7 +1194,7 @@ function renderOutput(body) {
     const b = e.target.closest("[data-a]"); if (!b) return;
     if (await trackListClick(b)) return;
     const a = b.dataset.a;
-    if (a === "cmd") { await saveNow(); showText(t("FFmpeg command"), await api("GET", `/api/jobs/${ed.id}/command`)); }
+    if (a === "cmd") { await saveNow(); showText(t("FFmpeg command"), await api("GET", `api/jobs/${ed.id}/command`)); }
     if (a === "add-ch") { const l = chapterList(); addChapter(l.length ? Math.min(l[l.length - 1].start + 300, Math.max(0, dur - 1)) : 0); return saveAndRender(); }
     if (a === "ch-5min") { const l = []; for (let x = 0; x < Math.max(dur, 1); x += 300) l.push({ start: x, title: chapterTitle(l.length + 1) }); ed.edit.chapters = l; return saveAndRender(); }
     if (a === "ch-none") { ed.edit.chapters = []; return saveAndRender(); }
@@ -1220,11 +1220,11 @@ function renderPreview(body) {
     <div class="preview-wrap" id="clip-box" hidden style="margin-top:10px"><video id="clip" controls playsinline></video><div class="spinner" id="clip-spin" hidden>${esc(t("Rendering…"))}</div></div>`;
   const load = debounce(() => {
     const tt = ed.playhead.toFixed(3);
-    $("#pv-o").src = `/api/jobs/${ed.id}/preview/frame?t=${tt}&final=false&w=960`;
+    $("#pv-o").src = `api/jobs/${ed.id}/preview/frame?t=${tt}&final=false&w=960`;
     $("#pv-fs").hidden = false;
     const f = $("#pv-f");
     f.onload = f.onerror = () => { const s = $("#pv-fs"); if (s) s.hidden = true; };
-    f.src = `/api/jobs/${ed.id}/preview/frame?t=${tt}&final=true&w=960&v=${Date.now() % 100000}`;
+    f.src = `api/jobs/${ed.id}/preview/frame?t=${tt}&final=true&w=960&v=${Date.now() % 100000}`;
   }, 300);
   // Zapping: dragging the slider only moves the time ("input"); the frames are rendered on release ("change",
   // also sent by each keyboard step).
@@ -1241,7 +1241,7 @@ function renderPreview(body) {
     const v = $("#clip");
     v.oncanplay = () => { $("#clip-spin").hidden = true; v.play().catch(() => {}); };
     v.onerror = () => { $("#clip-spin").hidden = true; toast(t("The preview could not be generated."), "err"); };
-    v.src = `/api/jobs/${ed.id}/preview/clip?t=${ed.playhead.toFixed(3)}&len=6&v=${Date.now() % 100000}`;
+    v.src = `api/jobs/${ed.id}/preview/clip?t=${ed.playhead.toFixed(3)}&len=6&v=${Date.now() % 100000}`;
   };
   load();
 }

@@ -42,6 +42,10 @@ services:
       # KNA_MAX_UPLOAD_GB: "200"
       # Vulkan device for libplacebo / Anime4K (index or name part); "llvmpipe" = CPU fallback.
       # KNA_VULKAN_DEVICE: "0"
+      # Behind a reverse proxy (docs/REVERSE-PROXY.md): the proxy's network, whose X-Forwarded-* headers are believed,
+      # and the path KnA is published under, if not a domain of its own.
+      # KNA_TRUSTED_PROXIES: "private"
+      # KNA_BASE_PATH: "/kna"
     volumes:
       - type: bind
         source: ./config                 # settings, presets, queue, logs, AI models and Python runtime

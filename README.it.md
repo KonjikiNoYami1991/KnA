@@ -386,6 +386,8 @@ modifica, disattiva ed elimina gli altri account in **Impostazioni → Account**
   /app/kna-server.dll --reset-password admin` (Docker) oppure `kna-server --reset-password admin` con la `KNA_DATA_DIR` del
   servizio chiede la nuova password e riattiva l'account, anche mentre KnA è in esecuzione.
 - `KNA_AUTH=off` disattiva gli account (sono tutti amministratori): solo in una rete fidata.
+- **HTTPS / reverse proxy** (nginx, Caddy, Traefik, Nginx Proxy Manager, su un dominio o sotto un percorso come
+  `/kna`): [docs/REVERSE-PROXY.it.md](docs/REVERSE-PROXY.it.md).
 
 ## Variabili d'ambiente
 
@@ -398,6 +400,8 @@ modifica, disattiva ed elimina gli altri account in **Impostazioni → Account**
 | `KNA_UPLOAD_DIR` · `KNA_MAX_UPLOAD_GB` | destinazione e limite degli upload |
 | `KNA_PASSWORD` · `KNA_ADMIN_USER` | solo al primo avvio: crea l'amministratore (nome predefinito `admin`) con questa password |
 | `KNA_AUTH` | `off` = niente account, sono tutti amministratori (solo reti fidate) |
+| `KNA_TRUSTED_PROXIES` | reverse proxy di cui credere alle intestazioni `X-Forwarded-*`: indirizzi, reti (`172.18.0.0/16`) o `private`; questa macchina sempre ([guida](docs/REVERSE-PROXY.it.md)) |
+| `KNA_BASE_PATH` | percorso sotto cui KnA è pubblicato dietro un reverse proxy, es. `/kna` |
 | `KNA_ALLOW_ADVANCED` | consente di modificare dal browser FFmpeg, build personalizzate, argomenti extra, Python |
 | `KNA_FFMPEG` · `KNA_FDKAAC` · `KNA_VSPIPE` · `KNA_AI_SCRIPT` | percorsi dei programmi |
 | `KNA_VULKAN_DEVICE` | GPU Vulkan per libplacebo (indice o parte del nome; `llvmpipe` = CPU) |

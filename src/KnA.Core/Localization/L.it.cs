@@ -1644,5 +1644,6 @@ public static partial class L
         ["deleted account"] = "account eliminato",
         ["server"] = "server",
         ["Advanced mode needed (hand-written code and arguments run on the server): ask an administrator, Settings → Accounts. What is already set keeps working."] = "Serve la modalità avanzata (codice e argomenti scritti a mano girano sul server): chiedila a un amministratore, Impostazioni → Account. Ciò che è già impostato continua a funzionare.",
+        ["The reverse proxy in front of KnA refuses even small uploads (HTTP 413): raise its request size limit (nginx: client_max_body_size 32m)."] = "Il reverse proxy davanti a KnA rifiuta anche i caricamenti piccoli (HTTP 413): alza il suo limite alla dimensione delle richieste (nginx: client_max_body_size 32m).",
     };
 }

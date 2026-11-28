@@ -22,7 +22,7 @@ $("#btn-theme").onclick = () => {
   const next = dark ? "Light" : "Dark";
   applyTheme(next);
   state.settings.theme = next;
-  api("PUT", "/api/settings", { theme: next }).catch(() => {});
+  api("PUT", "api/settings", { theme: next }).catch(() => {});
 };
 
 // ---------------------------------------------------------------- side panel: presets + quick form
@@ -57,14 +57,14 @@ $("#btn-save-preset").onclick = guard(async () => {
   const name = prompt(cur?.scope === "shared" && state.user && !state.user.isAdmin ? t("Preset name (your own copy of the shared preset)") : t("Preset name"),
     state.form.presetName && !cur?.builtIn ? state.form.presetName : "");
   if (!name) return;
-  const p = await post("/api/presets", { name, description: null, settings: state.form });
+  const p = await post("api/presets", { name, description: null, settings: state.form });
   state.form.presetName = p.name;
   toast(t("Preset \"{0}\" saved", p.name), "ok");
 });
 $("#btn-delete-preset").onclick = guard(async () => {
   const name = $("#f-preset").value;
   if (!name || !confirm(t("Delete the preset \"{0}\"?", name))) return;
-  await api("DELETE", "/api/presets/" + encodeURIComponent(name));
+  await api("DELETE", "api/presets/" + encodeURIComponent(name));
   state.form.presetName = null;
 });
 
@@ -78,11 +78,11 @@ function renderForm() {
   renderControls();
 }
 $("#btn-save-defaults").onclick = guard(async () => {
-  const r = await api("PUT", "/api/settings", { defaults: state.form });
+  const r = await api("PUT", "api/settings", { defaults: state.form });
   state.settings = r.settings; toast(t("Saved as default"), "ok");
 });
 $("#btn-apply-sel").onclick = guard(async () => {
-  await post("/api/jobs/settings", { ids: [...state.selected], settings: state.form });
+  await post("api/jobs/settings", { ids: [...state.selected], settings: state.form });
   toast(t("Updated {0} file(s)", state.selected.size), "ok");
 });
 
@@ -91,7 +91,7 @@ $("#btn-apply-sel").onclick = guard(async () => {
 // apply to the earlier answers, then a summary of what the preset will do.
 const wiz = { step: 0, given: {}, view: null };
 async function renderWizard() {
-  const r = await post("/api/presets/wizard/steps", wiz.given);
+  const r = await post("api/presets/wizard/steps", wiz.given);
   wiz.view = r;
   const steps = r.steps;
   wiz.step = Math.max(0, Math.min(wiz.step, steps.length - 1));
@@ -126,8 +126,8 @@ $("#wiz-next").onclick = guard(async () => {
   if (s.kind === "Summary") { wiz.given.name = $("#wiz-name").value.trim(); wiz.given.description = $("#wiz-desc").value.trim(); }
   if (wiz.step < wiz.count - 1) { wiz.step++; await renderWizard(); return; }
   if (!wiz.given.name) throw new Error(t("The preset needs a name."));
-  const settings = await post("/api/presets/wizard", wiz.view.answers);
-  const p = await post("/api/presets", { name: wiz.given.name, description: wiz.given.description || null, settings });
+  const settings = await post("api/presets/wizard", wiz.view.answers);
+  const p = await post("api/presets", { name: wiz.given.name, description: wiz.given.description || null, settings });
   state.form = { ...cloneSettings(p.settings), presetName: p.name };
   $("#dlg-wizard").close();
   renderForm();
@@ -170,7 +170,7 @@ function aacName(caps) {
 $("#btn-detect").onclick = guard(async () => {
   const b = $("#btn-detect"); b.disabled = true; b.textContent = t("Testing…");
   try {
-    state.settings.capabilities = await post("/api/hardware/detect");
+    state.settings.capabilities = await post("api/hardware/detect");
     renderHardware(); renderForm();
     toast(t("Hardware detection finished"), "ok");
   } finally { b.disabled = false; b.textContent = t("Detect again"); }
@@ -228,7 +228,7 @@ function jobHtml(j) {
         <button class="btn ghost icon sm" data-a="edit" title="${esc(t("Edit tracks, trim, filters, preview"))}" ${running ? "disabled" : ""}><svg><use href="#i-edit"/></svg></button>
         <button class="btn ghost icon sm" data-a="up" title="${esc(t("Move up"))}" ${running ? "disabled" : ""}><svg><use href="#i-up"/></svg></button>
         <button class="btn ghost icon sm" data-a="down" title="${esc(t("Move down"))}" ${running ? "disabled" : ""}><svg><use href="#i-down"/></svg></button>
-        ${(j.status === "Done" || j.status === "Warning") && j.outputPath ? `<a class="btn ghost icon sm" href="/api/jobs/${j.id}/download" download title="${esc(t("Download the result"))}"><svg><use href="#i-download"/></svg></a>` : ""}
+        ${(j.status === "Done" || j.status === "Warning") && j.outputPath ? `<a class="btn ghost icon sm" href="api/jobs/${j.id}/download" download title="${esc(t("Download the result"))}"><svg><use href="#i-download"/></svg></a>` : ""}
         <button class="btn ghost icon sm" data-a="cmd" title="${esc(t("FFmpeg command"))}"><svg><use href="#i-term"/></svg></button>
         <button class="btn ghost icon sm" data-a="log" title="${esc(t("Log"))}"><svg><use href="#i-log"/></svg></button>
         <button class="btn ghost icon sm" data-a="reset" title="${esc(t("Process again"))}" ${running || j.status === "Ready" ? "disabled" : ""}><svg><use href="#i-redo"/></svg></button>
@@ -312,11 +312,11 @@ $("#jobs").addEventListener("click", guard(async e => {
   if (!a) return;
   if (a === "edit") return openEditor(id);
   if (a === "trim") return openEditor(id, "trim-only");
-  if (a === "remove") await post("/api/jobs/remove", { ids: [id] });
-  if (a === "reset") await post("/api/jobs/reset", { ids: [id] });
-  if (a === "up" || a === "down") await post(`/api/jobs/${id}/move`, { delta: a === "up" ? -1 : 1 });
-  if (a === "log") showText(t("Log") + " — " + state.jobs.get(id).fileName, await api("GET", `/api/jobs/${id}/log`) || t("(empty — the log fills while the file is processed)"));
-  if (a === "cmd") showText(t("FFmpeg command"), await api("GET", `/api/jobs/${id}/command`));
+  if (a === "remove") await post("api/jobs/remove", { ids: [id] });
+  if (a === "reset") await post("api/jobs/reset", { ids: [id] });
+  if (a === "up" || a === "down") await post(`api/jobs/${id}/move`, { delta: a === "up" ? -1 : 1 });
+  if (a === "log") showText(t("Log") + " — " + state.jobs.get(id).fileName, await api("GET", `api/jobs/${id}/log`) || t("(empty — the log fills while the file is processed)"));
+  if (a === "cmd") showText(t("FFmpeg command"), await api("GET", `api/jobs/${id}/command`));
 }));
 $("#jobs").addEventListener("dblclick", e => {
   const card = e.target.closest(".job");
@@ -328,11 +328,11 @@ $("#select-all").onchange = e => {
   $$(".job").forEach(el => { el.classList.toggle("selected", e.target.checked); $(".sel", el).checked = e.target.checked; });
   renderControls();
 };
-$("#btn-remove-sel").onclick = guard(() => post("/api/jobs/remove", { ids: [...state.selected] }));
-$("#btn-reset-sel").onclick = guard(() => post("/api/jobs/reset", { ids: [...state.selected] }));
-$("#btn-clear-done").onclick = guard(() => post("/api/jobs/clear", { statuses: ["Done", "Warning"] }));
-$("#btn-start").onclick = guard(async () => post($("#btn-start").dataset.stop ? "/api/queue/stop" : "/api/queue/start"));
-$("#btn-pause").onclick = guard(async () => post(state.queue?.paused ? "/api/queue/resume" : "/api/queue/pause"));
+$("#btn-remove-sel").onclick = guard(() => post("api/jobs/remove", { ids: [...state.selected] }));
+$("#btn-reset-sel").onclick = guard(() => post("api/jobs/reset", { ids: [...state.selected] }));
+$("#btn-clear-done").onclick = guard(() => post("api/jobs/clear", { statuses: ["Done", "Warning"] }));
+$("#btn-start").onclick = guard(async () => post($("#btn-start").dataset.stop ? "api/queue/stop" : "api/queue/start"));
+$("#btn-pause").onclick = guard(async () => post(state.queue?.paused ? "api/queue/resume" : "api/queue/pause"));
 $("#btn-copy").onclick = async () => {
   try { await navigator.clipboard.writeText($("#text-body").textContent); toast(t("Copied"), "ok"); }
   catch { toast(t("Clipboard not available over plain HTTP — select and copy manually."), "err"); }
@@ -341,7 +341,7 @@ $("#btn-copy").onclick = async () => {
 // ---------------------------------------------------------------- file browser (videos, or external files for the editor)
 async function browse(path) {
   const ext = state.browse.external;
-  const r = await api("GET", "/api/browse?" + new URLSearchParams({ ...(path ? { path } : {}), external: ext, ...(ext && state.browse.mode ? { mode: state.browse.mode } : {}) }));
+  const r = await api("GET", "api/browse?" + new URLSearchParams({ ...(path ? { path } : {}), external: ext, ...(ext && state.browse.mode ? { mode: state.browse.mode } : {}) }));
   state.browse.path = r.path;
   state.browse.selected.clear();
   const crumbs = [`<button type="button" data-p="">${esc(t("Roots"))}</button>`];
@@ -393,7 +393,7 @@ async function finishPick(paths) {
     $("#dlg-browse").close();
     return cb(paths);
   }
-  const r = await post("/api/jobs", { paths, settings: state.form, extensions: state.settings.folderExtensions });
+  const r = await post("api/jobs", { paths, settings: state.form, extensions: state.settings.folderExtensions });
   toast(r.added ? t("Added {0} file(s)", r.added) : t("No supported video files found"), r.added ? "ok" : "err");
   if (r.added) $("#dlg-browse").close();
 }
@@ -453,7 +453,7 @@ $("#btn-settings").onclick = guard(async () => {
   $("#s-afterjob-note").textContent = t("Macros: {0}. Its output goes to the job's log; a failure never stops the queue.",
     "{source} {name} {folder} {output} {outputfolder} {status} {message} {duration} {size} {date} {time}");
   $("#s-temp").value = s.tempDirectory ?? "";
-  const info = await api("GET", "/api/info");
+  const info = await api("GET", "api/info");
   state.advancedAllowed = info.advancedAllowed;
   $$("[data-pane=advanced] input").forEach(i => i.disabled = !info.advancedAllowed);
   $("#s-adv-note").textContent = info.advancedAllowed ? "" : t("Locked: set KNA_ALLOW_ADVANCED=true on the server to edit these from the browser.");
@@ -495,7 +495,7 @@ $("#btn-settings").onclick = guard(async () => {
 
 // ---------------------------------------------------------------- watch folders
 let watch = { folders: [], status: [] };
-async function loadWatch() { watch = await api("GET", "/api/watch"); renderWatch(); }
+async function loadWatch() { watch = await api("GET", "api/watch"); renderWatch(); }
 function renderWatch() {
   const presets = [{ value: "", label: t("Default settings") }, ...state.presets.map(p => ({ value: p.name, label: "★ " + p.name }))];
   $("#w-list").innerHTML = watch.folders.map((f, i) => {
@@ -535,10 +535,10 @@ $("#w-list").onclick = guard(async e => {
   const a = e.target.closest("[data-wa]")?.dataset.wa; if (!a) return;
   const i = Number(e.target.closest(".w-item").dataset.i);
   if (a === "remove") { watch.folders.splice(i, 1); renderWatch(); }
-  if (a === "scan") { await saveWatch(); await post(`/api/watch/${watch.folders[i].id}/scan`); toast(t("Scanning…"), "ok"); }
+  if (a === "scan") { await saveWatch(); await post(`api/watch/${watch.folders[i].id}/scan`); toast(t("Scanning…"), "ok"); }
 });
 async function saveWatch() {
-  watch = await api("PUT", "/api/watch", watch.folders.filter(f => f.path));
+  watch = await api("PUT", "api/watch", watch.folders.filter(f => f.path));
   renderWatch();
 }
 
@@ -546,13 +546,13 @@ async function saveWatch() {
 $("#s-ai-setup").onclick = () => openAiSetup(() => $("#dlg-settings").close());
 $("#s-ai-list").onclick = guard(async () => {
   await saveAiOnly();
-  const models = await api("GET", "/api/ai/models");
+  const models = await api("GET", "api/ai/models");
   $("#s-ai-models").innerHTML = models.map(m => `<option value="${esc(m)}">`).join("");
   toast(t("{0} model(s) found", models.length), models.length ? "ok" : "err");
 });
 $("#s-ai-check").onclick = guard(async () => {
   await saveAiOnly();
-  const r = await api("GET", "/api/ai/runtime");
+  const r = await api("GET", "api/ai/runtime");
   const box = $("#s-ai-runtime");
   box.hidden = false;
   box.textContent = r.python ? JSON.stringify({ python: r.python, script: r.script, ...(r.info ?? {}), error: r.error ?? undefined }, null, 2)
@@ -566,7 +566,7 @@ function aiBody() {
   };
 }
 async function saveAiOnly() {
-  const r = await api("PUT", "/api/settings", { ai: aiBody() });
+  const r = await api("PUT", "api/settings", { ai: aiBody() });
   state.settings = r.settings;
 }
 $("#btn-save-settings").onclick = guard(async () => {
@@ -590,7 +590,7 @@ $("#btn-save-settings").onclick = guard(async () => {
   });
   await saveWatch();
   const langChanged = body.language !== (state.settings.language ?? "Auto");
-  const r = await api("PUT", "/api/settings", body);
+  const r = await api("PUT", "api/settings", body);
   state.settings = r.settings; state.tools = r.tools;
   applyTheme(state.settings.theme);
   $("#dlg-settings").close();
@@ -602,7 +602,7 @@ $("#btn-save-settings").onclick = guard(async () => {
 async function checkUpdates(quiet = false) {
   const box = $("#upd-box");
   try {
-    const u = await api("GET", "/api/updates");
+    const u = await api("GET", "api/updates");
     box.classList.toggle("new", u.isNewer);
     box.innerHTML = `${esc(u.message)}${u.isNewer ? `<br><a href="${esc(u.url)}" target="_blank" rel="noopener">${esc(t("Release notes"))}</a><br><span class="muted small">${esc(u.howTo)}</span>` : ""}`;
     $("#update-badge").hidden = !u.isNewer;
@@ -614,7 +614,7 @@ $("#btn-check-updates").onclick = guard(() => checkUpdates(false));
 async function loadComponents() {
   const list = $("#comp-list");
   try {
-    const comps = await api("GET", "/api/components");
+    const comps = await api("GET", "api/components");
     list.innerHTML = comps.map(c => `
       <div class="comp" data-id="${esc(c.id)}">
         <b>${esc(c.name)}</b>
@@ -629,16 +629,16 @@ $("#comp-list").onclick = guard(async e => {
   const b = e.target.closest("[data-install]"); if (!b) return;
   b.disabled = true; b.textContent = t("Downloading…");
   try {
-    await post(`/api/components/${encodeURIComponent(b.dataset.install)}/install`);
+    await post(`api/components/${encodeURIComponent(b.dataset.install)}/install`);
     toast(t("{0} installed", b.dataset.install), "ok");
-    state.tools = (await api("GET", "/api/state")).tools;
+    state.tools = (await api("GET", "api/state")).tools;
     renderToolsBox();
   } finally { loadComponents(); }
 });
 
 // ---------------------------------------------------------------- live events
 function connect() {
-  const es = new EventSource("/api/events");
+  const es = new EventSource("api/events");
   es.onmessage = ev => {
     const { type, payload } = JSON.parse(ev.data);
     if (type === "job") {
@@ -673,7 +673,7 @@ function connect() {
 }
 
 async function load(first = true) {
-  const s = await api("GET", "/api/state");
+  const s = await api("GET", "api/state");
   state.options = s.options; state.settings = s.settings; state.tools = s.tools; state.queue = s.queue;
   state.powerActionsAllowed = s.powerActionsAllowed; state.presets = s.presets;
   state.jobs = new Map(s.jobs.map(j => [j.id, j]));

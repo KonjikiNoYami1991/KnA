@@ -233,7 +233,7 @@ function bindForm(root, s, opts, codec) {
     const inst = e.target.closest("[data-install]");
     if (inst) {
       inst.disabled = true; inst.textContent = t("Installing {0}…", "PyTorch");
-      try { await api("POST", `/api/components/${inst.dataset.install}/install`); state.tools = (await api("GET", "/api/state")).tools; changed(); }
+      try { await api("POST", `api/components/${inst.dataset.install}/install`); state.tools = (await api("GET", "api/state")).tools; changed(); }
       catch (err) { inst.disabled = false; inst.textContent = err.message; }
       return;
     }
@@ -492,7 +492,7 @@ function mountParams(root, s, onChange) {
     };
     try {
       const ck = tool + "|" + JSON.stringify([s.codec, s.backend, s.encoder?.program, s.audioCodec, s.container, s.profile]);
-      const r = optionCache.get(ck) ?? await api("POST", "/api/tools/options", { tool, settings: s });
+      const r = optionCache.get(ck) ?? await api("POST", "api/tools/options", { tool, settings: s });
       optionCache.set(ck, r);
       options = r.options ?? [];
       el.querySelector("datalist").innerHTML = options.map(o => `<option value="${esc(o.name + (o.argument ? " <" + o.argument + ">" : "") + " — " + o.description)}"></option>`).join("");
