@@ -15,7 +15,7 @@ namespace KnA.Core.Remote;
 /// the server's API (the same one the web UI uses; the analysis travels whole, the types are shared). Previews are
 /// downloaded into a cache folder and shown like local ones.
 /// </summary>
-public sealed class RemoteEditorEngine(KnaClient client, string cacheDirectory) : IEditorEngine
+public sealed class RemoteEditorEngine(KnaClient client, string cacheDirectory, ServerPaths? paths = null) : IEditorEngine
 {
     private sealed record EngineState(FfmpegTools? Tools, FfmpegCapabilities? Capabilities, List<GpuBenchmarkResult>? GpuBenchmarks,
         bool AiRuntime, Ai.AiSettings? Ai, OcrOptions? Ocr);
@@ -122,6 +122,8 @@ public sealed class RemoteEditorEngine(KnaClient client, string cacheDirectory) 
         var result = new List<string>();
         foreach (var p in localPaths)
         {
+            // Already in a folder the server reads (the same NAS share): used where it is.
+            if (paths is not null && await paths.LocateAsync(p, ct) is { } inPlace) { result.Add(inPlace); continue; }
             status?.Report(L.T("Uploading {0} to the server…", Path.GetFileName(p)));
             result.Add(await client.UploadFileAsync(p, ct));
         }

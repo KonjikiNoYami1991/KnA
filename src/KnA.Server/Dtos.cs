@@ -214,6 +214,7 @@ public sealed record SettingsUpdate(
     HardwareDecoding? HardwareDecoding = null, bool? ResumableEncoding = null, string? AfterJobCommand = null, string? AfterQueueCommand = null,
     KnA.Core.Queue.WorkLocation? WorkLocation = null, bool? AutoInstallUpdates = null, bool? VapourSynthForEncodes = null);
 
+public sealed record LocateRequest(List<string>? Segments, long Size, string Hash, List<string>? Candidates);
 public sealed record UploadCreate(string Name, long Size, string? Folder);
 public sealed record UploadComplete(bool Enqueue, JobSettings? Settings, string? Preset, Guid? AttachTo, string? AttachToSource = null);
 public sealed record DropRequest(List<string> Paths, Guid? TargetJob, JobSettings? Settings);

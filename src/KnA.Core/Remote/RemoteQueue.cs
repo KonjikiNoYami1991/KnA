@@ -17,7 +17,7 @@ namespace KnA.Core.Remote;
 public sealed class RemoteQueue : IQueueEngine, IAsyncDisposable
 {
     /// <summary>What this computer remembers of a job it sent (remote-jobs.json in the data folder).</summary>
-    private sealed record Tracked(string Server, string LocalSource, string OutputFolder, string? LocalResult = null);
+    private sealed record Tracked(string Server, string LocalSource, string OutputFolder, string? LocalResult = null, bool InPlace = false);
     /// <summary>A local file waiting to be (or being) uploaded.</summary>
     private sealed record Pending(Guid LocalId, string Server, string LocalSource, string OutputFolder, JobSettings Settings, string? UploadId);
     private sealed record StateFile(Dictionary<Guid, Tracked> Jobs, List<Pending> Uploads);
@@ -53,9 +53,13 @@ public sealed class RemoteQueue : IQueueEngine, IAsyncDisposable
     public QueueJob? CurrentJob { get { lock (_lock) return _current is { } c ? _jobs.FirstOrDefault(j => j.Id == c) : null; } }
     public IReadOnlyList<QueueJob> Jobs { get { lock (_lock) return [.. _jobs]; } }
 
-    public RemoteQueue(KnaClient client, string dataDirectory)
+    /// <summary>Files of this computer the server reads in place (a shared NAS folder): not uploaded.</summary>
+    public ServerPaths Paths { get; }
+
+    public RemoteQueue(KnaClient client, string dataDirectory, ServerPaths? paths = null)
     {
         _client = client;
+        Paths = paths ?? new ServerPaths(client, dataDirectory);
         _server = client.BaseUri.ToString();
         _statePath = Path.Combine(dataDirectory, "remote-jobs.json");
         Load();
@@ -286,20 +290,27 @@ public sealed class RemoteQueue : IQueueEngine, IAsyncDisposable
         try
         {
             if (!File.Exists(p.LocalSource)) throw new RemoteException(L.T("Not found: {0}", p.LocalSource));
+            // The same file in a folder the server reads too (a NAS share): used where it is, nothing to upload.
+            if (p.UploadId is null)
+            {
+                job.Stage = L.T("Looking for it in the server's folders");
+                JobChanged?.Invoke(job);
+                if (await Paths.LocateAsync(p.LocalSource, _life.Token) is { } serverPath)
+                {
+                    var ids = await _client.AddServerPathsAsync([serverPath], p.Settings, _life.Token);
+                    Sent(p, job, ids.FirstOrDefault() is var g && g != Guid.Empty ? g : null, inPlace: true);
+                    if (ids.Count > 0 && Jobs.All(j => j.Id != ids[0])) await SyncAsync(_life.Token);
+                    return;
+                }
+                job.Stage = L.T("Uploading to the server");
+                JobChanged?.Invoke(job);
+            }
             var id = await _client.UploadAsync(p.LocalSource, p.Settings, uploadId =>
             {
                 lock (_lock) { var i = _pending.IndexOf(p); if (i >= 0) _pending[i] = p = p with { UploadId = uploadId }; }
                 Save();
             }, p.UploadId, progress, _life.Token);
-            lock (_lock)
-            {
-                _pending.RemoveAll(x => x.LocalId == p.LocalId);
-                _jobs.Remove(job);
-                if (id is { } jid) _tracked[jid] = new Tracked(_server, p.LocalSource, p.OutputFolder);
-            }
-            Save();
-            JobRemoved?.Invoke(job.Id);
-            QueueChanged?.Invoke();
+            Sent(p, job, id, inPlace: false);
             if (id is null) Notice?.Invoke(L.T("{0} was uploaded but the server did not queue it (not a video it can read?).", Path.GetFileName(p.LocalSource)), true);
             else if (Jobs.All(j => j.Id != id)) await SyncAsync(_life.Token);   // the event may come after
         }
@@ -311,6 +322,20 @@ public sealed class RemoteQueue : IQueueEngine, IAsyncDisposable
             job.Message = L.T("Upload failed: {0} — Retry sends it again from where it stopped.", ex.Message);
             JobChanged?.Invoke(job);
         }
+    }
+
+    /// <summary>The file is the server's job now: the placeholder goes, the job is remembered for its result.</summary>
+    private void Sent(Pending p, QueueJob placeholder, Guid? id, bool inPlace)
+    {
+        lock (_lock)
+        {
+            _pending.RemoveAll(x => x.LocalId == p.LocalId);
+            _jobs.Remove(placeholder);
+            if (id is { } jid) _tracked[jid] = new Tracked(_server, p.LocalSource, p.OutputFolder, InPlace: inPlace);
+        }
+        Save();
+        JobRemoved?.Invoke(placeholder.Id);
+        QueueChanged?.Invoke();
     }
 
     // ------------------------------------------------------------------ results back home
@@ -339,7 +364,10 @@ public sealed class RemoteQueue : IQueueEngine, IAsyncDisposable
             }
             var progress = new Progress<double>(p => { if (job is not null) { job.Stage = L.T("Coming back to this computer: {0:0}%", p); JobChanged?.Invoke(job); } });
             // Downloaded before but not yet forgotten by the server (connection lost in between): not downloaded twice.
-            var local = t.LocalResult ?? await _client.DownloadResultAsync(id, serverOutput, t.OutputFolder, progress, _life.Token);
+            // A file read in place whose result the server wrote into the shared folder, where it should be: nothing to copy.
+            var inShare = t.InPlace && Paths.ToLocal(serverOutput) is { } mapped && (File.Exists(mapped) || Directory.Exists(mapped))
+                          && IsInside(mapped, t.OutputFolder) ? mapped : null;
+            var local = t.LocalResult ?? inShare ?? await _client.DownloadResultAsync(id, serverOutput, t.OutputFolder, progress, _life.Token);
             lock (_lock)
             {
                 _tracked[id] = t with { LocalResult = local };
@@ -348,7 +376,7 @@ public sealed class RemoteQueue : IQueueEngine, IAsyncDisposable
                 {
                     job.OutputPath = local;
                     job.Stage = null;
-                    job.Message = L.T("Back on this computer: {0}", local);
+                    job.Message = inShare is not null ? L.T("Written by the server in the shared folder: {0}", local) : L.T("Back on this computer: {0}", local);
                 }
             }
             Save();
@@ -356,7 +384,8 @@ public sealed class RemoteQueue : IQueueEngine, IAsyncDisposable
             await _client.CollectedAsync(id, _life.Token);
             lock (_lock) _tracked.Remove(id);
             Save();
-            Notice?.Invoke(L.T("{0} is back on this computer: {1}", Path.GetFileName(t.LocalSource), local), false);
+            Notice?.Invoke(inShare is not null ? L.T("{0} is done, in the shared folder: {1}", Path.GetFileName(t.LocalSource), local)
+                : L.T("{0} is back on this computer: {1}", Path.GetFileName(t.LocalSource), local), false);
         }
         catch (OperationCanceledException) when (_life.IsCancellationRequested) { }
         catch (Exception ex) when (ex is RemoteException or IOException or HttpRequestException or UnauthorizedAccessException or InvalidDataException)
@@ -370,6 +399,10 @@ public sealed class RemoteQueue : IQueueEngine, IAsyncDisposable
             _downloadGate.Release();
         }
     }
+
+    private static bool IsInside(string path, string folder) =>
+        string.Equals(Path.GetFullPath(Path.GetDirectoryName(path.TrimEnd('/', '\\')) ?? ""), Path.GetFullPath(folder).TrimEnd(Path.DirectorySeparatorChar),
+            OperatingSystem.IsLinux() ? StringComparison.Ordinal : StringComparison.OrdinalIgnoreCase);
 
     // ------------------------------------------------------------------ operations (IQueueEngine)
 

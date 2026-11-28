@@ -70,6 +70,10 @@
   use the server's AI and hardware; the side panel's presets are the server's; "Server files" browses and queues the
   server's own files; subtitles, audio, fonts and attachments of this computer are uploaded by themselves (editor and
   drag and drop) and removed from the server with the job.
+- Third part: files of this computer the server can read too (the same NAS share) are used in place instead of being
+  uploaded — found by themselves (`/api/files/locate`: the end of the path under the account's folders, the size and a
+  sampled SHA-256 must match), the mapping between the two folders is learnt for the next files; results written by
+  the server into the share are already home (no copy), and the server keeps the share's files.
 
 **Fixes**
 - NVEncC / QSVEncC / VCEEncC with FFmpeg decoding: the size shown (and the final size estimated from it) was the raw
@@ -345,6 +349,11 @@
   wizard usano l'AI e l'hardware del server; i preset del pannello laterale sono quelli del server; "File del server"
   sfoglia e mette in coda i file del server; sottotitoli, audio, font e allegati di questo computer vengono caricati da
   soli (editor e trascinamento) e tolti dal server insieme al job.
+- Terza parte: i file di questo computer che anche il server legge (la stessa condivisione del NAS) vengono usati dove
+  sono invece di essere caricati — trovati da soli (`/api/files/locate`: fine del percorso sotto le cartelle
+  dell'account, dimensione e SHA-256 a campione devono coincidere), la corrispondenza tra le due cartelle viene
+  imparata per i file successivi; i risultati che il server scrive nella condivisione sono già a casa (nessuna copia) e
+  il server non tocca i file della condivisione.
 
 **Correzioni**
 - NVEncC / QSVEncC / VCEEncC con decodifica FFmpeg: la dimensione mostrata (e quella finale stimata) era dei fotogrammi

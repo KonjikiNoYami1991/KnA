@@ -402,6 +402,9 @@ this computer is one click.
   dropped on a job too) and the **results come back by themselves** into the
   output folder (or next to the source), then the server deletes what it kept for them. Once a file is uploaded the
   laptop may be switched off: the result comes home at the next connection.
+- Files in a folder the server reads too (the same NAS share mounted on both) are **used in place**, not uploaded:
+  KnA finds them by itself (end of the path, size and a sampled checksum; nothing to type) and learns the mapping
+  between the two folders for the next ones; the result the server writes in the share is already home.
 - If the server can't be reached, KnA says why and encodes on this computer meanwhile.
 - HTTPS through a reverse proxy works; a self-signed certificate is shown with its fingerprint and pinned once trusted.
   Plain HTTP outside the local network is flagged.

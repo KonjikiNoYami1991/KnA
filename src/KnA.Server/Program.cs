@@ -255,6 +255,41 @@ app.MapGet("/api/files/download", (string path, HttpContext ctx, CancellationTok
 app.MapGet("/api/jobs/{id:guid}/download", (Guid id, HttpContext ctx, CancellationToken ct) =>
     queue.Find(id)?.OutputPath is { } o ? Download(o, ctx, ct) : Task.FromResult(Results.NotFound()));
 
+// Desktop app in client mode: is this file of the laptop also here (the same NAS share mounted on both)? The paths the
+// laptop's mappings suggest are tried first, then the end of its path under each allowed root (and one folder below);
+// the size and a sampled checksum must match. Nothing is scanned recursively.
+app.MapPost("/api/files/locate", async (LocateRequest req, HttpContext ctx, CancellationToken ct) =>
+{
+    var b = B(ctx);
+    var segs = (req.Segments ?? []).Where(x => x.Length > 0 && x != "." && x != "..").ToList();
+    async Task<bool> Matches(string p)
+    {
+        try
+        {
+            if (!b.IsAllowed(p) || !File.Exists(p) || new FileInfo(p).Length != req.Size) return false;
+            return string.Equals(await KnA.Core.Remote.FileFingerprint.SampledAsync(p, ct), req.Hash, StringComparison.OrdinalIgnoreCase);
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException or ArgumentException) { return false; }
+    }
+    foreach (var c in (req.Candidates ?? []).Take(8))
+        if (await Matches(c)) return Results.Ok(new { path = Path.GetFullPath(c) });
+    if (segs.Count == 0) return Results.Ok(new { path = (string?)null });
+    int tries = 0;
+    foreach (var root in b.Roots)
+    {
+        var bases = new List<string> { root };
+        try { bases.AddRange(Directory.EnumerateDirectories(root).Take(200)); } catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+        foreach (var dir in bases)
+            for (int k = segs.Count; k >= 1; k--)
+            {
+                var p = Path.Combine([dir, .. segs.Skip(segs.Count - k)]);
+                if (++tries > 4000) return Results.Ok(new { path = (string?)null });
+                if (await Matches(p)) return Results.Ok(new { path = Path.GetFullPath(p) });
+            }
+    }
+    return Results.Ok(new { path = (string?)null });
+});
+
 app.MapPost("/api/files/mkdir", (FolderRequest req, HttpContext ctx) =>
 {
     if (!B(ctx).IsWritable(req.Path)) return Results.Problem(L.T("This folder is read-only for KnA."), statusCode: 403);

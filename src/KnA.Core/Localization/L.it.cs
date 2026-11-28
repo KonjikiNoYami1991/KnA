@@ -1731,5 +1731,9 @@ public static partial class L
         ["On a KnA server the presets are managed in its web page (the side panel saves and deletes them here too). Open it?"] = "Su un server KnA i preset si gestiscono nella sua pagina web (il pannello laterale li salva ed elimina anche da qui). Aprirla?",
         ["A folder of the server (empty: the server's setting)"] = "Una cartella del server (vuoto: l'impostazione del server)",
         ["The KnA server's AI assistant is not set up: an administrator sets it up in its web page (Settings → AI)."] = "L'assistente AI del server KnA non è configurato: un amministratore lo configura nella sua pagina web (Impostazioni → AI).",
+        // Client mode, third part: files in place
+        ["Looking for it in the server's folders"] = "Lo cerco nelle cartelle del server",
+        ["Written by the server in the shared folder: {0}"] = "Scritto dal server nella cartella condivisa: {0}",
+        ["{0} is done, in the shared folder: {1}"] = "{0} è pronto, nella cartella condivisa: {1}",
     };
 }

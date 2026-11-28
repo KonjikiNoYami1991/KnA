@@ -13,9 +13,9 @@ queue, presets and settings, advanced fields locked in the editor; reverse-proxy
 
 First and second part done (see "Done" below): connection, discovery, keychain, version check, certificate pinning,
 the server's queue in the main window, uploads and results back home (also after the laptop was off); editor, previews,
-OCR, AI assistant, presets, wizard and the server's own files through the server. Still to do, in this order:
+OCR, AI assistant, presets, wizard and the server's own files through the server; files of a shared NAS folder used in
+place. Still to do, in this order:
 
-- **Files the server reaches in place** (same NAS share): recognised by themselves, no upload.
 - **Outbox** time / quota in Settings, shown in the web UI too; a notification when results are home.
 - **Streaming and segment-by-segment** modes for servers with little space, chosen by KnA (keeping the PC awake,
   bandwidth measured).
@@ -121,6 +121,10 @@ suitable backgrounds, desktop and web, next to the current light/dark themes. Mi
 the user provides or that may be redistributed; nothing scraped.
 
 ## Done (details in CHANGELOG)
+
+- Desktop app on a KnA server, third part: files the server reaches in place (`ServerPaths`, `FileFingerprint`,
+  `/api/files/locate`): mapping learnt from one match, results in the share already home. Checked live with a share
+  seen under two different paths (no upload, results in the share, server files kept).
 
 - Desktop app on a KnA server, second part: `IEditorEngine` (`LocalEditorEngine` / `RemoteEditorEngine`) for the
   editor, wizard, AI assistant and OCR editor (`IOcrSession`); `?full=true` analysis, `/api/engine`, `/api/ocr/{id}/images`;

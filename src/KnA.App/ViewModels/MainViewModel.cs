@@ -393,8 +393,9 @@ public sealed partial class MainViewModel : ObservableObject
     public async Task ConnectAsync(RemoteServerSettings server, string password, CancellationToken ct = default)
     {
         var client = new KnaClient(server.Url ?? "", server.User ?? "", password, server.PinnedCertificate);
-        var remote = new RemoteQueue(client, Queue.Store.DataDirectory);
-        var editor = new RemoteEditorEngine(client, Path.Combine(Queue.Store.DataDirectory, "remote-cache"));
+        var paths = new ServerPaths(client, Queue.Store.DataDirectory);
+        var remote = new RemoteQueue(client, Queue.Store.DataDirectory, paths);
+        var editor = new RemoteEditorEngine(client, Path.Combine(Queue.Store.DataDirectory, "remote-cache"), paths);
         try { await remote.ConnectAsync(ct); await editor.RefreshAsync(ct); }
         catch { await remote.DisposeAsync(); throw; }
         remote.Notice += (text, _) => Dispatcher.UIThread.Post(() => { RemoteNotice = text; UpdateQueueStatus(); UpdateEngineLabel(); RefreshHardware(); });

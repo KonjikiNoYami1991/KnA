@@ -407,6 +407,10 @@ codificano i file; tornare a questo computer è un clic.
   o trascinati su un job) e i **risultati tornano da soli** nella cartella di
   uscita (o accanto alla sorgente), poi il server cancella ciò che aveva tenuto per loro. Una volta caricato un file il
   portatile si può spegnere: il risultato torna al collegamento successivo.
+- I file in una cartella che anche il server legge (la stessa condivisione del NAS montata su entrambi) vengono **usati
+  dove sono**, senza caricarli: KnA li trova da solo (fine del percorso, dimensione e un checksum a campione; niente da
+  scrivere) e impara la corrispondenza tra le due cartelle per i successivi; il risultato che il server scrive nella
+  condivisione è già a casa.
 - Se il server non è raggiungibile, KnA dice perché e intanto codifica su questo computer.
 - HTTPS tramite reverse proxy funziona; un certificato autofirmato viene mostrato con la sua impronta e, una volta
   accettato, fissato. L'HTTP semplice fuori dalla rete locale viene segnalato.
